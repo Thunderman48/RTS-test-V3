@@ -9,14 +9,40 @@ export function helpHTML() {
     return `<tr><td>${glyph(t, 0, 14)} ${d.name}</td><td>${d.tier}</td><td>${d.hp}</td><td>${d.armor}</td><td>${d.defends}</td><td>${atk}</td><td>${d.skills.map(k => `${k.name} (cd ${k.cd})`).join(', ')}</td></tr>`;
   };
   return `
+<p><button class="btn" id="help-tutorial" style="display:inline-flex;height:40px">▸ Play the 5-minute tutorial</button></p>
+
 <h3>Goal</h3>
-<p>Destroy the enemy <b>HQ</b>. Build an economy, train units and fight in rounds. You are the <b>white</b> pieces vs AI; online, the host is white and the guest is black.</p>
+<p>Destroy the enemy <b>HQ</b>. You are the <b>white</b> pieces vs the AI; online, the host is white and the guest is black. The orange arrow in the top bar points to the enemy HQ.</p>
+
+<h3>1 · What will my units do?</h3>
+<ul>
+<li>Tap a unit. Its card shows its <b>stance</b> and a plain sentence: <b>"This round it will…"</b>. Units you don't control just follow that.</li>
+<li>Change a stance any time (free). Press <b>Control</b> (1 CP, commander free) to give exact orders instead: Move, Attack, skills, Defend +1, Act earlier.</li>
+<li>The bar under <b>Your orders</b> is the unit's round: each block is an action, longer = takes more time. <b>Red = unused AP</b>, which is lost.</li>
+<li>In Attack mode, enemies show <b>✓ in reach</b> or <b>✕ N rnds</b> (too far this round).</li>
+<li>The <b>turn order</b> strip (top) shows who acts 1st, 2nd, 3rd. Units in the same group act at the same time.</li>
+<li>READY warns you if a controlled unit would waste AP.</li>
+</ul>
+
+<h3>2 · What is happening?</h3>
+<ul>
+<li>The round plays <b>step by step</b>, one tier at a time. A banner says who acts, orange rings mark them, arrows show who they attack.</li>
+<li>The timeline at the bottom shows each acting unit's actions over time (AP = time).</li>
+<li>After each step a card lists what happened in plain words. Use <b>Next step</b>, <b>Replay step</b>, or <b>Auto</b> (plays without stopping). <b>Cam</b> turns camera following on/off.</li>
+</ul>
+
+<h3>3 · What happened, and why?</h3>
+<ul>
+<li>After the round, the <b>What happened</b> card lists each of your units: HP before → after, kills, and <b>why an order failed</b> (⊘), e.g. "target out of reach (needed ~82 AP, had 75)".</li>
+<li>On the map: orange <b>−N</b> chips = damage taken, <b>⊘</b> = a failed order (tap it), <b>✕</b> = a unit died there, grey trails = where enemies moved.</li>
+<li>Reopen the card with ≣ in the top bar, or watch the round again with ↺.</li>
+</ul>
 
 <h3>A round</h3>
 <ul>
-<li><b>Planning</b> — both players plan at the same time. Press <b>Ready</b> when done (online: a ${CONFIG.planningTimerSec}s timer is the safety net).</li>
-<li><b>Resolution</b> — speed tiers act from fastest to slowest; buildings act last. Inside a tier everyone acts <i>at once</i> on a shared timeline where an action's AP cost is its duration.</li>
-<li><b>Economy</b> — income, construction and production advance one step.</li>
+<li><b>Planning</b>: both players plan at the same time. Press <b>Ready</b> when done (online: a ${CONFIG.planningTimerSec}s timer is the safety net).</li>
+<li><b>Resolution</b>: speed tiers act from fastest to slowest; buildings act last. Inside a tier everyone acts <i>at once</i> on a shared timeline where an action's AP cost is its duration.</li>
+<li><b>Economy</b>: income, construction and production advance one step.</li>
 </ul>
 
 <h3>AP, tiers and command points</h3>
@@ -57,11 +83,10 @@ ${['commander', 'fighter', 'assassin', 'ranged', 'tank'].map(row).join('')}</tab
 <li>Build near your HQ or an Outpost. Units out of combat for ${CONFIG.economy.outOfCombatRounds} rounds slowly heal (faster near base). Paid heal: ${CONFIG.economy.healCost} supply near base.</li>
 </ul>
 
-<h3>Reading a round</h3>
+<h3>Name plates</h3>
 <ul>
-<li>Every unit has a <b>name plate</b>: the black/white square is its tier (when it acts), then its name, HP bar and defends. White plates are the white side, black plates the black side.</li>
-<li>During resolution, the units acting right now get an <b>orange ring</b>; everyone else is dimmed. A banner says which tier is acting and who is in it.</li>
-<li>The <b>feed</b> (top left) explains each hit, parry, skill and death as it happens. After the round, a summary appears. Tap <b>Report</b> (or ≣ in the top bar) for the full list, or ↺ to replay.</li>
+<li>Every unit has a <b>name plate</b>: the square is its tier (when it acts), then its name and HP bar. White plates are the white side, black plates the black side.</li>
+<li>Tap <b>ⓘ</b> next to any term for a short explanation. <b>◎</b> in the top bar shows all details (every zone, plan line and defend pip).</li>
 </ul>
 
 <h3>Controls</h3>

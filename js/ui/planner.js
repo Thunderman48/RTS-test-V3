@@ -133,6 +133,7 @@ export class Planner {
     plan.actions.push(a);
     plan.hist.push('a');
     this.g.changed();
+    this.g.emit?.('order', { id, kind: a.kind });
     return true;
   }
 

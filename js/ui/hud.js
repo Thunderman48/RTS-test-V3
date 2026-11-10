@@ -33,7 +33,7 @@ export function renderTopbar(g) {
   $('tb-supply').innerHTML = `${sup}<small style="font-size:10px;color:#8a8a8a"> +${inc}</small>`;
   const c = g.planner.cp();
   $('tb-cp').textContent = `${c.leftBase}/${cpPools(s, me).base}`;
-  $('btn-pause').classList.toggle('hidden', g.mode !== 'ai');
+  $('btn-pause').classList.toggle('hidden', !g.isLocal);
   $('btn-replay').disabled = !g.lastRound || g.phase !== 'planning';
   $('btn-log').disabled = !g.digest && (!g.report || !g.report.lines.length);
   $('btn-showall').classList.toggle('on', !!g.showAll);
@@ -185,6 +185,15 @@ export function renderPanel(g) {
   if (g.panelTab === 'build') return renderBuildMenu(g, show);
   const sel = g.selection.map(id => g.entity(id)).filter(Boolean);
   if (!sel.length) { panel.classList.remove('show'); return; }
+  // While aiming on small screens, shrink the panel to the instruction bar so the map stays visible
+  const small = window.innerWidth < 720 || window.innerHeight < 500;
+  if (small && g.uiMode && !g.uiMode.startsWith('build:')) {
+    const u = sel[0];
+    const nm = u.id[0] === 'u' ? unitDef(u).name : '';
+    show(`<div class="aimbar"><span class="aim-who">${glyph(u.type, u.owner, 16)} ${esc(nm)}</span>${modeNote(g)}</div>`);
+    bindPanel(g, u.id[0] === 'u' && u.owner === g.me ? u : null, null, g.ownSelected());
+    return;
+  }
   const e = sel[0];
   if (sel.length > 1) return renderMulti(g, sel, show);
   if (e.id[0] === 'u') return e.owner === g.me ? renderOwnUnit(g, e, show) : renderEnemyUnit(g, e, show);

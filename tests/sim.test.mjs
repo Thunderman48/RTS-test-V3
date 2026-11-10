@@ -5,6 +5,7 @@ import { resolveRound, damageAfter } from '../js/sim/resolve.js';
 import { validateOrders } from '../js/sim/orders.js';
 import { aiOrders } from '../js/ai/ai.js';
 import { buildDigest } from '../js/ui/log.js';
+import { createTutorialState, tutorialEnemyOrders } from '../js/tutorial/scenario.js';
 
 let pass = 0, fail = 0;
 function test(name, fn) {
@@ -282,6 +283,25 @@ test('round digest: HP before/after, kills, failure reasons with AP numbers', ()
   assert(rfar.fails.length === 1 && /out of reach/.test(rfar.fails[0]), 'failure reason listed');
   assert(rf.hpBefore === 90 && rf.controlled, 'hp before + controlled');
   assert(d.enemy.lost === 1, 'enemy loss counted');
+});
+
+test('tutorial scenario: attacking as taught wins within a few rounds', () => {
+  let s = createTutorialState();
+  const ids = s.tutorialIds;
+  let rounds = 0;
+  while (s.buildings.some(b => b.id === ids.outpost) && rounds < 8) {
+    const o = emptyOrders();
+    const tgt = [ids.e1, ids.e2].find(id => s.units.some(u => u.id === id)) || ids.outpost;
+    for (const key of ['fighter', 'commander']) {
+      if (s.units.some(u => u.id === ids[key])) o.units[ids[key]] = { ...emptyPlan(), actions: [{ kind: 'attack', target: tgt, moveAp: 45 }, { kind: 'attack', target: tgt, moveAp: 5 }] };
+    }
+    const r = resolveRound(s, [o, tutorialEnemyOrders(s)]);
+    if (rounds === 0) assert(!r.state.units.some(u => u.id === ids.e1), 'first enemy dies in round 1');
+    s = r.state; rounds++;
+  }
+  assert(!s.buildings.some(b => b.id === ids.outpost), 'outpost destroyed');
+  assert(s.units.filter(u => u.owner === 0).length === 3, 'no losses');
+  console.log(`      (outpost destroyed in round ${rounds})`);
 });
 
 test('production: unit spawns after its build rounds, at the end of the round', () => {

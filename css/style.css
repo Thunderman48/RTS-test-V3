@@ -378,3 +378,43 @@ button { font-family: inherit; cursor: pointer; touch-action: manipulation; }
   .tb-item.goal .tb-k { display: none; }
   #btn-showall { display: none; }
 }
+
+/* ---------- tutorial coach ---------- */
+#coach {
+  position: absolute; left: calc(8px + var(--sal)); top: calc(96px + var(--sat)); width: min(420px, calc(100vw - 16px));
+  background: var(--paper); color: var(--ink); border: 3px solid var(--ink); box-shadow: 8px 8px 0 var(--accent); padding: 12px 14px; z-index: 8;
+}
+.co-k { font-size: 10px; letter-spacing: .16em; text-transform: uppercase; color: #6a6a6a; }
+.co-title { font-size: 18px; font-weight: 900; letter-spacing: .06em; text-transform: uppercase; margin: 2px 0 4px; }
+.co-text { font-size: 14px; line-height: 1.45; }
+.co-btns { display: flex; gap: 8px; justify-content: flex-end; align-items: center; margin-top: 8px; }
+.co-btns .btn { color: var(--paper); }
+.co-btns .btn.primary { background: var(--ink); color: var(--paper); border-color: var(--ink); height: 42px; padding: 0 18px; }
+.co-btns .btn.mini { background: transparent; color: #555; border-color: #999; }
+#coach-ptr { position: fixed; left: 0; top: 0; z-index: 7; pointer-events: none; color: var(--accent); font-size: 34px; text-shadow: 0 0 3px #000, 0 0 6px #000; animation: bob .8s ease-in-out infinite alternate; display: none; }
+@keyframes bob { from { margin-top: -6px; } to { margin-top: 6px; } }
+.tut-hl { outline: 4px solid var(--accent) !important; outline-offset: 2px; animation: hl 1s ease-in-out infinite alternate; position: relative; z-index: 3; }
+@keyframes hl { from { outline-color: var(--accent); } to { outline-color: rgba(255,74,28,.25); } }
+@media (max-width: 720px) {
+  #coach { left: 50%; transform: translateX(-50%); top: calc(92px + var(--sat)); padding: 8px 10px; box-shadow: 4px 4px 0 var(--accent); }
+  .co-title { font-size: 14px; }
+  .co-text { font-size: 12.5px; }
+  .co-btns .btn.primary { height: 36px; }
+}
+@media (max-height: 500px) and (orientation: landscape) {
+  #coach { top: calc(50px + var(--sat)); left: calc(8px + var(--sal)); right: auto; transform: none; width: min(380px, 44vw); padding: 8px 10px; }
+  #coach .co-text { max-height: 18vh; overflow-y: auto; }
+  #coach .co-title { font-size: 14px; }
+  #coach .co-btns { margin-top: 4px; }
+  #coach .co-btns .btn.primary { height: 34px; }
+  .co-text { font-size: 12px; }
+}
+
+body.tutorial #feed { display: none !important; }
+.aimbar .aim-who { display: flex; align-items: center; gap: 6px; font-weight: 800; font-size: 13px; margin-bottom: 4px; }
+.aimbar .modebar { margin-bottom: 0; }
+@media (max-width: 720px), (max-height: 500px) {
+  body.aiming #coach .co-text, body.aiming #coach .co-btns, body.aiming #coach .co-k { display: none; }
+  body.aiming #coach { padding: 6px 10px; }
+  #coach .co-text { max-height: 22vh; overflow-y: auto; }
+}

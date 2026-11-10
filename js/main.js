@@ -14,6 +14,8 @@ import { ribbon, ring, dashedRing, disc, makeUnitMesh, makeBuildingMesh, PALETTE
 import { glyph } from './ui/icons.js';
 import { showGlossary } from './ui/glossary.js';
 import { approachAP } from './sim/stances.js';
+import { Tutorial } from './tutorial/tutorial.js';
+import { createTutorialState, tutorialEnemyOrders } from './tutorial/scenario.js';
 import { Input } from './ui/input.js';
 import { Planner } from './ui/planner.js';
 import { renderTopbar, renderStrip, renderPanel, toast } from './ui/hud.js';
@@ -58,12 +60,14 @@ class Game {
     this.view.updateFog([{ x: 24, z: 16, r: 100 }]);
     this.syncPlanningDisplay(true);
     $('help-body').innerHTML = helpHTML();
+    $('help-tutorial').onclick = () => { location.hash = 'tutorial'; location.reload(); };
     this.loop();
   }
 
   // ======================================================================== DOM
   bindDOM() {
     $('m-ai').onclick = () => this.startAI();
+    $('m-tut').onclick = () => { $('menu').classList.add('hidden'); this.startTutorial(); };
     $('m-host').onclick = () => this.startHost();
     $('m-join').onclick = () => this.startJoin($('m-code').value.trim().toUpperCase());
     $('m-code').addEventListener('keydown', e => { if (e.key === 'Enter') $('m-join').click(); });
@@ -100,7 +104,7 @@ class Game {
 
   openPause() {
     if (this.phase === 'menu') return;
-    if (this.mode === 'ai') { this.paused = true; $('pause-title').textContent = 'Paused'; }
+    if (this.isLocal) { this.paused = true; $('pause-title').textContent = 'Paused'; }
     else $('pause-title').textContent = 'Menu (online games keep running)';
     $('pausemenu').classList.remove('hidden');
   }
@@ -112,10 +116,37 @@ class Game {
   emit(name, data) { for (const fn of this.listeners[name] || []) { try { fn(data); } catch (e) { console.error(e); } } }
 
   // ======================================================================== modes
+  get isLocal() { return this.mode === 'ai' || this.mode === 'tutorial'; }
+
   startAI() {
     this.mode = 'ai'; this.me = 0;
     this.state = createGame((Math.random() * 1e9) | 0);
     this.beginMatch();
+  }
+
+  startTutorial() {
+    $('confirm').classList.add('hidden');
+    this.mode = 'tutorial'; this.me = 0;
+    this.state = createTutorialState();
+    this.beginMatch();
+    const portrait = window.innerHeight > window.innerWidth;
+    this.view.cam = { x: portrait ? 16 : 19.5, z: 12.8, dist: portrait ? 24 : 26, yaw: portrait ? Math.PI / 2 : 0, pitch: 1.08 };
+    this.tutorial = new Tutorial(this);
+  }
+
+  // fresh vs-AI game (used at the end of the tutorial)
+  restartAI() { location.hash = 'ai'; location.reload(); }
+
+  tutDone() { try { return !!localStorage.getItem('tiers-tut-done'); } catch { return true; } }
+
+  offerTutorial() {
+    const el = $('confirm');
+    el.innerHTML = `<div class="card"><h2>New here?</h2>
+      <p class="note" style="font-size:14px;color:#d9d9d6">A 5-minute guided match teaches you how to read a round, give orders and follow what happens.</p>
+      <div class="tc-btns two"><button class="btn" id="of-skip">Skip</button><span></span><button class="btn primary" id="of-tut">Start tutorial ▸</button></div></div>`;
+    el.classList.remove('hidden');
+    $('of-skip').onclick = () => { el.classList.add('hidden'); try { localStorage.setItem('tiers-tut-done', '1'); } catch {} };
+    $('of-tut').onclick = () => { el.classList.add('hidden'); this.startTutorial(); };
   }
 
   async startHost() {
@@ -220,15 +251,12 @@ class Game {
   beginMatch() {
     $('menu').classList.add('hidden'); $('lobby').classList.add('hidden');
     $('hud').classList.remove('hidden');
-    $('tb-timer-wrap').classList.toggle('hidden', this.mode === 'ai');
+    $('tb-timer-wrap').classList.toggle('hidden', this.isLocal);
     this.view.initMap(this.state.map);
     this.homeCamera();
     this.lastSeen.clear(); this.trails.clear();
     this.beginPlanning();
-    if (this.mode === 'ai' && !localStorage.getItem('tiers-help-seen')) {
-      try { localStorage.setItem('tiers-help-seen', '1'); } catch {}
-      $('help').classList.remove('hidden');
-    }
+    if (this.mode === 'ai' && !this.tutDone()) this.offerTutorial();
   }
 
   // Own base on the left (landscape) or at the bottom (portrait)
@@ -309,6 +337,7 @@ class Game {
   armyCount() { return armyCount(this.state, this.me); }
 
   changed(soft = false) {
+    document.body.classList.toggle('aiming', !!this.uiMode && !this.uiMode.startsWith('build:'));
     this.dirty = true;
     this.topDirty = true;
     if (!soft) this.panelDirty = true;
@@ -546,6 +575,7 @@ class Game {
     if (this.phase !== 'planning') return;
     const { p, e } = this.pickEntity(cx, cy);
     if (!p) return;
+    if (this.tutorial && !this.tutorial.allows('tap', { e, p, mode: this.uiMode })) return;
     const mode = this.uiMode;
     const own = this.ownSelected();
     const P = this.planner;
@@ -558,6 +588,7 @@ class Game {
     }
     if (mode === 'advance') {
       P.setStance(own.map(u => u.id), 'advance', p); this.uiMode = null; this.changed();
+      this.emit('stance', { stance: 'advance', ids: own.map(u => u.id) });
       return;
     }
     if (mode === 'move') {
@@ -601,6 +632,7 @@ class Game {
       } else this.selection = [e.id];
       this.panelTab = 'orders';
       this.changed();
+      this.emit('select', { id: e.id });
       return;
     }
     if (isEnemy && allControlled) { this.groupAttack(own, e); this.changed(); return; }
@@ -637,6 +669,7 @@ class Game {
   }
 
   panelAction(act, u, b, units) {
+    if (this.tutorial && !this.tutorial.allows('panel', act)) return;
     const P = this.planner;
     const own = units && units.length ? units : this.ownSelected();
     const [k, arg] = act.split(':');
@@ -648,6 +681,7 @@ class Game {
       case 'control':
         for (const x of own) if (!P.control(x.id)) break;
         this.panelTab = 'orders'; this.uiMode = null;
+        this.emit('control', { ids: own.map(x => x.id) });
         break;
       case 'release': for (const x of own) P.clear(x.id); this.panelTab = 'orders'; this.uiMode = null; break;
       case 'skill': {
@@ -659,13 +693,13 @@ class Game {
         break;
       }
       case 'wait': if (u) P.addAction(u.id, { kind: 'wait', ap: 10 }); break;
-      case 'pre': for (const x of own) P.prepaid(x.id, arg, 1); break;
+      case 'pre': for (const x of own) if (P.prepaid(x.id, arg, 1)) this.emit('prepaid', { id: x.id, field: arg }); break;
       case 'undo': if (u) P.undo(u.id); break;
       case 'clear': for (const x of own) P.clear(x.id); break;
       case 'heal': if (u) P.toggleHeal(u.id); break;
       case 'stance':
         if (arg === 'advance') { this.uiMode = 'advance'; toast('Tap the point to advance towards'); }
-        else P.setStance(own.map(x => x.id), arg);
+        else { P.setStance(own.map(x => x.id), arg); this.emit('stance', { stance: arg, ids: own.map(x => x.id) }); }
         break;
       case 'prod': P.addProduction(b.id, arg); break;
       case 'unprod': P.removeProduction(+arg); break;
@@ -712,6 +746,7 @@ class Game {
 
   ready(force = false) {
     if (this.phase !== 'planning') return;
+    if (this.tutorial && !force && !this.tutorial.allows('ready')) return;
     if (!force) {
       const issues = this.readyIssues();
       if (issues.length) {
@@ -732,9 +767,9 @@ class Game {
     this.lastOrders = orders;
     this.emit('ready');
     this.uiMode = null;
-    if (this.mode === 'ai') {
+    if (this.isLocal) {
       let o1;
-      try { o1 = aiOrders(this.state, 1); } catch (e) { console.error(e); o1 = emptyOrders(); }
+      try { o1 = this.mode === 'tutorial' ? tutorialEnemyOrders(this.state) : aiOrders(this.state, 1); } catch (e) { console.error(e); o1 = emptyOrders(); }
       this.resolveLocal([orders, o1]);
     } else if (this.mode === 'host') {
       this.myOrders = orders;
@@ -1081,13 +1116,14 @@ class Game {
     if (this.phase !== 'menu' && (this.frame % 10 === 0 || this.topDirty)) { this.topDirty = false; renderTopbar(this); this.updateGoal(); }
     this.tickTimer();
     this.updateChips();
+    if (this.tutorial) this.tutorial.tick();
     this.texts.update(dt);
     this.view.render();
   }
 
   tickTimer() {
     const el = $('tb-timer');
-    if (this.mode === 'ai' || !this.deadline || (this.phase !== 'planning' && this.phase !== 'waiting')) { if (el) el.textContent = '—'; return; }
+    if (this.isLocal || !this.deadline || (this.phase !== 'planning' && this.phase !== 'waiting')) { if (el) el.textContent = '—'; return; }
     const left = Math.max(0, (this.deadline - performance.now()) / 1000);
     el.textContent = Math.ceil(left);
     el.classList.toggle('warn', left < 15);
@@ -1286,7 +1322,11 @@ class Game {
 }
 
 window.addEventListener('DOMContentLoaded', () => {
-  try { window.game = new Game(); }
+  try {
+    window.game = new Game();
+    if (location.hash === '#ai') { history.replaceState(null, '', location.pathname); window.game.startAI(); }
+    else if (location.hash === '#tutorial') { history.replaceState(null, '', location.pathname); $('menu').classList.add('hidden'); window.game.startTutorial(); }
+  }
   catch (e) {
     console.error(e);
     document.body.insertAdjacentHTML('beforeend', `<div class="overlay"><div class="card"><h2>Could not start</h2><p>${String(e.message || e)}</p><p class="fine">This game needs WebGL. Try another browser.</p></div></div>`);

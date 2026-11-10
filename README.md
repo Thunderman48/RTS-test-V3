@@ -7,7 +7,33 @@ A playable prototype of the **Turn-Based RTS (Design Doc V3)**. It combines RTS 
 * **Works on phones**: tap to select and order, drag to pan, pinch to zoom, twist to rotate.
 * **Static site** with no build step and no server, so it runs on GitHub Pages.
 
-**Versions:** this is **V2**. The original prototype is saved in [`v1/`](v1/) and stays playable at `…/RTS-test-V3/v1/` (there's also a link on the menu).
+**Versions:** this is **V3**. Earlier versions stay playable: [`v1/`](v1/) at `…/RTS-test-V3/v1/` and [`v2/`](v2/) at `…/RTS-test-V3/v2/`.
+
+### What changed in V3: easy to understand and control
+V3 is built around three questions: *What will my units do? What just happened, and why? What should I do next?*
+* **Guided tutorial (~5 min).** It's on the menu and is offered the first time you play vs AI. A coach card gives one instruction at a time, highlights what to tap, and blocks anything else. You fight a small scripted skirmish: select, stance, Control, attack, Defend +1, turn order, Ready, step through the round, read the report, use the hero, destroy an Outpost.
+* **Step-by-step rounds:**
+  * Each tier plays, then stops on a card that says in words what happened.
+  * Buttons: **Next step**, **Replay step**, **Auto** (no stopping), **Skip**.
+  * The camera frames the units acting in that tier, and arrows show who they attack.
+  * A timeline at the bottom shows every acting unit's actions over time.
+  * Dying units fall over and leave an ✕.
+* **"What happened" card after every round:**
+  * For each of your units: HP before → after, what it did, kills, and **why an order failed** (e.g. "target out of reach, needed ~82 AP, had 75").
+  * It also summarises the enemy and your base.
+  * Damage (−N) and failed-order (⊘) chips stay on the map while you plan.
+* **Planning that explains itself:**
+  * Turn order reads 1st / 2nd / 3rd.
+  * Each unit card says when it acts and who acts with it, and has a "Last round" line.
+  * The order bar shows unused AP in red, and disabled buttons say why.
+  * In Attack mode, enemies are tagged ✓ in reach / ✕ N rounds.
+  * Pressing READY warns about wasted AP.
+  * Every key term has a tap-to-explain ⓘ.
+  * A goal compass points at the enemy HQ.
+* **Less clutter:**
+  * Name plates show tier, name and HP.
+  * Zones and plan lines show for the selection only; ◎ shows everything.
+  * On phones, the panel shrinks to one line while you aim.
 
 ### What changed in V2
 * **Commander is a hero.** It is always free to control and has **3 skills**, each with its own cooldown:
@@ -121,8 +147,10 @@ js/sim/                       pure simulation (no DOM): state, map, nav (A*), or
                               resolve (tier timeline, combat, interrupts), economy
 js/ai/ai.js                   AI opponent (same orders API and rules as a player)
 js/render/                    Three.js scene, models, playback of the resolution log, effects
-js/ui/                        input (mouse + touch), planner (draft orders), HUD, help, log (feed + report)
-v1/                           the saved V1 prototype (playable at /v1/)
+js/ui/                        input (mouse + touch), planner (draft orders), HUD, help, glossary,
+                              log (feed, tier cards, round digest)
+js/tutorial/                  tutorial scenario (scripted enemy) and coach steps
+v1/, v2/                      saved earlier versions (playable at /v1/ and /v2/)
 js/net/net.js                 PeerJS host/join + message queue
 vendor/                       three.js r160 and PeerJS 1.5.4 (MIT), bundled so Pages needs no CDN
 tests/sim.test.mjs            headless rule tests (node tests/sim.test.mjs)
@@ -134,4 +162,4 @@ tests/sim.test.mjs            headless rule tests (node tests/sim.test.mjs)
 node tests/sim.test.mjs
 ```
 
-There are 23 rule tests. They cover the commander's skills, free control and free stance changes, tier order and upgrades, AP-as-duration, exact ties, control zones, dash cancellation, parry and counters, overwatch, shot blocking and frags over walls, defend ordering, AP drain and tier debuff, wounds, CP limits, production timing, the win condition, a full AI-vs-AI match, and determinism (host and guest compute identical results).
+There are 25 tests. They cover the round digest and the tutorial scenario, the commander's skills, free control and free stance changes, tier order and upgrades, AP-as-duration, exact ties, control zones, dash cancellation, parry and counters, overwatch, shot blocking and frags over walls, defend ordering, AP drain and tier debuff, wounds, CP limits, production timing, the win condition, a full AI-vs-AI match, and determinism (host and guest compute identical results).
