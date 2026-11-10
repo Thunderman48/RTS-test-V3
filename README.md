@@ -1,1 +1,119 @@
-# RTS-test-V3
+# TIERS: Turn-Based RTS prototype
+
+A playable prototype of the **Turn-Based RTS (Design Doc V3)**. It combines RTS economy and base building with tabletop-style combat. Both players plan at the same time, then speed tiers act from fastest to slowest.
+
+* **Top-down 3D low-poly** (Three.js) in a black & white geometric style: white pieces vs black pieces.
+* **Solo vs AI** and **online multiplayer** (room code, peer-to-peer).
+* **Works on phones**: tap to select and order, drag to pan, pinch to zoom, twist to rotate.
+* **Static site** with no build step and no server, so it runs on GitHub Pages.
+
+## Play it on GitHub Pages
+
+1. In the repo, open **Settings → Pages**.
+2. Under **Build and deployment**, set *Source* to **Deploy from a branch**. Pick the branch (`main` after merging, or `claude/bold-brown-o46yid`) and the **/ (root)** folder, then save.
+3. After a minute the game is live at `https://thunderman48.github.io/RTS-test-V3/`.
+
+Local play: run `python3 -m http.server 8080` in the repo, then open <http://localhost:8080>. ES modules need a server, so opening the file directly won't work.
+
+## Online multiplayer
+
+One player presses **Host online game** and shares the 5-letter code. The other player enters it and presses **Join**. The two browsers connect directly over WebRTC. The free public PeerJS broker is used only to introduce them. The host is white and runs the authoritative simulation. The guest is black and replays the same deterministic resolution locally for its animation.
+
+Some very strict networks (certain school or corporate Wi-Fi) block peer-to-peer connections. In that case try mobile data.
+
+## How a round works
+
+1. **Planning.** Both players plan at once and press **Ready**. In multiplayer, a 90 s timer is a safety net. When it runs out, the orders given so far count and every other unit follows its stance.
+2. **Resolution.** Tiers act from 8 down to 1, and **buildings act last**. Inside a tier, every unit from both sides acts at the same time on a shared timeline, where an action's AP cost is also its duration. Playback can be run at 1×/2×/4× or skipped, and the last round can be replayed (↺).
+3. **Economy tick.** Income, construction and production each advance one step.
+
+## What's implemented from the design doc
+
+| Area | Status |
+|---|---|
+| Simultaneous planning, Ready button, MP timer, pause in solo only | ✅ |
+| Speed tiers 4/5/6, fixed AP, tier upgrades 15 + 25 AP (turn order only, up to tier 8) | ✅ |
+| Shared timeline inside a tier; AP cost = duration; exact ties both happen | ✅ |
+| Hit check at the moment of the attack; interrupts (parry counters, overwatch) resolve immediately | ✅ |
+| Free movement with AP per distance, pathing around walls/buildings, stop on contact | ✅ |
+| Move to place / follow unit, attack unit (follows target, retargets to closest reachable enemy, else cancelled) | ✅ |
+| Control zones (slow enemies inside, last until owner moves/acts/is pushed, no stacking) | ✅ |
+| Defends (free per unit + bought with AP; strongest simultaneous hit uses defend first) | ✅ |
+| Parry, overwatch, shot blocking (first enemy / walls), place shots pass over, cover buildings | ✅ |
+| Health lowers AP from next round | ✅ |
+| AP drain & tier debuffs (remove actions from end of plan; tier now or next round) | ✅ (Commander *Disrupt*) |
+| 4 roles + commander with role skills and cooldowns; enemy cooldown revealed once used | ✅ |
+| Commander: free orders, extra CP in range, revive zone (hold it for 3 rounds) | ✅ |
+| Stances: Guard, Hold, Hold ground, Retreat (+ **Advance**, see below); stance plans previewed | ✅ |
+| CP: direct order 1 CP/unit, stance change 1 CP per 4 units, production boost 1 CP | ✅ |
+| Fog of war, last-known markers, last round's enemy movement trails, enemy base tier/stance shown | ✅ |
+| Buildings act last, turrets shoot closest enemy, spawning at round end, outposts as retreat points | ✅ |
+| Economy on the round clock, construction/production over rounds, healing (out of combat, near base, paid) | ✅ |
+| Win by destroying the enemy HQ; round limit as stalemate protection | ✅ |
+
+### Decisions made for the prototype (doc left these open)
+
+* **Base AP 100.** All other AP costs are scaled to it.
+* **Economy:** one resource, *Supply*. The HQ gives +8/round and each captured resource node gives +4/round. A node is captured when only one side has units near it at round end. There are no workers.
+* **Advance stance** (the doc says "more stances, such as advancing toward a point, are still to be designed"). The unit walks toward a chosen point and fights enemies it meets on the way.
+* **Skills:** Assassin *Dash*, Fighter *Parry* + *Shove* (push), Ranged *Frag* (place-targeted AoE, hits allies, unparryable), Tank *Fortify* (+defends, +armor), Commander *Disrupt* (AP drain + tier −1).
+* **Defend formula:** `damage × 20/(20+armor) × (defended ? clamp(0.2, 0.75, 0.4 + (damage − armor)/80) : 1)`.
+* **Shots:** ranged basic attacks are line shots aimed at a place (blocked by the first enemy or wall). Frags are place shots that pass over everything.
+* **Match size:** small map (48×32), aimed at roughly 15–25 minute matches. The round limit is 80, after which the side with the most building HP wins.
+* **Defender bonus** (comeback tool): +1 free defend within 8 of your own HQ. Healing is faster near your base.
+* **Army cap:** 16 units, not counting the commander.
+
+### Not in this prototype yet
+
+Factions, healer units, squads, multi-HQ modes, the "held decisions" retargeting variants, a front-facing shield, and in-depth economy (workers, multiple resources). Fog of war is enforced by each client, so it is not cheat-proof.
+
+## All numbers live in one file
+
+Every tunable value is in [`js/config.js`](js/config.js): AP, tier costs, wound penalties, movement, zones, defends, parry, overwatch, CP, economy, unit stats, building stats and stance ranges. Edit it and reload.
+
+| Unit | Tier | HP | Armor | Free defends | Basic attack | Skill (cooldown) |
+|---|---|---|---|---|---|---|
+| Commander ◆ | 5 | 120 | 8 | 2 | 18 dmg / 25 AP | Disrupt (3) |
+| Fighter ■ | 5 | 90 | 8 | 1 | 16 dmg / 25 AP | Shove (2), Parry |
+| Assassin ▲ | 6 | 60 | 4 | 1 | 24 dmg / 20 AP | Dash (2) |
+| Ranged ● | 5 | 60 | 3 | 1 | 14 dmg / 30 AP, range 10 | Frag (3), Overwatch |
+| Tank ⬣ | 4 | 140 | 12 | 2 | 12 dmg / 30 AP | Fortify (3) |
+
+Other key costs: extra defend 20 AP · parry 20 AP · overwatch charge 35 AP · base CP 3 (+1 per Command Post, +2 commander CP in range 7) · start supply 50.
+
+## Controls
+
+| | Touch | Desktop |
+|---|---|---|
+| Select unit / building | tap | click |
+| Move selected | tap ground | click ground |
+| Attack / shoot | tap enemy | click enemy |
+| Add to selection | **Multi** button or long-press | **Multi** button |
+| Pan / zoom / rotate | drag / pinch / two-finger twist | drag / wheel / right-drag, `WASD` `Q` `E` |
+| Ready / skip playback | **READY** / **Skip** | `Space` |
+| Cancel / undo | panel buttons | `Esc` / `Backspace` |
+
+The unit panel has Move (with an AP slider and a reach circle), Attack/Shoot, the unit's skill, Wait, Defend+, Tier+, Parry/Overwatch, Stance, Heal, Undo and Clear. Select an HQ or Barracks to train units. Use **Build** to place buildings.
+
+## Code layout
+
+```
+index.html, css/style.css     UI shell (black & white, responsive, safe-area aware)
+js/config.js                  all tunable numbers
+js/sim/                       pure simulation (no DOM): state, map, nav (A*), orders/CP, stances,
+                              resolve (tier timeline, combat, interrupts), economy
+js/ai/ai.js                   AI opponent (same orders API and rules as a player)
+js/render/                    Three.js scene, models, playback of the resolution log, effects
+js/ui/                        input (mouse + touch), planner (draft orders), HUD, help
+js/net/net.js                 PeerJS host/join + message queue
+vendor/                       three.js r160 and PeerJS 1.5.4 (MIT), bundled so Pages needs no CDN
+tests/sim.test.mjs            headless rule tests (node tests/sim.test.mjs)
+```
+
+## Tests
+
+```
+node tests/sim.test.mjs
+```
+
+There are 19 rule tests. They cover tier order and upgrades, AP-as-duration, exact ties, control zones, dash cancellation, parry and counters, overwatch, shot blocking and frags over walls, defend ordering, AP drain and tier debuff, wounds, CP limits, production timing, the win condition, a full AI-vs-AI match, and determinism (host and guest compute identical results).
