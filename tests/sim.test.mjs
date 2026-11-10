@@ -103,7 +103,7 @@ test('dash is cancelled when starting inside an enemy control zone', () => {
   const f = addUnit(s, 1, 'fighter', 21.5, 16); f.stance = 'hold';
   const { state, log } = resolveRound(s, orders({ [a.id]: { actions: [{ kind: 'dash', x: 20, z: 25 }] } }));
   assert(allEvents(log).some(e => e.type === 'cancel' && e.id === a.id), 'cancel event');
-  assert(state.units.find(u => u.id === a.id).cd === 0, 'cancelled dash does not go on cooldown');
+  assert(!state.units.find(u => u.id === a.id).cds.dash, 'cancelled dash does not go on cooldown');
 });
 
 test('dash moves a fixed straight line and goes on cooldown', () => {
@@ -111,8 +111,9 @@ test('dash moves a fixed straight line and goes on cooldown', () => {
   const a = addUnit(s, 0, 'assassin', 20, 10);
   const { state } = resolveRound(s, orders({ [a.id]: { actions: [{ kind: 'dash', x: 20, z: 25 }] } }));
   const u = state.units.find(x => x.id === a.id);
-  assert(Math.abs(u.z - 10 - CONFIG.units.assassin.skill.length) < 0.05, 'dash length ' + (u.z - 10));
-  assert(u.cd === CONFIG.units.assassin.skill.cd, 'cooldown ' + u.cd);
+  const dash = CONFIG.units.assassin.skills[0];
+  assert(Math.abs(u.z - 10 - dash.length) < 0.05, 'dash length ' + (u.z - 10));
+  assert(u.cds.dash === dash.cd, 'cooldown ' + u.cds.dash);
   const v = validateOrders(state, 0, orders({ [a.id]: { actions: [{ kind: 'dash', x: 0, z: 0 }] } })[0]);
   assert(v.units[a.id].actions.length === 0, 'skill rejected while on cooldown');
 });
@@ -212,6 +213,56 @@ test('CP limits direct orders; extra units follow their stance', () => {
   for (const id of ids) o[id] = { actions: [{ kind: 'wait', ap: 10 }] };
   const v = validateOrders(s, 0, orders(o)[0]);
   assert(Object.keys(v.units).length === CONFIG.cp.base, 'only base CP worth of orders: ' + Object.keys(v.units).length);
+});
+
+test('commander is free to control; stance changes are free', () => {
+  const s = arena();
+  const c = addUnit(s, 0, 'commander', 8, 8);
+  const ids = [];
+  for (let i = 0; i < 6; i++) ids.push(addUnit(s, 0, 'fighter', 10 + i * 1.2, 20).id);
+  const o = { [c.id]: { actions: [{ kind: 'wait', ap: 5 }] } };
+  for (const id of ids) o[id] = { actions: [{ kind: 'wait', ap: 5 }] };
+  const ord = orders(o)[0];
+  for (const id of ids) ord.stances[id] = { stance: 'hold' };
+  const v = validateOrders(s, 0, ord);
+  assert(v.units[c.id], 'commander accepted');
+  assert(Object.keys(v.units).length === CONFIG.cp.base + 1, 'base CP + free commander');
+  assert(Object.keys(v.stances).length === 6, 'all stance changes accepted');
+});
+
+test('commander Rally: allies in range act one tier earlier', () => {
+  const s = arena();
+  const c = addUnit(s, 0, 'commander', 20, 16);
+  const near = addUnit(s, 0, 'tank', 22, 16);
+  const far = addUnit(s, 0, 'tank', 32, 16);
+  const { state, log } = resolveRound(s, orders({ [c.id]: { buffs: ['rally'], actions: [{ kind: 'wait', ap: 5 }] }, [near.id]: { actions: [{ kind: 'wait', ap: 5 }] }, [far.id]: { actions: [{ kind: 'wait', ap: 5 }] } }));
+  const segOf = id => log.segments.find(sg => sg.kind === 'tier' && sg.units.includes(id)).tier;
+  assert(segOf(c.id) === 6 && segOf(near.id) === 5 && segOf(far.id) === 4, `tiers ${segOf(c.id)} ${segOf(near.id)} ${segOf(far.id)}`);
+  assert(state.units.find(u => u.id === c.id).cds.rally > 0, 'rally on cooldown');
+});
+
+test('commander Sweep hits every enemy around it and cannot be parried', () => {
+  const s = arena();
+  const c = addUnit(s, 0, 'commander', 20, 16);
+  const e1 = addUnit(s, 1, 'fighter', 21.2, 16);
+  const e2 = addUnit(s, 1, 'fighter', 19, 16.6);
+  const e3 = addUnit(s, 1, 'fighter', 26, 16);
+  const { log } = resolveRound(s, orders({ [c.id]: { actions: [{ kind: 'sweep' }] } }, { [e1.id]: { parry: true } }));
+  const hits = allEvents(log).filter(x => x.type === 'hit' && x.kind === 'sweep');
+  assert(hits.some(h => h.dst === e1.id) && hits.some(h => h.dst === e2.id), 'both adjacent enemies hit');
+  assert(!hits.some(h => h.dst === e3.id), 'far enemy not hit');
+  assert(!allEvents(log).some(x => x.type === 'parry'), 'not parried');
+});
+
+test('each commander skill has its own cooldown; all three usable in one round', () => {
+  const s = arena();
+  const c = addUnit(s, 0, 'commander', 20, 16);
+  const e = addUnit(s, 1, 'fighter', 21.2, 16);
+  const v = validateOrders(s, 0, orders({ [c.id]: { buffs: ['rally'], actions: [{ kind: 'disrupt', target: e.id }, { kind: 'sweep' }] } })[0]);
+  assert(v.units[c.id].buffs.length === 1 && v.units[c.id].actions.length === 2, 'all three kept');
+  c.cds = { sweep: 2 };
+  const v2 = validateOrders(s, 0, orders({ [c.id]: { actions: [{ kind: 'disrupt', target: e.id }, { kind: 'sweep' }] } })[0]);
+  assert(v2.units[c.id].actions.length === 1 && v2.units[c.id].actions[0].kind === 'disrupt', 'sweep blocked by its own cooldown only');
 });
 
 test('production: unit spawns after its build rounds, at the end of the round', () => {

@@ -8,7 +8,7 @@
 import { CONFIG } from '../config.js';
 import { dist, norm, segRect, segCircle, pointSegDist, clamp, rot, ANG } from './geom.js';
 import {
-  clone, findEntity, isUnit, entRadius, moveSpeed, visibleEnemies, visionSources, seen,
+  clone, findEntity, isUnit, entRadius, moveSpeed, visibleEnemies, visionSources, seen, skillDef,
 } from './state.js';
 import { Nav } from './nav.js';
 import { validateOrders, actionCost } from './orders.js';
@@ -59,13 +59,14 @@ export function resolveRound(state0, ordersIn) {
     const nearHQ = hq && dist(hq.x, hq.z, u.x, u.z) <= CONFIG.defenderBonus.radius;
     let defends = def.defends + plan.defends + (nearHQ ? CONFIG.defenderBonus.defends : 0);
     if (plan.parry) defends = Math.max(0, defends - 1); // parry replaces the first defend
-    if (plan.fortify) defends += def.skill.defends;
+    const fort = (plan.buffs || []).includes('fortify') ? skillDef(u.type, 'fortify') : null;
+    if (fort) defends += fort.defends;
     const r = {
       u, def, plan, direct: !!direct,
       actions: plan.actions.map(a => ({ ...a, cost: actionCost(u, a) })),
       tier: Math.max(CONFIG.minTier, def.tier + plan.upgrades - u.tierDebuff),
       idx: 0, el: 0, st: null,
-      defends, armor: def.armor + (plan.fortify ? def.skill.armor : 0),
+      defends, armor: def.armor + (fort ? fort.armor : 0),
       parry: plan.parry, ow: plan.overwatch,
       zoneOn: !!def.melee, acted: false,
       owFired: new Set(),
@@ -219,10 +220,13 @@ export function resolveRound(state0, ordersIn) {
     return { e: best, t: bt, end: { x: ax + (bx - ax) * bt, z: az + (bz - az) * bt }, wall: !best && tWall < 1 };
   }
 
-  function useSkill(r) {
-    r.u.cd = r.def.skill.cd + 1; // decremented at end of every round
-    r.u.skillRevealed = true;
-    ev({ type: 'skill', id: r.u.id, skill: r.def.skill.id });
+  // A skill only goes on cooldown when it is actually used.
+  function useSkill(r, id) {
+    const k = skillDef(r.u.type, id);
+    r.u.cds = r.u.cds || {}; r.u.revealed = r.u.revealed || {};
+    r.u.cds[id] = k.cd + 1; // decremented at the end of every round
+    r.u.revealed[id] = true;
+    ev({ type: 'skill', id: r.u.id, skill: id, name: k.name });
   }
 
   // AP drain removes actions from the end of the plan. In-progress action always finishes.
@@ -247,6 +251,7 @@ export function resolveRound(state0, ordersIn) {
     const n0 = moves.length, myIdx = r.idx;
     if (r.el === 0) {
       r.st = { phase: 'go' };
+      ev({ type: 'act', id: u.id, kind: a.kind, target: a.target || a.follow || null });
       if (a.kind === 'move') {
         const tgt = a.follow ? findEntity(s, a.follow) : null;
         const tx = tgt ? tgt.x : a.x, tz = tgt ? tgt.z : a.z;
@@ -256,9 +261,9 @@ export function resolveRound(state0, ordersIn) {
       } else if (a.kind === 'dash') {
         const d = norm(a.x - u.x, a.z - u.z);
         r.st.dir = d.l > 0 ? d : { x: 1, z: 0 };
-        r.st.left = r.def.skill.length;
+        r.st.left = skillDef(u.type, 'dash').length;
         if (inEnemyZone(u)) { r.st.phase = 'cancel'; ev({ type: 'cancel', id: u.id, reason: 'Dash blocked by control zone' }); }
-        else { useSkill(r); zoneOff(r); ev({ type: 'dash', id: u.id }); }
+        else { useSkill(r, 'dash'); zoneOff(r); ev({ type: 'dash', id: u.id }); }
       }
     }
     r.el += 1;
@@ -283,7 +288,7 @@ export function resolveRound(state0, ordersIn) {
         if (st.phase === 'cancel' || st.phase === 'done') break;
         let tgt = findEntity(s, st.target);
         const wantB = tgt ? !isUnit(tgt) : false;
-        const strikeAp = a.kind === 'shove' ? r.def.skill.ap : r.def.strike.ap;
+        const strikeAp = a.kind === 'shove' ? skillDef(u.type, 'shove').ap : r.def.strike.ap;
         if (!alive(tgt)) {
           // target died before the attack landed: redirect to the closest reachable enemy
           const left = st.phase === 'approach' ? Math.max(0, a.moveAp - st.app) : 0;
@@ -311,8 +316,9 @@ export function resolveRound(state0, ordersIn) {
             st.phase = 'done';
             if (inReach(u, tgt, 0.45)) {
               if (a.kind === 'shove') {
-                useSkill(r);
-                hits.push({ srcId: u.id, srcUnit: u, dst: tgt, dmg: r.def.skill.dmg, melee: true, kind: 'shove', push: r.def.skill.push });
+                useSkill(r, 'shove');
+                const sk = skillDef(u.type, 'shove');
+                hits.push({ srcId: u.id, srcUnit: u, dst: tgt, dmg: sk.dmg, melee: true, kind: 'shove', push: sk.push });
               } else {
                 hits.push({ srcId: u.id, srcUnit: u, dst: tgt, dmg: r.def.strike.dmg, melee: true, kind: 'melee' });
               }
@@ -338,11 +344,11 @@ export function resolveRound(state0, ordersIn) {
       case 'frag': {
         if (r.el >= a.cost && st.phase === 'go') {
           st.phase = 'done';
-          const sk = r.def.skill;
+          const sk = skillDef(u.type, 'frag');
           let tx = a.x, tz = a.z;
           const d = norm(tx - u.x, tz - u.z);
           if (d.l > sk.range) { tx = u.x + d.x * sk.range; tz = u.z + d.z * sk.range; }
-          useSkill(r);
+          useSkill(r, 'frag');
           ev({ type: 'frag', id: u.id, ax: r3(u.x), az: r3(u.z), x: r3(tx), z: r3(tz), r: sk.radius });
           for (const e of s.units) {
             if (e.hp <= 0) continue;
@@ -358,7 +364,7 @@ export function resolveRound(state0, ordersIn) {
       case 'disrupt': {
         if (r.el >= a.cost && st.phase === 'go') {
           st.phase = 'done';
-          const sk = r.def.skill;
+          const sk = skillDef(u.type, 'disrupt');
           let tgt = findEntity(s, a.target);
           const ok = t => alive(t) && isUnit(t) && t.owner !== u.owner && dist(u.x, u.z, t.x, t.z) <= sk.range + R;
           if (!ok(tgt)) {
@@ -366,7 +372,7 @@ export function resolveRound(state0, ordersIn) {
             for (const e of enemyUnits(u.owner)) { const d = dist(u.x, u.z, e.x, e.z); if (ok(e) && canSee(u.owner, e) && d < bd) { bd = d; tgt = e; } }
           }
           if (!tgt) { ev({ type: 'cancel', id: u.id, reason: 'Disrupt: no target in range' }); break; }
-          useSkill(r); zoneOff(r);
+          useSkill(r, 'disrupt'); zoneOff(r);
           const tr = rtById.get(tgt.id);
           let drained = 0, tierNow = false;
           if (tr) {
@@ -379,9 +385,24 @@ export function resolveRound(state0, ordersIn) {
         }
         break;
       }
+      case 'sweep': {
+        if (r.el >= a.cost && st.phase === 'go') {
+          st.phase = 'done';
+          const sk = skillDef(u.type, 'sweep');
+          useSkill(r, 'sweep'); zoneOff(r);
+          ev({ type: 'sweep', id: u.id, x: r3(u.x), z: r3(u.z), r: sk.radius });
+          for (const e of enemyUnits(u.owner)) {
+            if (dist(e.x, e.z, u.x, u.z) <= sk.radius + R) hits.push({ srcId: u.id, srcUnit: u, dst: e, dmg: sk.dmg, melee: true, unparryable: true, kind: 'sweep' });
+          }
+          for (const e of enemyBuildings(u.owner)) {
+            if (dist(e.x, e.z, u.x, u.z) <= sk.radius + CONFIG.buildings[e.type].r) hits.push({ srcId: u.id, srcUnit: u, dst: e, dmg: sk.dmg, melee: true, kind: 'sweep' });
+          }
+        }
+        break;
+      }
       case 'dash': {
         if (st.phase !== 'go') break;
-        moves.push({ r, mode: 'dash', d: r.def.skill.length / a.cost });
+        moves.push({ r, mode: 'dash', d: skillDef(u.type, 'dash').length / a.cost });
         break;
       }
     }
@@ -531,13 +552,24 @@ export function resolveRound(state0, ordersIn) {
   const startSeg = { kind: 'start', len: 0, tracks: {}, events: [] };
   seg = startSeg; T = 0;
   for (const r of rts) {
-    if (r.plan.fortify) { r.u.cd = r.def.skill.cd + 1; r.u.skillRevealed = true; ev({ type: 'skill', id: r.u.id, skill: 'fortify' }); }
-    ev({ type: 'tier', id: r.u.id, tier: r.tier, upgrades: r.plan.upgrades });
+    for (const id of r.plan.buffs || []) useSkill(r, id);
   }
+  // Rally: the commander and allies within range act one tier earlier this round
+  for (const r of rts) {
+    if (!(r.plan.buffs || []).includes('rally')) continue;
+    const k = skillDef(r.u.type, 'rally');
+    const ids = [];
+    for (const o of rts) {
+      if (o.u.owner !== r.u.owner || o.u.hp <= 0 || o.rallied) continue;
+      if (dist(o.u.x, o.u.z, r.u.x, r.u.z) <= k.radius) { o.tier += k.tierUp; o.rallied = true; ids.push(o.u.id); }
+    }
+    ev({ type: 'rally', id: r.u.id, ids, x: r3(r.u.x), z: r3(r.u.z), r: k.radius });
+  }
+  for (const r of rts) ev({ type: 'tier', id: r.u.id, tier: r.tier, upgrades: r.plan.upgrades });
   log.segments.push(startSeg);
 
   // ---- tiers fastest -> slowest ----------------------------------------------
-  const maxTier = Math.max(...Object.values(CONFIG.units).map(d => d.tier)) + CONFIG.maxTierUpgrades;
+  const maxTier = Math.max(...Object.values(CONFIG.units).map(d => d.tier)) + CONFIG.maxTierUpgrades + 1; // +1 for Rally
   for (let tier = maxTier; tier >= CONFIG.minTier; tier--) {
     const group = rts.filter(r => !r.acted && r.u.hp > 0 && r.tier === tier);
     if (!group.length) continue;

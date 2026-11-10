@@ -1,8 +1,8 @@
 // Client-side planning: the draft orders for this round, plus predictions for drawing them.
 import { CONFIG } from '../config.js';
 import { dist, norm } from '../sim/geom.js';
-import { emptyOrders, emptyPlan, apFor, moveSpeed, findEntity, entRadius, inCommanderRange, unitDef } from '../sim/state.js';
-import { actionCost, planCost, cpUsage, canPlace, usesSkill, SKILL_KINDS, stanceChanges, nearBase } from '../sim/orders.js';
+import { emptyOrders, emptyPlan, apFor, moveSpeed, findEntity, entRadius, unitDef, skillDef, cdOf } from '../sim/state.js';
+import { actionCost, planCost, cpUsage, canPlace, skillsPlanned, SKILL_KINDS, stanceChanges, nearBase } from '../sim/orders.js';
 import { pathLength } from '../sim/nav.js';
 import { approachAP } from '../sim/stances.js';
 
@@ -30,26 +30,32 @@ export class Planner {
 
   // CP cost label for directly controlling a unit
   controlCost(u) {
-    if (u.type === 'commander') return 'Free (commander)';
-    if (this.draft.units[u.id]) return 'Ordered';
-    const c = this.cp();
-    if (c.leftCmd > 0 && inCommanderRange(this.s, u)) return '1 commander CP';
+    if (u.type === 'commander') return 'free (hero)';
+    if (this.draft.units[u.id]) return 'controlled';
     return '1 CP';
   }
+  canControl(u) { return u.type === 'commander' || !!this.draft.units[u.id] || this.cp().leftBase > 0; }
 
-  ensure(id) {
+  ensure(id, quiet = false) {
     if (this.draft.units[id]) return this.draft.units[id];
     const u = this.unit(id);
     if (!u) return null;
     const trial = { ...this.draft, units: { ...this.draft.units, [id]: emptyPlan() } };
     const c = cpUsage(this.s, this.me, trial);
-    if (!c.accepted.includes(id) || c.stanceRejected.length > this.cp().stanceRejected.length) {
-      this.g.toast('Not enough CP — this unit will follow its stance', true);
+    if (!c.accepted.includes(id)) {
+      if (!quiet) this.g.toast('No CP left — this unit keeps following its stance', true);
       return null;
     }
     const p = emptyPlan(); p.hist = [];
     this.draft.units[id] = p;
     return p;
+  }
+
+  // Take direct control (spends CP). The plan is kept even while empty.
+  control(id) {
+    const p = this.ensure(id);
+    if (p) { p.keep = true; this.g.changed(); }
+    return !!p;
   }
 
   apLeft(u, plan = this.plan(u.id)) { return apFor(u) - (plan ? planCost(u, plan) : 0); }
@@ -82,14 +88,16 @@ export class Planner {
         const d = norm(a.x - x, a.z - z);
         const rg = unitDef(u).shot.range;
         legs.push({ kind: 'shoot', from: { x, z }, to: { x: x + d.x * rg, z: z + d.z * rg }, aim: { x: a.x, z: a.z } });
+      } else if (a.kind === 'sweep') {
+        legs.push({ kind: 'sweep', at: { x, z }, r: skillDef(u.type, 'sweep').radius });
       } else if (a.kind === 'frag') {
-        const sk = unitDef(u).skill;
+        const sk = skillDef(u.type, 'frag');
         const d = norm(a.x - x, a.z - z);
         const l = Math.min(d.l, sk.range);
         legs.push({ kind: 'frag', from: { x, z }, at: { x: x + d.x * l, z: z + d.z * l }, r: sk.radius });
       } else if (a.kind === 'dash') {
         const d = norm(a.x - x, a.z - z);
-        const L = unitDef(u).skill.length;
+        const L = skillDef(u.type, 'dash').length;
         let tx = x, tz = z;
         for (let s = 0.1; s <= L + 1e-6; s += 0.1) {
           const nx = x + d.x * s, nz = z + d.z * s;
@@ -112,8 +120,9 @@ export class Planner {
     const plan = this.ensure(id);
     if (!plan) return false;
     if (SKILL_KINDS.includes(a.kind)) {
-      if (u.cd > 0) { this.g.toast(`Skill on cooldown (${u.cd} rounds)`, true); return false; }
-      if (usesSkill(plan)) { this.g.toast('Skill already planned this round', true); return false; }
+      const k = skillDef(u.type, a.kind);
+      if (cdOf(u, a.kind) > 0) { this.g.toast(`${k.name} is on cooldown (${cdOf(u, a.kind)} rounds)`, true); return false; }
+      if (skillsPlanned(plan).has(a.kind)) { this.g.toast(`${k.name} is already planned this round`, true); return false; }
     }
     const cost = actionCost(u, a);
     const left = this.apLeft(u, plan);
@@ -151,7 +160,7 @@ export class Planner {
     const from = this.predict(u, plan);
     const reach = CONFIG.unitRadius + entRadius(t) + CONFIG.meleeReach - 0.1;
     const need = approachAP(this.g.nav, { ...u, x: from.x, z: from.z }, t.x, t.z, reach) + 4;
-    const strike = kind === 'shove' ? def.skill.ap : def.strike.ap;
+    const strike = kind === 'shove' ? skillDef(u.type, 'shove').ap : def.strike.ap;
     const left = this.apLeft(u, this.plan(id));
     if (left < strike) { this.g.toast(`Not enough AP (${strike} needed to strike)`, true); return false; }
     const moveAp = Math.max(0, Math.min(need, left - strike));
@@ -172,9 +181,15 @@ export class Planner {
     if (field === 'defends') plan.defends = Math.max(0, Math.min(CONFIG.maxExtraDefends, plan.defends + delta));
     if (field === 'overwatch') plan.overwatch = Math.max(0, Math.min(CONFIG.maxOverwatch, plan.overwatch + delta));
     if (field === 'parry') plan.parry = !plan.parry;
-    if (field === 'fortify') {
-      if (!plan.fortify && (u.cd > 0 || usesSkill(plan))) { this.g.toast(u.cd > 0 ? `Fortify on cooldown (${u.cd})` : 'Skill already planned', true); return false; }
-      plan.fortify = !plan.fortify;
+    if (field.startsWith('buff:')) {
+      const id = field.slice(5);
+      const k = skillDef(u.type, id);
+      const i = plan.buffs.indexOf(id);
+      if (i >= 0) plan.buffs.splice(i, 1);
+      else {
+        if (cdOf(u, id) > 0) { this.g.toast(`${k.name} is on cooldown (${cdOf(u, id)} rounds)`, true); return false; }
+        plan.buffs.push(id);
+      }
     }
     if (planCost(u, plan) > apFor(u)) {
       Object.assign(plan, JSON.parse(before));
@@ -196,7 +211,7 @@ export class Planner {
     else if (h === 'defends') plan.defends--;
     else if (h === 'overwatch') plan.overwatch--;
     else if (h === 'parry') plan.parry = !plan.parry;
-    else if (h === 'fortify') plan.fortify = !plan.fortify;
+    else if (h && h.startsWith('buff:')) { const id = h.slice(5); const i = plan.buffs.indexOf(id); if (i >= 0) plan.buffs.splice(i, 1); else plan.buffs.push(id); }
     else if (h && h.endsWith('-')) { const f = h.slice(0, -1); if (f in plan) plan[f]++; }
     this.cleanup(id);
     this.g.changed();
@@ -204,7 +219,7 @@ export class Planner {
 
   cleanup(id) {
     const p = this.plan(id);
-    if (p && !p.actions.length && !p.upgrades && !p.defends && !p.overwatch && !p.parry && !p.fortify) delete this.draft.units[id];
+    if (p && !p.keep && !p.actions.length && !p.upgrades && !p.defends && !p.overwatch && !p.parry && !p.buffs.length) delete this.draft.units[id];
   }
 
   clear(id) { delete this.draft.units[id]; this.g.changed(); }
@@ -218,7 +233,7 @@ export class Planner {
     const max = apFor(u) - others;
     if (a.kind === 'move' || a.kind === 'wait') a.ap = Math.max(1, Math.min(max, v));
     else if (a.kind === 'attack' || a.kind === 'shove') {
-      const strike = a.kind === 'shove' ? unitDef(u).skill.ap : unitDef(u).strike.ap;
+      const strike = a.kind === 'shove' ? skillDef(u.type, 'shove').ap : unitDef(u).strike.ap;
       a.moveAp = Math.max(0, Math.min(max - strike, v));
     }
     this.g.changed(true);
@@ -231,11 +246,6 @@ export class Planner {
       const st = { stance, anchor: anchor ? { x: anchor.x, z: anchor.z } : (stance === 'holdground' ? { x: u.x, z: u.z } : null) };
       if (stance === u.stance && stance !== 'advance' && stance !== 'holdground') delete this.draft.stances[id];
       else this.draft.stances[id] = st;
-    }
-    const c = this.cp();
-    if (c.stanceRejected.length) {
-      for (const id of c.stanceRejected) delete this.draft.stances[id];
-      this.g.toast('Not enough CP for all stance changes', true);
     }
     this.g.changed();
   }
@@ -303,7 +313,7 @@ export class Planner {
   // Orders sent to the resolver (strip UI-only fields)
   final() {
     const o = JSON.parse(JSON.stringify(this.draft));
-    for (const p of Object.values(o.units)) delete p.hist;
+    for (const p of Object.values(o.units)) { delete p.hist; delete p.keep; }
     return o;
   }
 }

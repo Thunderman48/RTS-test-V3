@@ -1,8 +1,8 @@
 // Turns a resolution log into an animated timeline over a display state.
 import { CONFIG } from '../config.js';
 
-const SEC_PER_AP = 0.024;     // 100 AP ≈ 2.4 s at 1x
-const BANNER = 0.75;          // pause before each tier
+const SEC_PER_AP = 0.03;      // 100 AP ≈ 3 s at 1x
+const BANNER = 1.0;           // pause before each tier
 
 export function displayFromState(s) {
   const units = new Map(), buildings = new Map();
@@ -45,6 +45,7 @@ export class Playback {
     let banner = null;
     while (this.cursor < this.items.length) {
       const it = this.items[this.cursor];
+      this.curSeg = it.seg;
       if (this.time < it.start) { banner = { seg: it.seg, k: (this.time - it.bannerStart) / (it.start - it.bannerStart) }; break; }
       const tAP = Math.min(it.seg.len, (this.time - it.start) / SEC_PER_AP);
       this.applyTracks(it.seg, tAP);
@@ -52,19 +53,20 @@ export class Playback {
       while (this.evIdx < evs.length && evs[this.evIdx].t <= tAP + 1e-6) {
         const e = evs[this.evIdx++];
         this.applyEvent(e);
+        Object.defineProperty(e, '__seg', { value: it.seg, configurable: true, enumerable: false });
         fired.push(e);
       }
       if (this.time >= it.start + it.dur) {
         // flush the rest of this segment
         this.applyTracks(it.seg, it.seg.len + 1);
-        while (this.evIdx < evs.length) { const e = evs[this.evIdx++]; this.applyEvent(e); fired.push(e); }
+        while (this.evIdx < evs.length) { const e = evs[this.evIdx++]; this.applyEvent(e); Object.defineProperty(e, '__seg', { value: it.seg, configurable: true, enumerable: false }); fired.push(e); }
         this.cursor++; this.evIdx = 0; this.trackCur = {};
         continue;
       }
       banner = { seg: it.seg, k: 1, active: true };
       break;
     }
-    if (this.time >= this.total) this.done = true;
+    if (this.time >= this.total) { this.done = true; this.curSeg = null; }
     return { events: fired, banner };
   }
 

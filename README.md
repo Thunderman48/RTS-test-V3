@@ -7,6 +7,22 @@ A playable prototype of the **Turn-Based RTS (Design Doc V3)**. It combines RTS 
 * **Works on phones**: tap to select and order, drag to pan, pinch to zoom, twist to rotate.
 * **Static site** with no build step and no server, so it runs on GitHub Pages.
 
+**Versions:** this is **V2**. The original prototype is saved in [`v1/`](v1/) and stays playable at `…/RTS-test-V3/v1/` (there's also a link on the menu).
+
+### What changed in V2
+* **Commander is a hero.** It is always free to control and has **3 skills**, each with its own cooldown:
+  * **Disrupt**: drains 25 AP from the end of an enemy's plan and lowers its tier by 1. Range 6.
+  * **Sweep**: hits every enemy within 1.9. Cannot be parried.
+  * **Rally**: the commander and allies within 5 act one tier earlier this round. Paid during planning.
+* The commander's extra CP is gone. **Base CP is 3** (+1 per Command Post), and 1 CP = direct control of one unit for the round.
+* **Stance changes are free.**
+* **Stance first, then Control.** Tapping a unit shows its stance card: what it will do on its own this round, plus free stance buttons. The full command screen opens only after you press **Control**. **Release** gives the CP back.
+* **Readability:**
+  * Every unit and building has a name plate with its tier, name, HP and defends. White and black bases under units show the team.
+  * During resolution, units acting right now get an orange ring and everyone else is dimmed. The tier banner names who is acting, and Move/Attack/Shoot tags pop over units.
+  * A live feed explains each hit, parry, skill and death in words.
+  * After each round you get a summary (damage dealt/taken, kills, losses) and a full **Report** (≣ in the top bar).
+
 ## Play it on GitHub Pages
 
 1. In the repo, open **Settings → Pages**.
@@ -42,10 +58,10 @@ Some very strict networks (certain school or corporate Wi-Fi) block peer-to-peer
 | Parry, overwatch, shot blocking (first enemy / walls), place shots pass over, cover buildings | ✅ |
 | Health lowers AP from next round | ✅ |
 | AP drain & tier debuffs (remove actions from end of plan; tier now or next round) | ✅ (Commander *Disrupt*) |
-| 4 roles + commander with role skills and cooldowns; enemy cooldown revealed once used | ✅ |
-| Commander: free orders, extra CP in range, revive zone (hold it for 3 rounds) | ✅ |
+| 4 roles + hero commander with skills and per-skill cooldowns; enemy cooldowns revealed once used | ✅ |
+| Commander: always free to order, revive zone (hold it for 3 rounds) | ✅ |
 | Stances: Guard, Hold, Hold ground, Retreat (+ **Advance**, see below); stance plans previewed | ✅ |
-| CP: direct order 1 CP/unit, stance change 1 CP per 4 units, production boost 1 CP | ✅ |
+| CP: direct control 1 CP/unit (commander free), stance changes free, production boost 1 CP | ✅ (V2 rules) |
 | Fog of war, last-known markers, last round's enemy movement trails, enemy base tier/stance shown | ✅ |
 | Buildings act last, turrets shoot closest enemy, spawning at round end, outposts as retreat points | ✅ |
 | Economy on the round clock, construction/production over rounds, healing (out of combat, near base, paid) | ✅ |
@@ -56,7 +72,7 @@ Some very strict networks (certain school or corporate Wi-Fi) block peer-to-peer
 * **Base AP 100.** All other AP costs are scaled to it.
 * **Economy:** one resource, *Supply*. The HQ gives +8/round and each captured resource node gives +4/round. A node is captured when only one side has units near it at round end. There are no workers.
 * **Advance stance** (the doc says "more stances, such as advancing toward a point, are still to be designed"). The unit walks toward a chosen point and fights enemies it meets on the way.
-* **Skills:** Assassin *Dash*, Fighter *Parry* + *Shove* (push), Ranged *Frag* (place-targeted AoE, hits allies, unparryable), Tank *Fortify* (+defends, +armor), Commander *Disrupt* (AP drain + tier −1).
+* **Skills:** Assassin *Dash*, Fighter *Parry* + *Shove* (push), Ranged *Frag* (place-targeted AoE, hits allies, unparryable), Tank *Fortify* (+defends, +armor). Commander *Disrupt* (AP drain + tier −1), *Sweep* (area melee) and *Rally* (+1 tier to nearby allies).
 * **Defend formula:** `damage × 20/(20+armor) × (defended ? clamp(0.2, 0.75, 0.4 + (damage − armor)/80) : 1)`.
 * **Shots:** ranged basic attacks are line shots aimed at a place (blocked by the first enemy or wall). Frags are place shots that pass over everything.
 * **Match size:** small map (48×32), aimed at roughly 15–25 minute matches. The round limit is 80, after which the side with the most building HP wins.
@@ -73,21 +89,22 @@ Every tunable value is in [`js/config.js`](js/config.js): AP, tier costs, wound 
 
 | Unit | Tier | HP | Armor | Free defends | Basic attack | Skill (cooldown) |
 |---|---|---|---|---|---|---|
-| Commander ◆ | 5 | 120 | 8 | 2 | 18 dmg / 25 AP | Disrupt (3) |
+| Commander ◆ (hero) | 5 | 150 | 9 | 2 | 18 dmg / 25 AP | Disrupt (3), Sweep (2), Rally (4) |
 | Fighter ■ | 5 | 90 | 8 | 1 | 16 dmg / 25 AP | Shove (2), Parry |
 | Assassin ▲ | 6 | 60 | 4 | 1 | 24 dmg / 20 AP | Dash (2) |
 | Ranged ● | 5 | 60 | 3 | 1 | 14 dmg / 30 AP, range 10 | Frag (3), Overwatch |
 | Tank ⬣ | 4 | 140 | 12 | 2 | 12 dmg / 30 AP | Fortify (3) |
 
-Other key costs: extra defend 20 AP · parry 20 AP · overwatch charge 35 AP · base CP 3 (+1 per Command Post, +2 commander CP in range 7) · start supply 50.
+Other key costs: extra defend 20 AP · parry 20 AP · overwatch charge 35 AP · base CP 3 (+1 per Command Post; commander always free) · start supply 50.
 
 ## Controls
 
 | | Touch | Desktop |
 |---|---|---|
-| Select unit / building | tap | click |
-| Move selected | tap ground | click ground |
-| Attack / shoot | tap enemy | click enemy |
+| Select unit / building (shows its stance) | tap | click |
+| Take direct control | **Control** button | **Control** button |
+| Move a controlled unit | tap ground | click ground |
+| Attack / shoot with a controlled unit | tap enemy | click enemy |
 | Add to selection | **Multi** button or long-press | **Multi** button |
 | Pan / zoom / rotate | drag / pinch / two-finger twist | drag / wheel / right-drag, `WASD` `Q` `E` |
 | Ready / skip playback | **READY** / **Skip** | `Space` |
@@ -104,7 +121,8 @@ js/sim/                       pure simulation (no DOM): state, map, nav (A*), or
                               resolve (tier timeline, combat, interrupts), economy
 js/ai/ai.js                   AI opponent (same orders API and rules as a player)
 js/render/                    Three.js scene, models, playback of the resolution log, effects
-js/ui/                        input (mouse + touch), planner (draft orders), HUD, help
+js/ui/                        input (mouse + touch), planner (draft orders), HUD, help, log (feed + report)
+v1/                           the saved V1 prototype (playable at /v1/)
 js/net/net.js                 PeerJS host/join + message queue
 vendor/                       three.js r160 and PeerJS 1.5.4 (MIT), bundled so Pages needs no CDN
 tests/sim.test.mjs            headless rule tests (node tests/sim.test.mjs)
@@ -116,4 +134,4 @@ tests/sim.test.mjs            headless rule tests (node tests/sim.test.mjs)
 node tests/sim.test.mjs
 ```
 
-There are 19 rule tests. They cover tier order and upgrades, AP-as-duration, exact ties, control zones, dash cancellation, parry and counters, overwatch, shot blocking and frags over walls, defend ordering, AP drain and tier debuff, wounds, CP limits, production timing, the win condition, a full AI-vs-AI match, and determinism (host and guest compute identical results).
+There are 23 rule tests. They cover the commander's skills, free control and free stance changes, tier order and upgrades, AP-as-duration, exact ties, control zones, dash cancellation, parry and counters, overwatch, shot blocking and frags over walls, defend ordering, AP drain and tier debuff, wounds, CP limits, production timing, the win condition, a full AI-vs-AI match, and determinism (host and guest compute identical results).

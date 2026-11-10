@@ -2,7 +2,7 @@
 import * as THREE from 'three';
 import { CONFIG } from '../config.js';
 import {
-  PALETTE, makeUnitMesh, makeBuildingMesh, makeWallMesh, makeNodeMesh, makeLabel, drawLabel, ring,
+  PALETTE, makeUnitMesh, makeBuildingMesh, makeWallMesh, makeNodeMesh, makeLabel, drawLabel, ring, makeUnitBase,
 } from './models.js';
 
 export class View3D {
@@ -137,8 +137,11 @@ export class View3D {
       let e = this.entities.get(u.id);
       if (!e) {
         const mesh = makeUnitMesh(u.type, u.owner);
-        const label = makeLabel();
-        mesh.add(label); label.position.y = 1.75;
+        const label = makeLabel('unit');
+        mesh.add(label); label.position.y = 1.85;
+        const base = makeUnitBase(u.owner);
+        mesh.add(base);
+        mesh.userData.base = base;
         this.scene.add(mesh);
         e = { mesh, label, kind: 'unit', fx: 0, fy: u.owner === 0 ? 0 : Math.PI, x: u.x, z: u.z };
         mesh.rotation.y = e.fy;
@@ -153,7 +156,10 @@ export class View3D {
       e.mesh.rotation.y += d * 0.25;
       e.mesh.visible = u.visible !== false;
       e.label.material.rotation = 0;
-      drawLabel(e.label, { tier: u.tier, hpFrac: Math.max(0, u.hp / u.maxHp), team: u.owner, defends: u.defends || 0, low: u.hp / u.maxHp < 0.34 });
+      drawLabel(e.label, { tier: u.tier, name: CONFIG.units[u.type].name, hpFrac: Math.max(0, u.hp / u.maxHp), team: u.owner, defends: u.defends || 0, low: u.hp / u.maxHp < 0.34, dim: !!u.dim, tag: u.tag || '' });
+      const act = e.mesh.userData.base.userData.act;
+      act.visible = !!u.acting;
+      if (act.visible) act.scale.setScalar(1 + 0.12 * Math.sin((this.time || 0) * 8));
       const s = u.dying ? Math.max(0.01, 1 - u.dying) : 1;
       e.mesh.scale.setScalar(s);
       const body = e.mesh.userData.body;
@@ -166,8 +172,8 @@ export class View3D {
       if (e && e.ghostKey !== ghostKey) { this.scene.remove(e.mesh); this.entities.delete(b.id); e = null; }
       if (!e) {
         const mesh = makeBuildingMesh(b.type, b.owner, { ghost: !b.built });
-        const label = makeLabel();
-        mesh.add(label); label.position.y = b.type === 'hq' ? 3.6 : 2.4; label.scale.set(2.2, 0.66, 1);
+        const label = makeLabel('building');
+        mesh.add(label); label.position.y = b.type === 'hq' ? 3.7 : 2.5;
         mesh.position.set(b.x, 0, b.z);
         if (b.type === 'barricade') mesh.rotation.y = Math.atan2(this.W / 2 - b.x, 0) > 0 ? Math.PI / 2 : -Math.PI / 2;
         this.scene.add(mesh);
@@ -178,8 +184,9 @@ export class View3D {
       const s = b.dying ? Math.max(0.01, 1 - b.dying) : 1;
       const sy = s * (b.built ? 1 : 0.35 + 0.65 * (b.progress || 0));
       e.mesh.scale.set(1, sy, 1);
-      e.label.scale.y = 0.66 / Math.max(0.05, sy);
-      drawLabel(e.label, { tier: '■', hpFrac: Math.max(0, b.hp / b.maxHp), team: b.owner, low: b.hp / b.maxHp < 0.34 });
+      e.label.scale.y = (e.label.userData.w * 80 / 288) / Math.max(0.05, sy);
+      const bname = CONFIG.buildings[b.type].name + (b.built ? '' : ' (building)');
+      drawLabel(e.label, { name: bname, hpFrac: Math.max(0, b.hp / b.maxHp), team: b.owner, low: b.hp / b.maxHp < 0.34, dim: !!b.dim });
       if (b.aim && e.mesh.userData.head) e.mesh.userData.head.rotation.y = Math.atan2(b.aim.x - b.x, b.aim.z - b.z);
     }
     for (const [id, e] of this.entities) {

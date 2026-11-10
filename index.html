@@ -31,6 +31,7 @@
       <div class="tb-item hidden" id="tb-timer-wrap"><span class="tb-k">Time</span><span class="tb-v" id="tb-timer">90</span></div>
     </div>
     <div class="tb-group">
+      <button class="icon-btn" id="btn-log" title="Last round report">≣</button>
       <button class="icon-btn" id="btn-replay" title="Replay last round">↺</button>
       <button class="icon-btn" id="btn-pause" title="Pause">❚❚</button>
       <button class="icon-btn" id="btn-menu" title="Menu">≡</button>
@@ -38,6 +39,8 @@
   </div>
   <div id="order-strip"></div>
   <div id="banner" class="hidden"></div>
+  <div id="feed" class="hidden"></div>
+  <div id="summary" class="hidden"></div>
   <div id="toast"></div>
 
   <div id="bottom">
@@ -64,7 +67,7 @@
         <path d="M95 14 105 26 95 38 85 26Z" fill="currentColor"/>
       </svg>
       <h1>TIERS</h1>
-      <p class="sub">Turn-based RTS · simultaneous planning · prototype</p>
+      <p class="sub">Turn-based RTS · simultaneous planning · prototype V2</p>
     </div>
     <div class="menu-btns">
       <button class="big" id="m-ai">Play vs AI</button>
@@ -74,6 +77,7 @@
         <button class="big ghost" id="m-join">Join</button>
       </div>
       <button class="link" id="m-help">How to play</button>
+      <a class="link" href="v1/" style="text-align:center;font-size:12px;color:#8a8a8a">Play the old version (V1)</a>
     </div>
     <p class="fine">Online play connects two browsers directly (WebRTC via the free PeerJS broker).</p>
   </div>
@@ -104,6 +108,13 @@
     <h2 id="go-title">Victory</h2>
     <p id="go-msg"></p>
     <button class="big" id="go-menu">Back to menu</button>
+  </div>
+</div>
+
+<div id="report" class="overlay hidden">
+  <div class="card help-card">
+    <div class="help-head"><h2 id="report-title">Round report</h2><button class="icon-btn" id="report-close">✕</button></div>
+    <div class="help-body" id="report-body"></div>
   </div>
 </div>
 

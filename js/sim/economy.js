@@ -130,7 +130,7 @@ export function economyTick(s, orders, ev) {
     }
   }
   // 9. cooldowns
-  for (const u of s.units) if (u.cd > 0) u.cd--;
+  for (const u of s.units) for (const id of Object.keys(u.cds || {})) { if (u.cds[id] > 0) u.cds[id]--; if (!u.cds[id]) delete u.cds[id]; }
   // 10. win check
   const hqAlive = [0, 1].map(p => s.buildings.some(b => b.owner === p && b.type === 'hq' && b.hp > 0));
   if (!hqAlive[0] && !hqAlive[1]) s.winner = -1;

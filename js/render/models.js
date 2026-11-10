@@ -204,41 +204,65 @@ export function dashedRing(r, width, color, opacity = 1, y = 0.05, n = 28) {
   return g;
 }
 
-// Unit label sprite: tier badge + HP bar
-export function makeLabel() {
+// Name plate sprite: [tier] NAME / HP bar + defend pips.
+// White team = white plate with black ink, black team = black plate with white ink.
+export function makeLabel(kind = 'unit') {
   const c = document.createElement('canvas');
-  c.width = 160; c.height = 48;
+  c.width = 288; c.height = 80;
   const tex = new THREE.CanvasTexture(c);
   tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = 4;
   const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, depthTest: false, transparent: true }));
-  sp.scale.set(1.5, 0.45, 1);
+  const w = kind === 'building' ? 2.9 : 2.25;
+  sp.scale.set(w, w * 80 / 288, 1);
   sp.renderOrder = 20;
-  sp.userData = { c, tex, key: '' };
+  sp.userData = { c, tex, key: '', w };
   return sp;
 }
 
-export function drawLabel(sp, { tier, hpFrac, team, defends = 0, low = false, ghost = false }) {
-  const key = `${tier}|${hpFrac.toFixed(3)}|${team}|${defends}|${ghost}`;
+export function drawLabel(sp, { tier = null, name = '', hpFrac, team, defends = 0, low = false, dim = false, tag = '' }) {
+  const key = `${tier}|${name}|${hpFrac.toFixed(3)}|${team}|${defends}|${dim}|${tag}`;
   if (sp.userData.key === key) return;
   sp.userData.key = key;
   const { c, tex } = sp.userData;
   const g = c.getContext('2d');
   g.clearRect(0, 0, c.width, c.height);
-  const ink = team === 0 ? '#111' : '#f4f4f2', paper = team === 0 ? '#f6f6f4' : '#161616';
-  // tier badge
-  g.fillStyle = paper; g.strokeStyle = ink; g.lineWidth = 4;
-  g.fillRect(4, 4, 40, 40); g.strokeRect(4, 4, 40, 40);
-  g.fillStyle = ink; g.font = 'bold 28px system-ui, sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle';
-  g.fillText(String(tier), 24, 26);
-  // hp bar
-  g.fillStyle = '#111'; g.fillRect(50, 16, 104, 16);
-  g.fillStyle = low ? PALETTE.accentCss : '#f4f4f2';
-  g.fillRect(53, 19, Math.max(0, 98 * hpFrac), 10);
-  // defend pips
-  for (let i = 0; i < Math.min(6, defends); i++) {
-    g.fillStyle = paper; g.fillRect(52 + i * 14, 35, 10, 8);
-    g.strokeStyle = ink; g.lineWidth = 2; g.strokeRect(52 + i * 14, 35, 10, 8);
+  const ink = team === 0 ? '#0b0b0b' : '#f6f6f4';
+  const paper = team === 0 ? '#f6f6f4' : '#0b0b0b';
+  const W = c.width, H = c.height;
+  let x0 = 4;
+  // tier badge (inverted colours so it pops)
+  if (tier !== null) {
+    g.fillStyle = ink; g.fillRect(4, 4, 72, 72);
+    g.fillStyle = paper; g.font = '900 46px "Helvetica Neue", Arial, sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle';
+    g.fillText(String(tier), 40, 43);
+    x0 = 80;
   }
+  // plate
+  g.fillStyle = paper; g.fillRect(x0, 4, W - x0 - 4, 72);
+  g.strokeStyle = ink; g.lineWidth = 4; g.strokeRect(x0 + 2, 6, W - x0 - 8, 68);
+  // name
+  g.fillStyle = ink; g.font = '800 26px "Helvetica Neue", Arial, sans-serif'; g.textAlign = 'left'; g.textBaseline = 'alphabetic';
+  g.fillText((name + (tag ? ' · ' + tag : '')).toUpperCase(), x0 + 12, 34, W - x0 - 24);
+  // hp bar
+  const bx = x0 + 12, bw = W - x0 - 28;
+  g.fillStyle = team === 0 ? '#c9c9c6' : '#3a3a3a'; g.fillRect(bx, 44, bw, 14);
+  g.fillStyle = low ? PALETTE.accentCss : ink; g.fillRect(bx, 44, Math.max(0, bw * hpFrac), 14);
+  // defend pips
+  for (let i = 0; i < Math.min(8, defends); i++) { g.fillStyle = ink; g.fillRect(bx + i * 16, 62, 11, 7); }
   tex.needsUpdate = true;
-  sp.material.opacity = ghost ? 0.5 : 1;
+  sp.material.opacity = dim ? 0.45 : 1;
+}
+
+// Team-coloured base under every unit + highlight ring used while a unit is acting.
+export function makeUnitBase(team) {
+  const g = new THREE.Group();
+  const d = disc(0.62, team === 0 ? 0xf6f6f4 : 0x0b0b0b, 0.95, 0.02, 32);
+  const r = ring(0.62, 0.07, team === 0 ? 0x0b0b0b : 0xf6f6f4, 1, 0.025, 32);
+  g.add(d, r);
+  const act = ring(0.86, 0.11, PALETTE.accent, 1, 0.03, 40);
+  act.visible = false;
+  g.add(act);
+  g.userData.act = act;
+  return g;
 }

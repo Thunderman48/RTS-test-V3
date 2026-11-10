@@ -6,7 +6,7 @@ export function helpHTML() {
   const row = (t) => {
     const d = U[t];
     const atk = d.strike ? `${d.strike.dmg} dmg / ${d.strike.ap} AP` : `${d.shot.dmg} dmg / ${d.shot.ap} AP, range ${d.shot.range}`;
-    return `<tr><td>${glyph(t, 0, 14)} ${d.name}</td><td>${d.tier}</td><td>${d.hp}</td><td>${d.armor}</td><td>${d.defends}</td><td>${atk}</td><td>${d.skill.name} (cd ${d.skill.cd})</td></tr>`;
+    return `<tr><td>${glyph(t, 0, 14)} ${d.name}</td><td>${d.tier}</td><td>${d.hp}</td><td>${d.armor}</td><td>${d.defends}</td><td>${atk}</td><td>${d.skills.map(k => `${k.name} (cd ${k.cd})`).join(', ')}</td></tr>`;
   };
   return `
 <h3>Goal</h3>
@@ -23,8 +23,8 @@ export function helpHTML() {
 <ul>
 <li>Every unit gets <b>${CONFIG.baseAP} AP</b> per round (wounded units get less from the next round). Tiers: slow 4, normal 5, fast 6.</li>
 <li><b>Tier+</b> costs ${CONFIG.tierUpgradeCost[0]} AP, a second one ${CONFIG.tierUpgradeCost[1]} AP. It only changes turn order, not distance.</li>
-<li>Directly ordering a unit costs <b>1 CP</b> (you have ${CONFIG.cp.base} + 1 per Command Post). The <b>commander</b> is free to order and gives ${CONFIG.cp.commanderBonus} extra CP usable only on units within ${CONFIG.cp.commanderRange} of it.</li>
-<li>Units you don't order follow their <b>stance</b> (dashed preview lines). Changing stance costs 1 CP per ${CONFIG.cp.stanceUnitsPerCP} units.</li>
+<li>Tap a unit to see its <b>stance</b>: what it will do on its own this round (dashed preview lines). Changing stance is <b>free</b>.</li>
+<li>Press <b>Control</b> to give a unit exact orders. That costs <b>1 CP</b> (you have ${CONFIG.cp.base} + 1 per Command Post). <b>Release</b> refunds it. Your <b>commander</b> is a hero and is always free to control.</li>
 <li>For directly ordered units, AP you don't assign is lost — spend it on <b>Defend+</b>.</li>
 </ul>
 
@@ -44,11 +44,11 @@ export function helpHTML() {
 <table><tr><th>Unit</th><th>Tier</th><th>HP</th><th>Armor</th><th>Defends</th><th>Attack</th><th>Skill</th></tr>
 ${['commander', 'fighter', 'assassin', 'ranged', 'tank'].map(row).join('')}</table>
 <ul>
-<li><b>Dash</b> (Assassin): fixed ${U.assassin.skill.length}-unit straight move; cancelled inside or into an enemy control zone.</li>
-<li><b>Shove</b> (Fighter): pushes the target ${U.fighter.skill.push} units — breaks its control zone.</li>
-<li><b>Frag</b> (Ranged): area ${U.ranged.skill.radius}, ${U.ranged.skill.dmg} dmg, unparryable, hits allies.</li>
-<li><b>Fortify</b> (Tank): +${U.tank.skill.defends} defends and +${U.tank.skill.armor} armor this round.</li>
-<li><b>Disrupt</b> (Commander): drains ${U.commander.skill.drain} AP from the end of the target's plan and lowers its tier by 1.</li>
+<li><b>Dash</b> (Assassin): fixed ${U.assassin.skills[0].length}-unit straight move; cancelled inside or into an enemy control zone.</li>
+<li><b>Shove</b> (Fighter): pushes the target ${U.fighter.skills[0].push} units — breaks its control zone.</li>
+<li><b>Frag</b> (Ranged): area ${U.ranged.skills[0].radius}, ${U.ranged.skills[0].dmg} dmg, unparryable, hits allies.</li>
+<li><b>Fortify</b> (Tank): +${U.tank.skills[0].defends} defends and +${U.tank.skills[0].armor} armor this round.</li>
+<li>Commander (hero) skills, each with its own cooldown:<ul>${U.commander.skills.map(k => `<li><b>${k.name}</b>: ${k.desc}</li>`).join('')}</ul></li>
 </ul>
 
 <h3>Economy</h3>
@@ -57,9 +57,16 @@ ${['commander', 'fighter', 'assassin', 'ranged', 'tank'].map(row).join('')}</tab
 <li>Build near your HQ or an Outpost. Units out of combat for ${CONFIG.economy.outOfCombatRounds} rounds slowly heal (faster near base). Paid heal: ${CONFIG.economy.healCost} supply near base.</li>
 </ul>
 
+<h3>Reading a round</h3>
+<ul>
+<li>Every unit has a <b>name plate</b>: the black/white square is its tier (when it acts), then its name, HP bar and defends. White plates are the white side, black plates the black side.</li>
+<li>During resolution, the units acting right now get an <b>orange ring</b>; everyone else is dimmed. A banner says which tier is acting and who is in it.</li>
+<li>The <b>feed</b> (top left) explains each hit, parry, skill and death as it happens. After the round, a summary appears. Tap <b>Report</b> (or ≣ in the top bar) for the full list, or ↺ to replay.</li>
+</ul>
+
 <h3>Controls</h3>
 <ul>
-<li><b>Tap</b> a unit to select it, tap the ground to move, tap an enemy to attack/shoot. Use the panel for skills, defends, tiers and stances.</li>
+<li><b>Tap</b> a unit to see its stance. After <b>Control</b>: tap the ground to move, tap an enemy to attack/shoot, and use the panel for skills, defends and tiers.</li>
 <li><b>Multi</b> button (or long-press) adds units to the selection for group orders.</li>
 <li><b>Drag</b> to pan, <b>pinch</b> to zoom, <b>two-finger twist</b> to rotate. Desktop: drag / wheel / right-drag, <kbd>WASD</kbd> <kbd>Q</kbd><kbd>E</kbd>, <kbd>Space</kbd> = Ready, <kbd>Esc</kbd> = cancel, <kbd>Backspace</kbd> = undo.</li>
 <li>Numbers in the square badge above a unit are its <b>tier</b>; small boxes are its defends.</li>

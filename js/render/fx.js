@@ -85,8 +85,33 @@ export function eventFx(view, texts, e, ctx) {
     }
     case 'skill': {
       const t = ent(e.id); if (!t || !vis(t.x, t.z)) return;
-      const names = { dash: 'Dash', shove: 'Shove', frag: 'Frag', fortify: 'Fortify', disrupt: 'Disrupt' };
-      texts.add(t.x, t.z, names[e.skill] || e.skill, 'tag', 2.2);
+      texts.add(t.x, t.z, '★ ' + (e.name || e.skill), 'tag big', 2.9);
+      break;
+    }
+    case 'act': {
+      const t = ent(e.id); if (!t || (t.owner !== ctx.me && !vis(t.x, t.z))) return;
+      const labels = { move: 'Move', attack: 'Attack', shoot: 'Shoot', wait: null, shove: null, dash: null, frag: null, disrupt: null, sweep: null };
+      const lab = labels[e.kind];
+      if (!lab) return;
+      let txt = lab;
+      if (e.target && (e.kind === 'attack' || e.kind === 'move')) {
+        const tg = ent(e.target);
+        if (tg && (tg.owner === ctx.me || vis(tg.x, tg.z))) txt += ' → ' + (tg.id[0] === 'u' ? CONFIG.units[tg.type].name : CONFIG.buildings[tg.type].name);
+      }
+      texts.add(t.x, t.z, txt, 'tag act', 2.9);
+      break;
+    }
+    case 'sweep': {
+      if (!vis(e.x, e.z)) return;
+      const r1 = ring(e.r, 0.3, PALETTE.accent, 1, 0.1); r1.position.x = e.x; r1.position.z = e.z;
+      view.addFx(r1, 0.6, (o, k) => { o.scale.setScalar(0.4 + k * 0.8); o.material.opacity = 1 - k; o.rotation.z = k * 4; });
+      break;
+    }
+    case 'rally': {
+      if (!vis(e.x, e.z)) return;
+      const r1 = ring(e.r, 0.15, e.ids && ctx.disp.units.get(e.id)?.owner === 0 ? BLACK : WHITE, 1, 0.08); r1.position.x = e.x; r1.position.z = e.z;
+      view.addFx(r1, 1.2, (o, k) => { o.scale.setScalar(0.2 + k * 0.8); o.material.opacity = 1 - k; });
+      for (const id of e.ids || []) { const u = ent(id); if (u && id !== e.id) texts.add(u.x, u.z, 'Rallied +1 tier', 'tag small', 2.2); }
       break;
     }
     case 'cancel': {

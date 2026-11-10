@@ -52,12 +52,11 @@ export const CONFIG = {
   overwatchRange: 8,
 
   // Command points
+  // Command points: 1 CP = directly control one unit this round. The commander is always free.
+  // Stance changes are free.
   cp: {
     base: 3,
     perCommandPost: 1,
-    commanderBonus: 2,         // only usable on units in commander range at planning start
-    commanderRange: 7,
-    stanceUnitsPerCP: 4,       // 1 CP changes stance of up to this many units
     boostCost: 1,              // CP per production building per round
   },
 
@@ -88,33 +87,45 @@ export const CONFIG = {
       name: 'Assassin', tier: 6, hp: 60, armor: 4, defends: 1, vision: 8,
       cost: 30, buildRounds: 2, melee: true, zone: 1.6,
       strike: { ap: 20, dmg: 24 },
-      skill: { id: 'dash', name: 'Dash', ap: 20, cd: 2, length: 5 },
+      skills: [{ id: 'dash', name: 'Dash', ap: 20, cd: 2, length: 5, aim: 'point',
+        desc: 'Fixed-length straight dash. Cancelled inside or into an enemy control zone.' }],
     },
     fighter: {
       name: 'Fighter', tier: 5, hp: 90, armor: 8, defends: 1, vision: 7,
       cost: 25, buildRounds: 2, melee: true, zone: 2.2,
       strike: { ap: 25, dmg: 16 },
-      skill: { id: 'shove', name: 'Shove', ap: 25, cd: 2, dmg: 6, push: 3 },
+      skills: [{ id: 'shove', name: 'Shove', ap: 25, cd: 2, dmg: 6, push: 3, aim: 'enemy',
+        desc: 'Melee hit that pushes the target back. Being pushed ends its control zone.' }],
       parry: true,
     },
     ranged: {
       name: 'Ranged', tier: 5, hp: 60, armor: 3, defends: 1, vision: 9,
       cost: 25, buildRounds: 2, melee: false, zone: 0,
       shot: { ap: 30, dmg: 14, range: 10 },
-      skill: { id: 'frag', name: 'Frag', ap: 35, cd: 3, dmg: 18, range: 9, radius: 1.8, hitsAllies: true, unparryable: true },
+      skills: [{ id: 'frag', name: 'Frag', ap: 35, cd: 3, dmg: 18, range: 9, radius: 1.8, hitsAllies: true, unparryable: true, aim: 'point',
+        desc: 'Grenade lobbed at a spot. Passes over walls and units, hits everyone in the area (allies too).' }],
       overwatch: true,
     },
     tank: {
       name: 'Tank', tier: 4, hp: 140, armor: 12, defends: 2, vision: 7,
       cost: 40, buildRounds: 3, melee: true, zone: 3.2,
       strike: { ap: 30, dmg: 12 },
-      skill: { id: 'fortify', name: 'Fortify', ap: 20, cd: 3, defends: 2, armor: 6, prepaid: true },
+      skills: [{ id: 'fortify', name: 'Fortify', ap: 20, cd: 3, defends: 2, armor: 6, prepaid: true, aim: 'self',
+        desc: '+2 defends and +6 armor for the whole round. Paid during planning.' }],
     },
+    // Hero: always free to control, three skills with separate cooldowns.
     commander: {
-      name: 'Commander', tier: 5, hp: 120, armor: 8, defends: 2, vision: 9,
+      name: 'Commander', tier: 5, hp: 150, armor: 9, defends: 2, vision: 9,
       cost: 0, buildRounds: 0, melee: true, zone: 2.2, hero: true,
       strike: { ap: 25, dmg: 18 },
-      skill: { id: 'disrupt', name: 'Disrupt', ap: 25, cd: 3, range: 6, drain: 25, tierDown: 1 },
+      skills: [
+        { id: 'disrupt', name: 'Disrupt', ap: 25, cd: 3, range: 6, drain: 25, tierDown: 1, aim: 'enemy',
+          desc: 'Drains 25 AP from the end of an enemy\'s plan and lowers its tier by 1. Range 6.' },
+        { id: 'sweep', name: 'Sweep', ap: 30, cd: 2, dmg: 14, radius: 1.9, unparryable: true, aim: 'self',
+          desc: 'Spinning strike that hits every enemy within 1.9. Cannot be parried.' },
+        { id: 'rally', name: 'Rally', ap: 20, cd: 4, radius: 5, tierUp: 1, prepaid: true, aim: 'self',
+          desc: 'The commander and allies within 5 act one tier earlier this round. Paid during planning.' },
+      ],
     },
   },
 

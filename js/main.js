@@ -1,6 +1,6 @@
 // Game controller: menu, modes (AI / host / guest), planning UI, resolution playback.
 import { CONFIG } from './config.js';
-import { createGame, visibleEnemies, findEntity, unitDef, moveSpeed, emptyOrders, armyCount, hqOf, commanderOf } from './sim/state.js';
+import { createGame, visibleEnemies, findEntity, unitDef, moveSpeed, emptyOrders, armyCount, hqOf, commanderOf, skillDef } from './sim/state.js';
 import { dist } from './sim/geom.js';
 import { Nav } from './sim/nav.js';
 import { resolveRound } from './sim/resolve.js';
@@ -14,6 +14,7 @@ import { Input } from './ui/input.js';
 import { Planner } from './ui/planner.js';
 import { renderTopbar, renderStrip, renderPanel, toast } from './ui/hud.js';
 import { helpHTML } from './ui/help.js';
+import { describe, involvesVisible, nameMap, Feed, reportHTML, segLabel } from './ui/log.js';
 import { Net, randomCode } from './net/net.js';
 
 const $ = id => document.getElementById(id);
@@ -37,6 +38,7 @@ class Game {
     this.speed = 1; this.paused = false; this.multi = false;
     this.guestOrders = {}; this.net = null;
     this.frame = 0;
+    this.feed = new Feed($('feed'));
     this.bindDOM();
     // menu backdrop
     this.state = createGame(1);
@@ -62,6 +64,8 @@ class Game {
     $('btn-build').onclick = () => { this.panelTab = this.panelTab === 'build' ? 'orders' : 'build'; this.uiMode = null; this.changed(); };
     $('btn-multi').onclick = () => { this.multi = !this.multi; $('btn-multi').classList.toggle('on', this.multi); toast(this.multi ? 'Multi-select on: tap units to add or remove' : 'Multi-select off'); };
     $('btn-replay').onclick = () => this.replay();
+    $('btn-log').onclick = () => this.openReport();
+    $('report-close').onclick = () => $('report').classList.add('hidden');
     $('btn-pause').onclick = () => this.openPause();
     $('btn-menu').onclick = () => this.openPause();
     $('p-resume').onclick = () => { $('pausemenu').classList.add('hidden'); this.paused = false; };
@@ -381,9 +385,15 @@ class Game {
           O.add(ribbon([l.from, l.at], 0.04, PALETTE.accent, op * 0.6, 0.15, 0.06));
           const r = ring(l.r, 0.08, PALETTE.accent, op, 0.06); r.position.set(l.at.x, 0.06, l.at.z); O.add(r);
           const d = disc(l.r, PALETTE.accent, 0.12, 0.05); d.position.set(l.at.x, 0.05, l.at.z); O.add(d);
+        } else if (l.kind === 'sweep') {
+          const r = ring(l.r, 0.1, PALETTE.accent, op, 0.06); r.position.set(l.at.x, 0.06, l.at.z); O.add(r);
+          const d = disc(l.r, PALETTE.accent, 0.12, 0.05); d.position.set(l.at.x, 0.05, l.at.z); O.add(d);
         } else if (l.kind === 'disrupt') {
           O.add(ribbon([l.from, l.to], 0.06, PALETTE.accent, op, 0.15, 0.06));
         }
+      }
+      if ((plan.buffs || []).includes('rally')) {
+        const r = dashedRing(skillDef(u.type, 'rally').radius, 0.09, ink, 0.75, 0.045, 36); r.position.set(u.x, 0, u.z); O.add(r);
       }
       if (plan.overwatch && sel) {
         const r = dashedRing(CONFIG.overwatchRange, 0.05, PALETTE.accent, 0.5, 0.04, 40); r.position.set(pr.x, 0, pr.z); O.add(r);
@@ -404,8 +414,8 @@ class Game {
       const r0 = id[0] === 'u' ? 0.72 : (id[0] === 'b' ? CONFIG.buildings[e.type].r + 0.4 : 1.3);
       const a = ring(r0, 0.12, ink, 1, 0.06); a.position.set(e.x, 0.06, e.z); O.add(a);
       const b = ring(r0 - 0.11, 0.07, WHITE, 1, 0.061); b.position.set(e.x, 0.061, e.z); O.add(b);
-      if (e.type === 'commander' && e.owner === this.me) {
-        const c = dashedRing(CONFIG.cp.commanderRange, 0.06, ink, 0.5, 0.04, 44); c.position.set(e.x, 0, e.z); O.add(c);
+      if (e.type === 'commander' && e.owner === this.me && this.uiMode === 'disrupt') {
+        const c = dashedRing(skillDef('commander', 'disrupt').range, 0.06, PALETTE.accent, 0.7, 0.04, 40); c.position.set(e.x, 0, e.z); O.add(c);
       }
       if (e.id[0] === 'u' && e.owner === this.me && this.selection.length === 1) {
         const st = P.draft.stances[e.id];
@@ -484,7 +494,7 @@ class Game {
       return;
     }
     if (mode === 'advance') {
-      P.setStance(own.map(u => u.id), 'advance', p); this.uiMode = null; this.panelTab = 'orders'; this.changed();
+      P.setStance(own.map(u => u.id), 'advance', p); this.uiMode = null; this.changed();
       return;
     }
     if (mode === 'move') {
@@ -518,23 +528,21 @@ class Game {
     }
 
     // ---- idle tap ----
+    // Tapping a unit shows its stance first; orders are only given once you press Control.
+    const controlled = own.filter(u => P.plan(u.id));
+    const allControlled = own.length > 0 && controlled.length === own.length && this.panelTab !== 'stance';
     if (e && isUnit && e.owner === this.me) {
       if (this.multi || long) {
         const i = this.selection.indexOf(e.id);
-        if (i >= 0) this.selection.splice(i, 1); else this.selection = [...this.selection.filter(id => id[0] === 'u'), e.id];
+        if (i >= 0) this.selection.splice(i, 1); else this.selection = [...this.selection.filter(id => id[0] === 'u' && this.entity(id)?.owner === this.me), e.id];
       } else this.selection = [e.id];
-      this.panelTab = this.panelTab === 'build' ? 'orders' : this.panelTab;
-      if (this.panelTab === 'stance' && this.selection.length !== 1) this.panelTab = 'orders';
+      this.panelTab = 'orders';
       this.changed();
       return;
     }
-    if (isEnemy && own.length) {
-      this.groupAttack(own, e);
-      this.changed();
-      return;
-    }
+    if (isEnemy && allControlled) { this.groupAttack(own, e); this.changed(); return; }
     if (e) { this.selection = [e.id]; this.panelTab = 'orders'; this.changed(); return; }
-    if (own.length && !long) { this.groupMove(own, p); this.changed(); return; }
+    if (allControlled && !long) { this.groupMove(own, p); this.changed(); return; }
     this.selection = []; this.panelTab = 'orders'; this.changed();
   }
 
@@ -565,23 +573,36 @@ class Game {
     this.changed();
   }
 
-  panelAction(act, u, b) {
+  panelAction(act, u, b, units) {
     const P = this.planner;
-    const own = this.ownSelected();
+    const own = units && units.length ? units : this.ownSelected();
     const [k, arg] = act.split(':');
     switch (k) {
       case 'deselect': this.selection = []; this.uiMode = null; this.panelTab = 'orders'; break;
       case 'cancelmode': this.uiMode = null; this.hoverBuild = null; break;
       case 'mode': this.uiMode = this.uiMode === arg ? null : arg; break;
       case 'tab': this.panelTab = arg; this.uiMode = null; break;
+      case 'control':
+        for (const x of own) if (!P.control(x.id)) break;
+        this.panelTab = 'orders'; this.uiMode = null;
+        break;
+      case 'release': for (const x of own) P.clear(x.id); this.panelTab = 'orders'; this.uiMode = null; break;
+      case 'skill': {
+        if (!u) break;
+        const k2 = skillDef(u.type, arg);
+        if (k2.prepaid) P.prepaid(u.id, 'buff:' + arg, 1);
+        else if (k2.aim === 'self') P.addAction(u.id, { kind: arg });
+        else { this.uiMode = this.uiMode === arg ? null : arg; }
+        break;
+      }
       case 'wait': if (u) P.addAction(u.id, { kind: 'wait', ap: 10 }); break;
       case 'pre': for (const x of own) P.prepaid(x.id, arg, 1); break;
       case 'undo': if (u) P.undo(u.id); break;
       case 'clear': for (const x of own) P.clear(x.id); break;
       case 'heal': if (u) P.toggleHeal(u.id); break;
       case 'stance':
-        if (arg === 'advance') { this.uiMode = 'advance'; toast('Tap a point to advance towards'); }
-        else { P.setStance(own.map(x => x.id), arg); this.panelTab = 'orders'; }
+        if (arg === 'advance') { this.uiMode = 'advance'; toast('Tap the point to advance towards'); }
+        else P.setStance(own.map(x => x.id), arg);
         break;
       case 'prod': P.addProduction(b.id, arg); break;
       case 'unprod': P.removeProduction(+arg); break;
@@ -662,7 +683,50 @@ class Game {
     $('btn-build').classList.add('hidden'); $('btn-multi').classList.add('hidden');
     this.panelTab = 'orders';
     if (!isReplay) { this.newTrails = new Map(); this.knownDead = new Set(); }
+    this.names = nameMap(pre, post);
+    this.feed.clear();
+    $('summary').classList.add('hidden');
+    this.lastFeedSeg = null;
+    if (!isReplay) this.report = { round: log.round, lines: [], sum: { dealt: 0, taken: 0, killed: 0, lost: 0 } };
     this.changed();
+  }
+
+  // Turn a resolution event into a readable line (feed + report)
+  logEvent(e, live) {
+    const pb = this.playback;
+    const visId = id => {
+      const u = pb.disp.units.get(id) || pb.disp.buildings.get(id);
+      return u ? this.isVisible(u.x, u.z) : false;
+    };
+    if (!involvesVisible(e, this.names, this.me, visId)) return;
+    const d = describe(e, this.names, this.me);
+    if (!d) return;
+    const label = segLabel(e.__seg);
+    if (live) { this.feed.push(d, label !== this.lastFeedSeg ? label : ''); this.lastFeedSeg = label; }
+    if (pb.isReplay || !this.report) return;
+    this.report.lines.push({ ...d, label });
+    const S = this.report.sum;
+    S.dealt += d.dealt || 0; S.taken += d.taken || 0; S.killed += d.killed || 0; S.lost += d.lost || 0;
+  }
+
+  openReport() {
+    if (!this.report) return;
+    $('report-title').textContent = `Round ${this.report.round} report`;
+    $('report-body').innerHTML = reportHTML(this.report);
+    $('report').classList.remove('hidden');
+  }
+
+  showSummary() {
+    const r = this.report; if (!r) return;
+    const S = r.sum;
+    const el = $('summary');
+    el.innerHTML = `<span class="sum-k">Round ${r.round}</span>
+      <span>Dealt <b>${S.dealt}</b></span><span>Taken <b>${S.taken}</b></span>
+      <span>Killed <b>${S.killed}</b></span><span>Lost <b>${S.lost}</b></span>
+      <button class="btn mini" id="sum-open">Report ▸</button><button class="btn mini" id="sum-close">✕</button>`;
+    el.classList.remove('hidden');
+    $('sum-open').onclick = () => this.openReport();
+    $('sum-close').onclick = () => el.classList.add('hidden');
   }
 
   replay() {
@@ -675,7 +739,7 @@ class Game {
   skipPlayback() {
     if (!this.playback) return;
     const evs = this.playback.skip();
-    for (const e of evs) if (e.type === 'death') this.knownDead?.add(e.id);
+    for (const e of evs) { if (e.type === 'death') this.knownDead?.add(e.id); this.logEvent(e, false); }
     this.finishPlayback();
   }
 
@@ -683,6 +747,7 @@ class Game {
     const pb = this.playback;
     this.playback = null;
     this.texts.clear();
+    this.feed.clear();
     $('banner').classList.add('hidden');
     if (pb.isReplay) {
       this.phase = 'planning';
@@ -694,6 +759,7 @@ class Game {
     }
     this.state = pb.post;
     this.lastRound = { pre: pb.pre, log: pb.log, post: pb.post };
+    this.showSummary();
     this.trails = this.newTrails || new Map();
     if (this.state.winner !== null && this.state.winner !== undefined) {
       const w = this.state.winner;
@@ -766,14 +832,21 @@ class Game {
     if (res.banner) {
       banner.classList.remove('hidden');
       const seg = res.banner.seg;
-      const n = seg.units ? seg.units.filter(id => id && (pb.disp.units.get(id)?.owner === this.me || this.isVisibleUnit(pb.disp.units.get(id)))).length : 0;
-      banner.textContent = pb.bannerText(seg) + (seg.kind === 'tier' ? ` · ${n} unit${n === 1 ? '' : 's'}` : '');
-      banner.style.opacity = res.banner.active ? '0.25' : '1';
+      let who = '';
+      if (seg.kind === 'tier') {
+        const names = seg.units.map(id => pb.disp.units.get(id)).filter(u => u && (u.owner === this.me || this.isVisibleUnit(u)))
+          .map(u => `${u.owner === this.me ? 'Your' : 'Enemy'} ${CONFIG.units[u.type].name}`);
+        const hidden = seg.units.length - names.length;
+        who = names.join(' · ') + (hidden > 0 ? ` · ${hidden} unseen` : '');
+      }
+      banner.innerHTML = `<div class="b-title">${pb.bannerText(seg)}</div>${who ? `<div class="b-sub">${who}</div>` : ''}`;
+      banner.classList.toggle('active', !!res.banner.active);
     }
     const ctx = { disp: pb.disp, vis: (x, z) => this.isVisible(x, z), me: this.me, nodes: pb.disp.nodes };
     for (const e of res.events) {
       if (e.type === 'death') { this.knownDead?.add(e.id); this.lastSeen.delete(e.id); }
       eventFx(this.view, this.texts, e, ctx);
+      this.logEvent(e, true);
     }
     // fog + visibility from current display
     if (this.frame % 4 === 0) {
@@ -792,10 +865,13 @@ class Game {
   syncPlaybackDisplay() {
     const pb = this.playback;
     const units = [], buildings = [];
+    const seg = pb.curSeg;
+    const acting = seg && seg.kind === 'tier' ? new Set(seg.units) : null;
     for (const [id, u] of pb.disp.units) {
       const mine = u.owner === this.me;
       const vis = mine || this.isVisible(u.x, u.z);
-      units.push({ ...u, visible: vis, defends: 0 });
+      const isAct = !!acting && acting.has(id) && u.hp > 0;
+      units.push({ ...u, visible: vis, defends: 0, acting: isAct, dim: !!acting && !isAct });
       if (!mine && vis && !pb.isReplay && u.hp > 0) {
         this.lastSeen.set(id, { x: u.x, z: u.z, type: u.type, owner: u.owner });
         const tr = this.newTrails.get(id) || [];

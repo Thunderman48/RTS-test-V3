@@ -1,9 +1,10 @@
 // Order costs, CP accounting and validation. Shared by the planner UI, the AI and the resolver.
 import { CONFIG } from '../config.js';
 import { dist, inRect } from './geom.js';
-import { apFor, cpPools, inCommanderRange, unitDef, armyCount, emptyPlan, findEntity } from './state.js';
+import { apFor, cpPools, unitDef, armyCount, emptyPlan, findEntity, skillDef, cdOf } from './state.js';
 
-export const SKILL_KINDS = ['dash', 'shove', 'frag', 'disrupt'];
+export const SKILL_KINDS = ['dash', 'shove', 'frag', 'disrupt', 'sweep'];
+export const PREPAID_SKILLS = ['fortify', 'rally'];
 
 export function actionCost(u, a) {
   const d = CONFIG.units[u.type];
@@ -11,9 +12,11 @@ export function actionCost(u, a) {
     case 'move': case 'wait': return a.ap;
     case 'attack': return (a.moveAp || 0) + d.strike.ap;
     case 'shoot': return d.shot.ap;
-    case 'shove': return (a.moveAp || 0) + d.skill.ap;
-    case 'dash': case 'frag': case 'disrupt': return d.skill.ap;
-    default: return 0;
+    case 'shove': return (a.moveAp || 0) + (skillDef(u.type, 'shove')?.ap || 0);
+    default: {
+      const k = skillDef(u.type, a.kind);
+      return k ? k.ap : 0;
+    }
   }
 }
 
@@ -24,23 +27,25 @@ export function upgradeCost(n) {
 }
 
 export function prepaidCost(u, plan) {
-  const d = CONFIG.units[u.type];
   return upgradeCost(plan.upgrades || 0)
     + (plan.defends || 0) * CONFIG.extraDefendCost
     + (plan.overwatch || 0) * CONFIG.overwatchCost
     + (plan.parry ? CONFIG.parryCost : 0)
-    + (plan.fortify ? d.skill.ap : 0);
+    + (plan.buffs || []).reduce((n, id) => n + (skillDef(u.type, id)?.ap || 0), 0);
 }
 
 export function planCost(u, plan) {
   return prepaidCost(u, plan) + plan.actions.reduce((s, a) => s + actionCost(u, a), 0);
 }
 
-export function usesSkill(plan) {
-  return plan.fortify || plan.actions.some(a => SKILL_KINDS.includes(a.kind));
+// Skill ids already planned this round (each skill can be used once per round)
+export function skillsPlanned(plan) {
+  const out = new Set(plan.buffs || []);
+  for (const a of plan.actions) if (SKILL_KINDS.includes(a.kind)) out.add(a.kind);
+  return out;
 }
 
-// Sanitize a single unit plan (counts, cooldown, AP budget). Returns a new plan.
+// Sanitize a single unit plan (counts, cooldowns, AP budget). Returns a new plan.
 export function sanitizePlan(u, plan) {
   const d = unitDef(u);
   const p = emptyPlan();
@@ -48,60 +53,57 @@ export function sanitizePlan(u, plan) {
   p.defends = Math.max(0, Math.min(CONFIG.maxExtraDefends, plan.defends | 0));
   p.overwatch = d.overwatch ? Math.max(0, Math.min(CONFIG.maxOverwatch, plan.overwatch | 0)) : 0;
   p.parry = !!(d.parry && plan.parry);
-  let skillUsed = false;
-  p.fortify = !!(d.skill.id === 'fortify' && plan.fortify && u.cd <= 0);
-  if (p.fortify) skillUsed = true;
+  const used = new Set();
+  for (const id of plan.buffs || []) {
+    const k = skillDef(u.type, id);
+    if (!k || !k.prepaid || cdOf(u, id) > 0 || used.has(id)) continue;
+    used.add(id); p.buffs.push(id);
+  }
   const budget = apFor(u);
-  let used = prepaidCost(u, p);
-  if (used > budget) return emptyPlan();
+  let spent = prepaidCost(u, p);
+  if (spent > budget) return emptyPlan();
   for (const a0 of plan.actions || []) {
     const a = { ...a0 };
     if (a.ap !== undefined) a.ap = Math.max(1, Math.round(a.ap));
     if (a.moveAp !== undefined) a.moveAp = Math.max(0, Math.round(a.moveAp));
     if (SKILL_KINDS.includes(a.kind)) {
-      if (d.skill.id !== a.kind || u.cd > 0 || skillUsed) continue;
-      skillUsed = true;
-    }
+      const k = skillDef(u.type, a.kind);
+      if (!k || k.prepaid || cdOf(u, a.kind) > 0 || used.has(a.kind)) continue;
+      used.add(a.kind);
+    } else if (!['move', 'wait', 'attack', 'shoot'].includes(a.kind)) continue;
     if (a.kind === 'shoot' && !d.shot) continue;
     if (a.kind === 'attack' && !d.strike) continue;
     const c = actionCost(u, a);
-    if (used + c > budget) {
+    if (spent + c > budget) {
       // shrink a trailing move/wait to fit
-      if ((a.kind === 'move' || a.kind === 'wait') && budget - used >= 1) { a.ap = budget - used; p.actions.push(a); used = budget; }
+      if ((a.kind === 'move' || a.kind === 'wait') && budget - spent >= 1) { a.ap = budget - spent; p.actions.push(a); spent = budget; }
       break;
     }
-    used += c;
+    spent += c;
     p.actions.push(a);
   }
   return p;
 }
 
-// CP usage for a set of orders. Returns pools, usage and the list of accepted unit ids.
+// CP usage for a set of orders. 1 CP per directly controlled unit; the commander is free.
+// Stance changes are free.
 export function cpUsage(s, p, orders) {
   const pools = cpPools(s, p);
-  let base = pools.base, cmd = pools.cmd;
+  let base = pools.base;
   const accepted = [], rejected = [];
   for (const id of Object.keys(orders.units)) {
     const u = s.units.find(x => x.id === id);
     if (!u || u.owner !== p || u.hp <= 0) { rejected.push(id); continue; }
-    if (u.type === 'commander') { accepted.push(id); continue; } // commander is always free
-    if (cmd > 0 && inCommanderRange(s, u)) { cmd--; accepted.push(id); }
-    else if (base > 0) { base--; accepted.push(id); }
+    if (u.type === 'commander') { accepted.push(id); continue; }
+    if (base > 0) { base--; accepted.push(id); }
     else rejected.push(id);
   }
-  // stance changes: 1 CP per N units
-  const changes = stanceChanges(s, p, orders);
-  const stanceCP = Math.ceil(changes.length / CONFIG.cp.stanceUnitsPerCP);
-  let stanceOk = changes.length;
-  if (stanceCP > base) { stanceOk = base * CONFIG.cp.stanceUnitsPerCP; base = 0; }
-  else base -= stanceCP;
   const boostsOk = [];
   for (const bid of orders.boosts || []) { if (base >= CONFIG.cp.boostCost) { base -= CONFIG.cp.boostCost; boostsOk.push(bid); } }
   return {
-    totalBase: pools.base, totalCmd: pools.cmd,
-    leftBase: base, leftCmd: cmd,
+    totalBase: pools.base, leftBase: base,
     accepted, rejected,
-    stanceChanges: changes.slice(0, stanceOk), stanceRejected: changes.slice(stanceOk),
+    stanceChanges: stanceChanges(s, p, orders),
     boosts: boostsOk,
   };
 }

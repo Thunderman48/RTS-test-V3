@@ -28,8 +28,8 @@ export function addUnit(s, owner, type, x, z, stance = 'guard') {
     id: 'u' + (s.nextId++), owner, type, x, z,
     hp: def.hp, maxHp: def.hp,
     stance, anchor: { x, z },
-    cd: 0,                 // skill cooldown in rounds
-    skillRevealed: false,  // enemy can see cooldown once the skill has been used
+    cds: {},               // skill id -> cooldown in rounds
+    revealed: {},          // skill id -> true once used (enemy can then see its cooldown)
     tierDebuff: 0,         // pending tier debuff applied at next turn
     lastCombat: -99,
     born: s.round,
@@ -79,18 +79,16 @@ export function hqOf(s, p) { return s.buildings.find(b => b.owner === p && b.typ
 
 export function commanderOf(s, p) { return s.units.find(u => u.owner === p && u.type === 'commander' && u.hp > 0); }
 
-// Total CP and commander CP for player p
+// Total CP for player p
 export function cpPools(s, p) {
   const posts = s.buildings.filter(b => b.owner === p && b.type === 'command' && b.built && b.hp > 0).length;
-  const base = CONFIG.cp.base + posts * CONFIG.cp.perCommandPost;
-  const cmd = commanderOf(s, p) ? CONFIG.cp.commanderBonus : 0;
-  return { base, cmd };
+  return { base: CONFIG.cp.base + posts * CONFIG.cp.perCommandPost };
 }
 
-export function inCommanderRange(s, u) {
-  const c = commanderOf(s, u.owner);
-  return !!c && c.id !== u.id && dist(c.x, c.z, u.x, u.z) <= CONFIG.cp.commanderRange;
-}
+// ---- skills -------------------------------------------------------------------
+export const skillsOf = u => CONFIG.units[u.type].skills;
+export const skillDef = (type, id) => CONFIG.units[type].skills.find(k => k.id === id) || null;
+export const cdOf = (u, id) => (u.cds && u.cds[id]) || 0;
 
 // Vision sources for player p (list of {x,z,r})
 export function visionSources(s, p) {
@@ -137,7 +135,8 @@ export function emptyOrders() {
 }
 
 export function emptyPlan() {
-  return { actions: [], upgrades: 0, defends: 0, overwatch: 0, parry: false, fortify: false };
+  // buffs: ids of prepaid skills (Fortify, Rally) bought during planning
+  return { actions: [], upgrades: 0, defends: 0, overwatch: 0, parry: false, buffs: [] };
 }
 
 export const clone = o => JSON.parse(JSON.stringify(o));

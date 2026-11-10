@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#0b0b0b">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<title>Tiers V1 — Turn-Based RTS</title>
+<link rel="stylesheet" href="css/style.css">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23000'/%3E%3Cpath d='M8 2 14 13H2Z' fill='%23fff'/%3E%3C/svg%3E">
+<script type="importmap">
+{ "imports": { "three": "../vendor/three.module.min.js" } }
+</script>
+<script src="../vendor/peerjs.min.js"></script>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="fx-layer"></div>
+
+<!-- ============ HUD ============ -->
+<div id="hud" class="hidden">
+  <div id="topbar">
+    <div class="tb-group">
+      <div class="tb-item"><span class="tb-k">Round</span><span class="tb-v" id="tb-round">1</span></div>
+      <div class="tb-item" id="tb-phase-wrap"><span class="tb-v phase" id="tb-phase">Planning</span></div>
+    </div>
+    <div class="tb-group">
+      <div class="tb-item"><span class="tb-k">Supply</span><span class="tb-v" id="tb-supply">0</span></div>
+      <div class="tb-item"><span class="tb-k">CP</span><span class="tb-v" id="tb-cp">0</span></div>
+      <div class="tb-item hidden" id="tb-timer-wrap"><span class="tb-k">Time</span><span class="tb-v" id="tb-timer">90</span></div>
+    </div>
+    <div class="tb-group">
+      <button class="icon-btn" id="btn-replay" title="Replay last round">↺</button>
+      <button class="icon-btn" id="btn-pause" title="Pause">❚❚</button>
+      <button class="icon-btn" id="btn-menu" title="Menu">≡</button>
+    </div>
+  </div>
+  <div id="order-strip"></div>
+  <div id="banner" class="hidden"></div>
+  <div id="toast"></div>
+
+  <div id="bottom">
+    <div id="panel"></div>
+    <div id="side">
+      <button id="btn-build" class="sq-btn">▦<small>Build</small></button>
+      <button id="btn-multi" class="sq-btn">⧉<small>Multi</small></button>
+      <button id="btn-ready" class="ready">READY</button>
+      <div id="playctl" class="hidden">
+        <button data-speed="1" class="on">1×</button><button data-speed="2">2×</button><button data-speed="4">4×</button><button id="btn-skip">Skip ▸▸</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ Overlays ============ -->
+<div id="menu" class="overlay">
+  <div class="card menu-card">
+    <div class="logo">
+      <svg viewBox="0 0 120 40" class="logo-mark" aria-hidden="true">
+        <rect x="2" y="22" width="16" height="16" fill="currentColor"/>
+        <path d="M30 38 40 18 50 38Z" fill="currentColor"/>
+        <circle cx="70" cy="30" r="8" fill="none" stroke="currentColor" stroke-width="3"/>
+        <path d="M95 14 105 26 95 38 85 26Z" fill="currentColor"/>
+      </svg>
+      <h1>TIERS</h1>
+      <p class="sub">Turn-based RTS · simultaneous planning · prototype</p>
+    </div>
+    <div class="menu-btns">
+      <button class="big" id="m-ai">Play vs AI</button>
+      <button class="big ghost" id="m-host">Host online game</button>
+      <div class="join-row">
+        <input id="m-code" maxlength="5" placeholder="CODE" autocomplete="off" autocapitalize="characters" spellcheck="false">
+        <button class="big ghost" id="m-join">Join</button>
+      </div>
+      <button class="link" id="m-help">How to play</button>
+    </div>
+    <p class="fine">Online play connects two browsers directly (WebRTC via the free PeerJS broker).</p>
+  </div>
+</div>
+
+<div id="lobby" class="overlay hidden">
+  <div class="card">
+    <h2 id="lobby-title">Hosting</h2>
+    <div id="lobby-code" class="code">-----</div>
+    <p id="lobby-msg">Share this code with your opponent.</p>
+    <button class="big ghost" id="lobby-cancel">Cancel</button>
+  </div>
+</div>
+
+<div id="pausemenu" class="overlay hidden">
+  <div class="card">
+    <h2 id="pause-title">Paused</h2>
+    <div class="menu-btns">
+      <button class="big" id="p-resume">Resume</button>
+      <button class="big ghost" id="p-help">How to play</button>
+      <button class="big ghost" id="p-quit">Quit to menu</button>
+    </div>
+  </div>
+</div>
+
+<div id="gameover" class="overlay hidden">
+  <div class="card">
+    <h2 id="go-title">Victory</h2>
+    <p id="go-msg"></p>
+    <button class="big" id="go-menu">Back to menu</button>
+  </div>
+</div>
+
+<div id="help" class="overlay hidden">
+  <div class="card help-card">
+    <div class="help-head"><h2>How to play</h2><button class="icon-btn" id="help-close">✕</button></div>
+    <div class="help-body" id="help-body"></div>
+  </div>
+</div>
+
+<script type="module" src="js/main.js"></script>
+</body>
+</html>

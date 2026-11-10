@@ -4,7 +4,7 @@ import { CONFIG } from '../config.js';
 import { dist, norm } from '../sim/geom.js';
 import {
   emptyOrders, emptyPlan, visibleEnemies, hqOf, apFor, moveSpeed, armyCount, commanderOf,
-  cpPools, inCommanderRange, entRadius,
+  cpPools, entRadius, skillDef, cdOf,
 } from '../sim/state.js';
 import { canPlace, cpUsage, nearBase } from '../sim/orders.js';
 import { approachAP } from '../sim/stances.js';
@@ -79,11 +79,10 @@ export function aiOrders(s, p) {
 
   // ---------------- direct control with CP ----------------
   const pools = cpPools(s, p);
-  let cpBase = pools.base, cpCmd = pools.cmd;
+  let cpBase = pools.base;
   const takeCP = u => {
-    if (u.type === 'commander') return true;
-    if (cpCmd > 0 && inCommanderRange(s, u)) { cpCmd--; return true; }
-    if (cpBase > 1) { cpBase--; return true; } // keep 1 CP for stance changes
+    if (u.type === 'commander') return true; // hero is always free
+    if (cpBase > 0) { cpBase--; return true; }
     return false;
   };
   const scored = [];
@@ -114,9 +113,7 @@ export function aiOrders(s, p) {
     const anchorMoved = st === 'advance' && (!u.anchor || dist(u.anchor.x, u.anchor.z, anchor.x, anchor.z) > 3);
     if (u.stance !== st || anchorMoved) changes.push({ u, st, anchor });
   }
-  const maxChanges = cpBase * CONFIG.cp.stanceUnitsPerCP;
-  changes.sort((a, b) => (a.st === 'retreat' ? -1 : 0) - (b.st === 'retreat' ? -1 : 0));
-  for (const c of changes.slice(0, maxChanges)) o.stances[c.u.id] = { stance: c.st, anchor: c.anchor };
+  for (const c of changes) o.stances[c.u.id] = { stance: c.st, anchor: c.anchor }; // stance changes are free
   const used = cpUsage(s, p, o);
   if (used.leftBase > 0) {
     const prod = s.buildings.find(b => b.owner === p && b.queue.length && b.built);
@@ -150,10 +147,11 @@ function directPlan(s, u, near, view, objective, nav, R) {
     const targets = near.filter(e => dist(e.x, e.z, u.x, u.z) <= def.shot.range).sort((a, b) => a.hp - b.hp);
     if (!targets.length) return null;
     const t = targets[0];
-    if (u.cd <= 0 && left >= def.skill.ap && targets.length >= 1) {
-      const cluster = targets.filter(e => dist(e.x, e.z, t.x, t.z) < def.skill.radius + 0.5).length;
+    const frag = skillDef(u.type, 'frag');
+    if (cdOf(u, 'frag') <= 0 && left >= frag.ap && targets.length >= 1) {
+      const cluster = targets.filter(e => dist(e.x, e.z, t.x, t.z) < frag.radius + 0.5).length;
       if (cluster >= 2 || t.type === 'tank' || R() < 0.4) {
-        plan.actions.push({ kind: 'frag', x: t.x, z: t.z }); left -= def.skill.ap;
+        plan.actions.push({ kind: 'frag', x: t.x, z: t.z }); left -= frag.ap;
       }
     }
     const tierAdv = t.type !== 'assassin' && R() < 0.3 && left >= 15 + def.shot.ap * 2;
@@ -167,10 +165,14 @@ function directPlan(s, u, near, view, objective, nav, R) {
     if (left >= CONFIG.extraDefendCost) plan.defends = Math.floor(left / CONFIG.extraDefendCost);
     return plan;
   }
-  // commander: disrupt the most dangerous unit in range
-  if (u.type === 'commander' && u.cd <= 0) {
-    const tgt = near.filter(e => dist(e.x, e.z, u.x, u.z) <= def.skill.range).sort((a, b) => CONFIG.units[b.type].tier - CONFIG.units[a.type].tier)[0];
-    if (tgt) { plan.actions.push({ kind: 'disrupt', target: tgt.id }); left -= def.skill.ap; }
+  // commander (hero): rally nearby allies, disrupt the most dangerous unit in range
+  if (u.type === 'commander') {
+    const rally = skillDef(u.type, 'rally');
+    const allies = s.units.filter(x => x.owner === u.owner && x.hp > 0 && x.id !== u.id && dist(x.x, x.z, u.x, u.z) <= rally.radius).length;
+    if (cdOf(u, 'rally') <= 0 && allies >= 2 && near.length) { plan.buffs.push('rally'); left -= rally.ap; }
+    const dis = skillDef(u.type, 'disrupt');
+    const tgt = near.filter(e => dist(e.x, e.z, u.x, u.z) <= dis.range).sort((a, b) => CONFIG.units[b.type].tier - CONFIG.units[a.type].tier)[0];
+    if (tgt && cdOf(u, 'disrupt') <= 0 && left >= dis.ap + 30) { plan.actions.push({ kind: 'disrupt', target: tgt.id }); left -= dis.ap; }
   }
   // melee: attack best target in reach
   const targets = near.slice().sort((a, b) => {
@@ -187,16 +189,28 @@ function directPlan(s, u, near, view, objective, nav, R) {
     plan.defends = Math.min(CONFIG.maxExtraDefends, Math.floor(left / CONFIG.extraDefendCost));
     return plan;
   }
-  if (u.type === 'assassin' && u.cd <= 0 && dist(u.x, u.z, t.x, t.z) > 4 && left >= def.skill.ap + def.strike.ap + 10) {
-    plan.actions.push({ kind: 'dash', x: t.x, z: t.z }); left -= def.skill.ap;
+  const sk0 = def.skills[0];
+  if (u.type === 'assassin' && cdOf(u, 'dash') <= 0 && dist(u.x, u.z, t.x, t.z) > 4 && left >= sk0.ap + def.strike.ap + 10) {
+    plan.actions.push({ kind: 'dash', x: t.x, z: t.z }); left -= sk0.ap;
   }
-  if (u.type === 'tank' && u.cd <= 0 && left >= def.skill.ap + def.strike.ap) { plan.fortify = true; left -= def.skill.ap; }
+  if (u.type === 'tank' && cdOf(u, 'fortify') <= 0 && left >= sk0.ap + def.strike.ap) { plan.buffs.push('fortify'); left -= sk0.ap; }
   if (u.type === 'fighter' && left >= CONFIG.parryCost + def.strike.ap + 20) { plan.parry = true; left -= CONFIG.parryCost; }
   const reach = CONFIG.unitRadius + entRadius(t) + CONFIG.meleeReach;
   const need = approachAP(nav, u, t.x, t.z, reach - 0.1) + 6;
-  if (u.type === 'fighter' && u.cd <= 0 && left >= def.skill.ap + need && t.type === 'tank') {
-    plan.actions.push({ kind: 'shove', target: t.id, moveAp: Math.min(need, left - def.skill.ap) });
-    left -= Math.min(need, left - def.skill.ap) + def.skill.ap;
+  if (u.type === 'fighter' && cdOf(u, 'shove') <= 0 && left >= sk0.ap + need && t.type === 'tank') {
+    plan.actions.push({ kind: 'shove', target: t.id, moveAp: Math.min(need, left - sk0.ap) });
+    left -= Math.min(need, left - sk0.ap) + sk0.ap;
+  }
+  if (u.type === 'commander' && cdOf(u, 'sweep') <= 0) {
+    const sw = skillDef(u.type, 'sweep');
+    const crowd = near.filter(e => dist(e.x, e.z, t.x, t.z) <= sw.radius).length;
+    if (crowd >= 2 && left >= need + sw.ap) {
+      plan.actions.push({ kind: 'move', ap: Math.max(1, need - 4), follow: t.id });
+      plan.actions.push({ kind: 'sweep' });
+      left -= Math.max(1, need - 4) + sw.ap;
+      if (left >= CONFIG.extraDefendCost) plan.defends = Math.min(CONFIG.maxExtraDefends, Math.floor(left / CONFIG.extraDefendCost));
+      return plan;
+    }
   }
   if (left >= def.strike.ap) {
     const moveAp = Math.min(need, left - def.strike.ap);
