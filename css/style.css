@@ -347,3 +347,34 @@ button { font-family: inherit; cursor: pointer; touch-action: manipulation; }
 @media (max-height: 500px) and (orientation: landscape) {
   #digest { top: calc(50px + var(--sat)); bottom: calc(8px + var(--sab)); width: min(420px, 55vw); }
 }
+
+/* ---------- planning clarity ---------- */
+.gl { background: none; border: none; color: var(--mid); font-size: 13px; padding: 0 2px; cursor: pointer; vertical-align: baseline; line-height: 1; min-width: 22px; min-height: 22px; }
+.gl:hover, .gl:active { color: var(--paper); }
+#glossary-pop { position: fixed; z-index: 50; background: var(--paper); color: var(--ink); border: 2px solid var(--ink); box-shadow: 5px 5px 0 var(--ink); padding: 10px 12px; font-size: 13px; line-height: 1.45; }
+#glossary-pop b { font-size: 12px; letter-spacing: .1em; text-transform: uppercase; }
+#glossary-pop p { margin: 4px 0 0; }
+#topbar [data-gl] { cursor: pointer; }
+.tb-item.goal .tb-v.small { font-size: 12px; font-weight: 700; display: flex; align-items: center; gap: 6px; }
+#goal-arrow { display: inline-block; font-style: normal; font-size: 16px; color: var(--accent); transition: transform .3s; }
+#btn-showall.on { background: var(--paper); color: var(--ink); }
+.tier-col .tord { font: 900 12px var(--font); color: var(--paper); margin-right: 2px; letter-spacing: .02em; }
+.tier-col .tnum { font-size: 9px; padding: 1px 3px; }
+.tsep { font-size: 9px; color: var(--mid); margin: 0 2px; letter-spacing: .1em; text-transform: uppercase; }
+.when { font-size: 12px; color: var(--soft); margin-top: 3px; }
+.otl-head { display: flex; justify-content: space-between; font-size: 10px; letter-spacing: .12em; text-transform: uppercase; color: var(--mid); margin-bottom: 2px; }
+.otl-ap { font-family: var(--mono); }
+.apbar .seg.unused { background: repeating-linear-gradient(45deg, rgba(255,74,28,.35) 0 4px, transparent 4px 8px); color: var(--accent); font: 800 9px var(--mono); display: flex; align-items: center; justify-content: center; }
+.apbar .seg.wound { background: #2a2a2a; color: var(--mid); font: 700 9px var(--mono); }
+.apbar .seg.pre { background: #8f8f8c; color: var(--ink); font: 800 9px var(--mono); }
+.unused-note { font-size: 12px; color: var(--accent); margin: -2px 0 6px; font-weight: 700; }
+.chip-mark.mode-tag { font-size: 11px; padding: 1px 6px; pointer-events: none; }
+.chip-mark.mode-tag.ok { background: var(--accent); color: #fff; }
+.chip-mark.mode-tag.far { background: rgba(11,11,11,.8); color: var(--soft); border-color: #555; }
+#confirm .card { width: min(460px, calc(100vw - 32px)); }
+#confirm .dg-fail { cursor: pointer; font-size: 13px; padding: 6px 8px; }
+@media (max-width: 720px) {
+  .tb-item.goal .goal-txt { display: none; }
+  .tb-item.goal .tb-k { display: none; }
+  #btn-showall { display: none; }
+}

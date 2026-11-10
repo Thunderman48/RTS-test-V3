@@ -1,7 +1,7 @@
 // Game controller: menu, modes (AI / host / guest), planning UI, resolution playback.
 import * as THREE from 'three';
 import { CONFIG } from './config.js';
-import { createGame, visibleEnemies, findEntity, unitDef, moveSpeed, emptyOrders, armyCount, hqOf, commanderOf, skillDef } from './sim/state.js';
+import { createGame, visibleEnemies, findEntity, unitDef, moveSpeed, emptyOrders, armyCount, hqOf, commanderOf, skillDef, apFor, emptyPlan, entRadius } from './sim/state.js';
 import { dist } from './sim/geom.js';
 import { Nav } from './sim/nav.js';
 import { resolveRound } from './sim/resolve.js';
@@ -12,6 +12,8 @@ import { Playback, displayFromState } from './render/playback.js';
 import { FloatTexts, eventFx } from './render/fx.js';
 import { ribbon, ring, dashedRing, disc, makeUnitMesh, makeBuildingMesh, PALETTE, arrow } from './render/models.js';
 import { glyph } from './ui/icons.js';
+import { showGlossary } from './ui/glossary.js';
+import { approachAP } from './sim/stances.js';
 import { Input } from './ui/input.js';
 import { Planner } from './ui/planner.js';
 import { renderTopbar, renderStrip, renderPanel, toast } from './ui/hud.js';
@@ -72,6 +74,8 @@ class Game {
     $('btn-build').onclick = () => { this.panelTab = this.panelTab === 'build' ? 'orders' : 'build'; this.uiMode = null; this.changed(); };
     $('btn-multi').onclick = () => { this.multi = !this.multi; $('btn-multi').classList.toggle('on', this.multi); toast(this.multi ? 'Multi-select on: tap units to add or remove' : 'Multi-select off'); };
     $('btn-replay').onclick = () => this.replay();
+    $('btn-showall').onclick = () => { this.showAll = !this.showAll; this.changed(); };
+    document.querySelectorAll('#topbar [data-gl]').forEach(el => el.onclick = ev => { ev.stopPropagation(); showGlossary(el.dataset.gl, el); });
     $('btn-log').onclick = () => (this.digest ? this.openDigest() : this.openReport());
     $('report-close').onclick = () => $('report').classList.add('hidden');
     $('btn-pause').onclick = () => this.openPause();
@@ -198,7 +202,7 @@ class Game {
       } else if (m.t === 'timer' && m.round === s.round) {
         this.deadline = performance.now() + m.ms;
       } else if (m.t === 'timeup' && m.round === s.round) {
-        if (this.phase === 'planning') { toast('Time is up — orders sent', true); this.ready(); }
+        if (this.phase === 'planning') { toast('Time is up — orders sent', true); this.ready(true); }
       }
     }
   }
@@ -333,7 +337,7 @@ class Game {
       const vis = all || mine || this.visibleIds.has(u.id);
       const plan = mine ? (P.plan(u.id) || this.stancePreview.get(u.id)) : null;
       const tier = Math.max(CONFIG.minTier, def.tier - u.tierDebuff + (mine ? (P.plan(u.id)?.upgrades || 0) : 0));
-      units.push({ ...u, tier, visible: vis, defends: mine ? def.defends + (plan?.defends || 0) : 0 });
+      units.push({ ...u, tier, visible: vis, defends: mine && this.showAll ? def.defends + (plan?.defends || 0) : 0 });
     }
     for (const b of s.buildings) {
       if (b.hp <= 0) continue;
@@ -359,6 +363,11 @@ class Game {
       if (!def.melee || !def.zone) continue;
       if (u.owner !== this.me && !this.visibleIds.has(u.id)) continue;
       const mine = u.owner === this.me;
+      // declutter: only the selected unit's zone and enemy zones near the selection
+      if (!this.showAll && !selSet.has(u.id)) {
+        const near = !mine && this.ownSelected().some(o => dist(o.x, o.z, u.x, u.z) <= 8);
+        if (!near) continue;
+      }
       const r = dashedRing(def.zone, selSet.has(u.id) ? 0.07 : 0.045, mine ? ink : 0x3a3a3a, selSet.has(u.id) ? 0.7 : mine ? 0.22 : 0.5, 0.035, Math.round(def.zone * 10));
       r.position.set(u.x, 0, u.z); O.add(r);
     }
@@ -366,6 +375,7 @@ class Game {
     for (const [id, pts] of this.trails) {
       if (pts.length < 2) continue;
       O.add(ribbon(pts, 0.07, 0x6a6a6a, 0.7, 0.18, 0.03));
+      if (pts.length >= 2) O.add(arrow(pts[pts.length - 2], pts[pts.length - 1], 0.06, 0x6a6a6a, 0, 0.035));
       void id;
     }
     // revive zones
@@ -385,7 +395,8 @@ class Game {
       const sel = selSet.has(u.id);
       const pr = P.predict(u, plan);
       const w = sel ? 0.13 : 0.08;
-      const op = direct ? (sel ? 1 : 0.8) : 0.45;
+      const quiet = !this.showAll && !sel && this.selection.length > 0;
+      const op = (direct ? (sel ? 1 : 0.8) : 0.45) * (quiet ? 0.35 : 1);
       const dash = direct ? 0 : 0.22;
       for (const l of pr.legs) {
         if (l.kind === 'move' || l.kind === 'attack' || l.kind === 'shove' || l.kind === 'dash') {
@@ -447,6 +458,39 @@ class Game {
         const c = dashedRing(CONFIG.buildings[e.type].attack.range, 0.05, e.owner === this.me ? ink : 0x444444, 0.45, 0.04, 40); c.position.set(e.x, 0, e.z); O.add(c);
       }
     }
+    // reach-aware targeting: which enemies can the selected unit reach this round?
+    this.modeTags = [];
+    const tgtMode = ['attack', 'shove', 'disrupt'].includes(this.uiMode);
+    const su = tgtMode ? this.ownSelected()[0] : null;
+    if (su) {
+      const plan = P.plan(su.id) || emptyPlan();
+      const from = P.predict(su, plan);
+      const def = unitDef(su);
+      const cost = this.uiMode === 'attack' ? def.strike.ap : skillDef(su.type, this.uiMode)?.ap || 0;
+      const left = P.apLeft(su) - cost;
+      const targets = [...s.units.filter(e => e.owner !== this.me && e.hp > 0 && this.visibleIds.has(e.id)),
+        ...(this.uiMode === 'attack' ? s.buildings.filter(b => b.owner !== this.me && b.hp > 0 && this.entity(b.id)) : [])];
+      for (const e of targets) {
+        let ok, txt;
+        if (this.uiMode === 'disrupt') {
+          const rg = skillDef(su.type, 'disrupt').range;
+          ok = left >= 0 && dist(from.x, from.z, e.x, e.z) <= rg + CONFIG.unitRadius;
+          txt = ok ? '✓ in range' : '✕ range';
+        } else {
+          const reach = CONFIG.unitRadius + entRadius(e) + CONFIG.meleeReach - 0.1;
+          const need = approachAP(this.nav, { ...su, x: from.x, z: from.z }, e.x, e.z, reach);
+          ok = left >= 0 && need <= left;
+          const per = Math.max(1, apFor(su) - cost);
+          txt = ok ? '✓ in reach' : left < 0 ? 'no AP' : `✕ ${1 + Math.ceil((need - Math.max(0, left)) / per)} rnds`;
+        }
+        const rr = entRadius(e) + 0.45;
+        const r = ok ? ring(rr, 0.13, PALETTE.accent, 1, 0.07) : dashedRing(rr, 0.07, 0x555555, 0.8, 0.07, 16);
+        r.position.set(e.x, ok ? 0.07 : 0, e.z); O.add(r);
+        this.modeTags.push({ x: e.x, z: e.z, text: txt, ok });
+      }
+    }
+    this.renderModeTags();
+
     // build mode
     if (this.panelTab === 'build' || (this.uiMode && this.uiMode.startsWith('build:'))) {
       for (const b of s.buildings) {
@@ -652,8 +696,38 @@ class Game {
   }
 
   // ======================================================================== round flow
-  ready() {
+  // Units you control that would waste AP or do nothing
+  readyIssues() {
+    const out = [];
+    for (const [id, plan] of Object.entries(this.planner.draft.units)) {
+      const u = this.state.units.find(x => x.id === id);
+      if (!u || u.hp <= 0) continue;
+      const left = this.planner.apLeft(u, plan);
+      const name = unitDef(u).name;
+      if (!plan.actions.length && left >= apFor(u)) out.push({ id, text: `${name}: no orders. It will do nothing this round.` });
+      else if (left > 0) out.push({ id, text: `${name}: ${left} AP unused. It will be lost.` });
+    }
+    return out;
+  }
+
+  ready(force = false) {
     if (this.phase !== 'planning') return;
+    if (!force) {
+      const issues = this.readyIssues();
+      if (issues.length) {
+        const el = $('confirm');
+        el.innerHTML = `<div class="card"><h2>Before you end planning</h2>
+          <div class="dg-units">${issues.map(i => `<div class="dg-fail" data-id="${i.id}">⊘ ${i.text}</div>`).join('')}</div>
+          <p class="note">Tip: spend leftover AP on Defend +1, or Release the unit so it follows its stance.</p>
+          <div class="tc-btns two"><button class="btn" id="cf-fix">Fix it</button><span></span><button class="btn primary" id="cf-go">Ready anyway ▸</button></div></div>`;
+        el.classList.remove('hidden');
+        $('cf-fix').onclick = () => { el.classList.add('hidden'); this.selection = [issues[0].id]; this.panelTab = 'orders'; this.selectAndFocus(issues[0].id); };
+        $('cf-go').onclick = () => { el.classList.add('hidden'); this.ready(true); };
+        el.querySelectorAll('[data-id]').forEach(d => d.onclick = () => { el.classList.add('hidden'); this.selectAndFocus(d.dataset.id); });
+        return;
+      }
+    }
+    $('confirm').classList.add('hidden');
     const orders = this.planner.final();
     this.lastOrders = orders;
     this.emit('ready');
@@ -710,6 +784,7 @@ class Game {
     $('summary').classList.add('hidden');
     $('digest').classList.add('hidden');
     this.panelTab = 'orders';
+    this.modeTags = [];
     if (!isReplay) {
       this.digest = null; this.chipList = []; $('chips').innerHTML = '';
       this.newTrails = new Map(); this.knownDead = new Set();
@@ -889,7 +964,33 @@ class Game {
     for (const r of d.units) if (r.fails.length && !r.died) add(r.id, '⊘', 'fail', r.fails[0]);
   }
 
+  // Compass in the top bar pointing at the (last known) enemy HQ
+  updateGoal() {
+    const hq = this.state.buildings.find(b => b.owner !== this.me && b.type === 'hq');
+    const el = $('goal-arrow'); if (!el) return;
+    const pos = hq ? hq : { x: this.me === 0 ? 43 : 5, z: 16 };
+    const c = this.view.project(this.view.cam.x, 0, this.view.cam.z), t = this.view.project(pos.x, 0, pos.z);
+    el.style.transform = `rotate(${Math.atan2(t.y - c.y, t.x - c.x)}rad)`;
+  }
+
+  renderModeTags() {
+    const layer = $('chips');
+    layer.querySelectorAll('.mode-tag').forEach(el => el.remove());
+    for (const t of this.modeTags || []) {
+      const el = document.createElement('div');
+      el.className = 'chip-mark mode-tag ' + (t.ok ? 'ok' : 'far');
+      el.textContent = t.text;
+      layer.appendChild(el);
+      t.el = el;
+    }
+  }
+
   updateChips() {
+    for (const t of this.modeTags || []) {
+      if (!t.el) continue;
+      const p = this.view.project(t.x, 0.2, t.z);
+      t.el.style.transform = `translate(${p.x}px, ${p.y + 16}px) translate(-50%, 0)`;
+    }
     if (!this.chipList || !this.chipList.length) return;
     const show = this.phase === 'planning' || this.phase === 'waiting';
     const off = {};
@@ -977,7 +1078,7 @@ class Game {
       this.syncPlanningDisplay();
     }
     if (this.panelDirty) { this.panelDirty = false; renderPanel(this); renderStrip(this); }
-    if (this.phase !== 'menu' && (this.frame % 10 === 0 || this.topDirty)) { this.topDirty = false; renderTopbar(this); }
+    if (this.phase !== 'menu' && (this.frame % 10 === 0 || this.topDirty)) { this.topDirty = false; renderTopbar(this); this.updateGoal(); }
     this.tickTimer();
     this.updateChips();
     this.texts.update(dt);
@@ -992,7 +1093,7 @@ class Game {
     el.classList.toggle('warn', left < 15);
     if (left <= 0 && this.mode === 'host' && this.timeupSent !== this.state.round) {
       this.timeupSent = this.state.round;
-      if (this.phase === 'planning') { toast('Time is up', true); this.ready(); }
+      if (this.phase === 'planning') { toast('Time is up', true); this.ready(true); }
       this.net.send({ t: 'timeup', round: this.state.round });
       const r = this.state.round;
       setTimeout(() => {
@@ -1002,7 +1103,7 @@ class Game {
         }
       }, 10000);
     }
-    if (left <= 0 && this.mode === 'guest' && this.phase === 'planning') { toast('Time is up — orders sent', true); this.ready(); }
+    if (left <= 0 && this.mode === 'guest' && this.phase === 'planning') { toast('Time is up — orders sent', true); this.ready(true); }
   }
 
   tickPlayback(dt) {

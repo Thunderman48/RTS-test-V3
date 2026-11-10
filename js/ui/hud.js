@@ -4,6 +4,7 @@ import { glyph } from './icons.js';
 import { apFor, cpPools, unitDef, hqOf, skillDef, cdOf } from '../sim/state.js';
 import { actionCost, prepaidCost, upgradeCost } from '../sim/orders.js';
 import { dist } from '../sim/geom.js';
+import { glChip, showGlossary } from './glossary.js';
 
 const $ = id => document.getElementById(id);
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
@@ -34,7 +35,8 @@ export function renderTopbar(g) {
   $('tb-cp').textContent = `${c.leftBase}/${cpPools(s, me).base}`;
   $('btn-pause').classList.toggle('hidden', g.mode !== 'ai');
   $('btn-replay').disabled = !g.lastRound || g.phase !== 'planning';
-  $('btn-log').disabled = !g.report || !g.report.lines.length;
+  $('btn-log').disabled = !g.digest && (!g.report || !g.report.lines.length);
+  $('btn-showall').classList.toggle('on', !!g.showAll);
 }
 
 // planned tier of an own unit this round (upgrades, debuffs, commander Rally)
@@ -65,18 +67,40 @@ export function renderStrip(g) {
     groups.get(tier).push(u);
   }
   const tiers = [...groups.keys()].sort((a, b) => b - a);
-  let html = '<span class="strip-label">Acts first ▸</span>';
-  for (const t of tiers) {
-    html += `<div class="tier-col"><span class="tnum">${t}</span>`;
-    for (const u of groups.get(t).sort((a, b) => a.owner - b.owner)) {
-      const sel = g.selection.includes(u.id) ? ' sel' : '';
-      html += `<span class="chip${sel}${u.owner !== me ? ' enemy' : ''}" data-id="${u.id}" title="${u.owner === me ? 'Your' : 'Enemy'} ${unitDef(u).name}">${glyph(u.type, u.owner)}</span>`;
-    }
+  let html = `<span class="strip-label">Turn order ${glChip('Tier')}</span>`;
+  tiers.forEach((t, i) => {
+    html += `<div class="tier-col"><span class="tord">${ordinal(i + 1)}</span><span class="tnum">T${t}</span>`;
+    const list = groups.get(t);
+    const mine = list.filter(u => u.owner === me), theirs = list.filter(u => u.owner !== me);
+    const chip = u => `<span class="chip${g.selection.includes(u.id) ? ' sel' : ''}${u.owner !== me ? ' enemy' : ''}" data-id="${u.id}" title="${u.owner === me ? 'Your' : 'Enemy'} ${unitDef(u).name}">${glyph(u.type, u.owner)}</span>`;
+    html += mine.map(chip).join('');
+    if (mine.length && theirs.length) html += '<span class="tsep">vs</span>';
+    html += theirs.map(chip).join('');
     html += '</div>';
-  }
-  html += '<span class="strip-label">▸ buildings last</span>';
+  });
+  html += '<span class="strip-label">then buildings</span>';
   strip.innerHTML = html;
   strip.querySelectorAll('.chip').forEach(el => el.onclick = () => g.selectAndFocus(el.dataset.id));
+  strip.querySelectorAll('.gl').forEach(el => el.onclick = ev => { ev.stopPropagation(); showGlossary(el.dataset.gl, el); });
+}
+
+export const ordinal = n => n + (n % 10 === 1 && n !== 11 ? 'st' : n % 10 === 2 && n !== 12 ? 'nd' : n % 10 === 3 && n !== 13 ? 'rd' : 'th');
+
+// "Acts 2nd (tier 5): after Enemy Assassin, at the same time as Enemy Fighter."
+export function whenActs(g, u) {
+  const me = g.me;
+  const all = g.state.units.filter(x => x.hp > 0 && (x.owner === me || g.visibleIds.has(x.id)));
+  const tiers = [...new Set(all.map(x => plannedTier(g, x)))].sort((a, b) => b - a);
+  const t = plannedTier(g, u);
+  const nm = x => (x.owner === me ? 'your ' : 'enemy ') + unitDef(x).name;
+  const before = all.filter(x => plannedTier(g, x) > t);
+  const same = all.filter(x => x !== u && plannedTier(g, x) === t);
+  let txt = `Acts ${ordinal(tiers.indexOf(t) + 1)} (tier ${t})`;
+  const parts = [];
+  if (before.length) parts.push('after ' + (before.length > 3 ? `${before.length} units` : before.map(nm).join(', ')));
+  if (same.length) parts.push('at the same time as ' + (same.length > 3 ? `${same.length} units` : same.map(nm).join(', ')));
+  if (!before.length) parts.unshift('first');
+  return txt + ': ' + parts.join(', ') + '.';
 }
 
 function hpBar(e) {
@@ -86,21 +110,31 @@ function hpBar(e) {
 
 const ACT_LABEL = { move: 'MOVE', wait: 'WAIT', attack: 'ATTACK', shoot: 'SHOOT', frag: 'FRAG', dash: 'DASH', shove: 'SHOVE', disrupt: 'DISRUPT', sweep: 'SWEEP' };
 
+// The unit's round as a row of labelled blocks (AP = time). Unused AP shows in red.
 function apBarHTML(u, plan, stancePlan) {
   const total = apFor(u);
-  let html = '<div class="apbar">';
-  const seg = (ap, cls, label) => { if (ap > 0) html += `<div class="seg ${cls}" style="width:${(ap / CONFIG.baseAP) * 100}%">${ap >= 14 ? label : ''}</div>`; };
   const p = plan || stancePlan;
   const cls = plan ? 'act' : 'stance';
+  let html = `<div class="otl-head"><span>${plan ? 'Your orders this round' : 'Stance plan this round'} ${glChip('AP')}</span><span class="otl-ap">${total} AP</span></div><div class="apbar">`;
+  const seg = (ap, c, label, title) => { if (ap > 0) html += `<div class="seg ${c}" title="${title || label} · ${ap} AP" style="width:${(ap / CONFIG.baseAP) * 100}%">${ap >= 12 ? label : ''}</div>`; };
   let used = 0;
   if (p) {
-    const pre = prepaidCost(u, p);
-    seg(pre, plan ? 'pre' : 'stance', 'PREPAID');
-    used += pre;
+    const pre = [];
+    if (p.upgrades) pre.push('TIER+');
+    for (const id of p.buffs || []) pre.push(skillDef(u.type, id).name.toUpperCase());
+    if (p.parry) pre.push('PARRY');
+    if (p.overwatch) pre.push('OVERWATCH');
+    if (p.defends) pre.push(`DEF×${p.defends}`);
+    const pc = prepaidCost(u, p);
+    seg(pc, plan ? 'pre' : 'stance', pre.join(' '), 'Paid during planning');
+    used += pc;
     p.actions.forEach((a, i) => { const c = actionCost(u, a); seg(c, cls + (i % 2 ? ' alt' : ''), ACT_LABEL[a.kind] || a.kind); used += c; });
   }
-  if (total < CONFIG.baseAP) seg(CONFIG.baseAP - total, 'pre', 'WOUND');
-  html += `<span class="left">${Math.max(0, total - used)} / ${total} AP left</span></div>`;
+  const left = Math.max(0, total - used);
+  if (left > 0) html += `<div class="seg unused" style="width:${(left / CONFIG.baseAP) * 100}%">${plan ? (left >= 12 ? `${left} UNUSED` : '') : ''}</div>`;
+  if (total < CONFIG.baseAP) seg(CONFIG.baseAP - total, 'wound', 'WOUNDED', 'Lost to wounds');
+  html += '</div>';
+  if (plan && left > 0) html += `<div class="unused-note">${left} AP unused → lost. Add Defend +1 or another action.</div>`;
   return html;
 }
 
@@ -176,7 +210,7 @@ function unitHead(g, u, extra = '') {
   const sk = def.skills.map(k => `${k.name} ${cdOf(u, k.id) > 0 ? `(${cdOf(u, k.id)})` : '✓'}`).join(' · ');
   return `<div class="p-head"><div class="p-icon">${glyph(u.type, u.owner, 34)}</div><div class="p-main">
     <div class="p-title">${def.hero ? 'Hero · ' : ''}${def.name}${extra}</div>
-    <div class="p-sub">Tier ${def.tier} (${def.tier >= 6 ? 'fast' : def.tier <= 4 ? 'slow' : 'normal'}) · ${freeDef} free defend${freeDef > 1 ? 's' : ''} · ${sk}</div></div>
+    <div class="p-sub">${def.tier >= 6 ? 'Fast' : def.tier <= 4 ? 'Slow' : 'Normal'} speed · ${freeDef} free defend${freeDef > 1 ? 's' : ''} ${glChip('Defend')} · ${sk} ${glChip('Cooldown')}</div></div>
     <div class="p-stats">HP ${u.hp}/${u.maxHp}</div>
     <button class="p-close" data-act="deselect" aria-label="Close">✕</button></div>${hpBar(u)}`;
 }
@@ -212,9 +246,9 @@ function renderStanceCard(g, units, show) {
     const controlled = !!P.plan(one.id);
     const preview = controlled ? null : g.stancePreview.get(one.id);
     html += lastRoundLine(g, one);
-    html += `<div class="stance-now"><span class="stance-k">Stance</span><span class="stance-v">${STANCE_NAMES[cur]}${cur !== one.stance ? ' <small>(new)</small>' : ''}</span></div>
+    html += `<div class="stance-now"><span class="stance-k">Stance ${glChip('Stance')}</span><span class="stance-v">${STANCE_NAMES[cur]}${cur !== one.stance ? ' <small>(new)</small>' : ''}</span></div>
       <div class="stance-desc">${esc(STANCE_DESC[cur])}</div>
-      <div class="will"><b>${controlled ? 'Your orders' : 'This round'}:</b> ${esc(describePlan(g, one, controlled ? P.plan(one.id) : preview))}</div>`;
+      <div class="will"><b>${controlled ? 'Your orders' : 'This round it will'}:</b> ${esc(describePlan(g, one, controlled ? P.plan(one.id) : preview))}<div class="when">${esc(whenActs(g, one))}</div></div>`;
   } else {
     html += `<div class="stance-desc">Pick a stance for all of them (free), or take direct control.</div>`;
   }
@@ -231,7 +265,7 @@ function renderStanceCard(g, units, show) {
     const can = free || left >= need;
     const label = free ? 'Control · free (hero)' : `Control${units.length > 1 ? ' all' : ''} · ${need} CP`;
     html += `<button class="control" data-act="control" ${can ? '' : 'disabled'}>${label}</button>
-      <div class="note">${can ? `Direct control lets you give exact orders this round. ${left} of ${g.planner.cp().totalBase} CP left. Stance changes are free.` : `Not enough CP (${left} left). Stance changes are free.`}</div>`;
+      <div class="note">${can ? `Control = give exact orders this round. ${left} of ${g.planner.cp().totalBase} CP left ${glChip('CP')}` : `No CP left (${left}) ${glChip('CP')} — this unit follows its stance. Release another unit to free CP.`}</div>`;
   }
   if (units.length > 1 && anyControlled) html += `<button class="btn danger wide" data-act="release">Release all (refund CP)</button>`;
   show(html);
@@ -243,7 +277,8 @@ function renderCommand(g, u, plan, show) {
   const P = g.planner;
   const tierPlanned = plannedTier(g, u);
   let html = unitHead(g, u, ` <span class="ctl-tag">${u.type === 'commander' ? 'CONTROLLED · FREE' : 'CONTROLLED · 1 CP'}</span>`);
-  html += `<div class="will"><b>Orders:</b> ${esc(describePlan(g, u, plan))} <span class="dimtxt">Acts in tier ${tierPlanned}.</span></div>`;
+  html += `<div class="will"><b>Orders:</b> ${esc(describePlan(g, u, plan))}<div class="when">${esc(whenActs(g, u))}</div></div>`;
+  void tierPlanned;
   html += apBarHTML(u, plan, null) + modeNote(g);
   const last = plan.actions[plan.actions.length - 1];
   if (last && (last.kind === 'move' || last.kind === 'wait' || last.kind === 'attack' || last.kind === 'shove')) {
@@ -259,29 +294,33 @@ function renderCommand(g, u, plan, show) {
   const b = (act, label, sub = '', on = false, dis = false, cls = '') =>
     `<button class="btn${on ? ' on' : ''} ${cls}" data-act="${act}" ${dis ? 'disabled' : ''}>${label}${sub ? `<small>${sub}</small>` : ''}</button>`;
   html += '<div class="cmd-groups"><div class="btn-group"><span class="grp">Actions</span><div class="btns">';
-  html += b('mode:move', 'Move', 'AP per distance', g.uiMode === 'move');
-  if (def.melee) html += b('mode:attack', 'Attack', def.strike.ap + ' AP', g.uiMode === 'attack');
-  else html += b('mode:shoot', 'Shoot', def.shot.ap + ' AP', g.uiMode === 'shoot');
-  html += b('wait', 'Wait', '+10 AP');
+  const why = (need, label = 'AP') => `need ${need} ${label}, ${left} left`;
+  html += b('mode:move', 'Move', left < 1 ? 'no AP left' : 'AP per distance', g.uiMode === 'move', left < 1);
+  if (def.melee) html += b('mode:attack', 'Attack', left < def.strike.ap ? why(def.strike.ap) : def.strike.ap + ' AP + walk', g.uiMode === 'attack', left < def.strike.ap);
+  else html += b('mode:shoot', 'Shoot', left < def.shot.ap ? why(def.shot.ap) : def.shot.ap + ' AP · range ' + def.shot.range, g.uiMode === 'shoot', left < def.shot.ap);
+  html += b('wait', 'Wait', left < 1 ? 'no AP left' : '+10 AP (delay)', false, left < 1);
   html += '</div></div><div class="btn-group"><span class="grp">Skills</span><div class="btns">';
   for (const k of def.skills) {
     const cd = cdOf(u, k.id);
-    const sub = cd > 0 ? `cooldown ${cd}` : planned.has(k.id) ? 'planned' : `${k.ap} AP`;
-    html += b('skill:' + k.id, k.name, sub, g.uiMode === k.id || (k.prepaid && plan.buffs.includes(k.id)), cd > 0 || (!k.prepaid && planned.has(k.id)), 'skill');
+    const on = g.uiMode === k.id || (k.prepaid && plan.buffs.includes(k.id));
+    const noAp = !on && !planned.has(k.id) && left < k.ap;
+    const sub = cd > 0 ? `ready in ${cd} round${cd > 1 ? 's' : ''}` : planned.has(k.id) ? (k.prepaid ? 'on · tap to undo' : 'planned') : noAp ? why(k.ap) : `${k.ap} AP`;
+    html += b('skill:' + k.id, k.name, sub, on, cd > 0 || (!k.prepaid && planned.has(k.id)) || noAp, 'skill');
   }
   html += '</div></div><div class="btn-group"><span class="grp">Prepare</span><div class="btns">';
-  html += b('pre:defends', 'Defend +1', `${CONFIG.extraDefendCost} AP · ${plan.defends || 0}`, false, left < CONFIG.extraDefendCost || (plan.defends || 0) >= CONFIG.maxExtraDefends);
+  const nd = plan.defends || 0;
+  html += b('pre:defends', 'Defend +1', nd >= CONFIG.maxExtraDefends ? `max ${nd}` : left < CONFIG.extraDefendCost ? why(CONFIG.extraDefendCost) : `${CONFIG.extraDefendCost} AP · have ${nd}`, false, left < CONFIG.extraDefendCost || nd >= CONFIG.maxExtraDefends);
   const nu = plan.upgrades || 0;
-  html += b('pre:upgrades', 'Tier +1', nu < CONFIG.maxTierUpgrades ? `${CONFIG.tierUpgradeCost[nu]} AP · ${nu}` : 'max', false, nu >= CONFIG.maxTierUpgrades);
-  if (def.parry) html += b('pre:parry', 'Parry', CONFIG.parryCost + ' AP', plan.parry);
-  if (def.overwatch) html += b('pre:overwatch', 'Overwatch', `${CONFIG.overwatchCost} AP · ${plan.overwatch || 0}`, false, (plan.overwatch || 0) >= CONFIG.maxOverwatch);
+  const uc = CONFIG.tierUpgradeCost[nu];
+  html += b('pre:upgrades', 'Act earlier', nu >= CONFIG.maxTierUpgrades ? 'max (+2 tiers)' : left < uc ? why(uc) : `tier +1 · ${uc} AP`, false, nu >= CONFIG.maxTierUpgrades || left < uc);
+  if (def.parry) html += b('pre:parry', 'Parry', plan.parry ? 'on · tap to undo' : left < CONFIG.parryCost ? why(CONFIG.parryCost) : CONFIG.parryCost + ' AP', plan.parry, !plan.parry && left < CONFIG.parryCost);
+  if (def.overwatch) html += b('pre:overwatch', 'Overwatch', (plan.overwatch || 0) >= CONFIG.maxOverwatch ? 'max' : left < CONFIG.overwatchCost ? why(CONFIG.overwatchCost) : `${CONFIG.overwatchCost} AP · have ${plan.overwatch || 0}`, false, (plan.overwatch || 0) >= CONFIG.maxOverwatch || left < CONFIG.overwatchCost);
   if (u.hp < u.maxHp) html += b('heal', 'Heal', CONFIG.economy.healCost + ' supply', g.planner.draft.heals.includes(u.id));
   html += '</div></div></div><div class="btns foot">';
   html += b('undo', 'Undo', '', false, !plan.hist?.length);
   html += b('tab:stance', '◂ Stance', STANCE_NAMES[P.pendingStance(u)]);
   html += b('release', 'Release', u.type === 'commander' ? 'back to stance' : 'refund 1 CP', false, false, 'danger');
   html += '</div>';
-  if (left > 0) html += `<div class="note">${left} AP unassigned. Unassigned AP is lost, so finish with Defend +1.</div>`;
   show(html);
   bindPanel(g, u);
 }
@@ -398,6 +437,7 @@ function bindPanel(g, u, b, units) {
     }
     el.onclick = ev => { ev.stopPropagation(); g.panelAction(act, u, b, units); };
   });
+  panel.querySelectorAll('.gl').forEach(el => el.onclick = ev => { ev.stopPropagation(); showGlossary(el.dataset.gl, el); });
 }
 
 export { upgradeCost };
