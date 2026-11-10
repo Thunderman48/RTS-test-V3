@@ -4,6 +4,7 @@ import { createGame, addUnit, apFor, emptyOrders, emptyPlan } from '../js/sim/st
 import { resolveRound, damageAfter } from '../js/sim/resolve.js';
 import { validateOrders } from '../js/sim/orders.js';
 import { aiOrders } from '../js/ai/ai.js';
+import { buildDigest } from '../js/ui/log.js';
 
 let pass = 0, fail = 0;
 function test(name, fn) {
@@ -263,6 +264,24 @@ test('each commander skill has its own cooldown; all three usable in one round',
   c.cds = { sweep: 2 };
   const v2 = validateOrders(s, 0, orders({ [c.id]: { actions: [{ kind: 'disrupt', target: e.id }, { kind: 'sweep' }] } })[0]);
   assert(v2.units[c.id].actions.length === 1 && v2.units[c.id].actions[0].kind === 'disrupt', 'sweep blocked by its own cooldown only');
+});
+
+test('round digest: HP before/after, kills, failure reasons with AP numbers', () => {
+  const s = arena();
+  const f = addUnit(s, 0, 'fighter', 20, 16);
+  const far = addUnit(s, 0, 'fighter', 10, 5);
+  const e = addUnit(s, 1, 'ranged', 21.3, 16); e.hp = 3; e.stance = 'hold';
+  const t = addUnit(s, 1, 'tank', 30, 5); t.stance = 'hold';
+  const o = orders({ [f.id]: { actions: [{ kind: 'attack', target: e.id, moveAp: 0 }] }, [far.id]: { actions: [{ kind: 'attack', target: t.id, moveAp: 20 }] } });
+  const { state, log } = resolveRound(s, o);
+  const c = allEvents(log).find(x => x.type === 'cancel' && x.id === far.id);
+  assert(c && c.code === 'outofreach' && c.needAp > c.hadAp && c.hadAp === 20, 'cancel has needAp/hadAp');
+  const d = buildDigest(s, log, state, 0, o[0]);
+  const rf = d.byId.get(f.id), rfar = d.byId.get(far.id);
+  assert(rf.kills.includes('Ranged') && rf.dealt > 0, 'kill credited');
+  assert(rfar.fails.length === 1 && /out of reach/.test(rfar.fails[0]), 'failure reason listed');
+  assert(rf.hpBefore === 90 && rf.controlled, 'hp before + controlled');
+  assert(d.enemy.lost === 1, 'enemy loss counted');
 });
 
 test('production: unit spawns after its build rounds, at the end of the round', () => {

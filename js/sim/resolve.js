@@ -251,7 +251,7 @@ export function resolveRound(state0, ordersIn) {
     const n0 = moves.length, myIdx = r.idx;
     if (r.el === 0) {
       r.st = { phase: 'go' };
-      ev({ type: 'act', id: u.id, kind: a.kind, target: a.target || a.follow || null });
+      ev({ type: 'act', id: u.id, kind: a.kind, cost: a.cost, target: a.target || a.follow || null, ...(a.x !== undefined ? { x: r3(a.x), z: r3(a.z) } : {}) });
       if (a.kind === 'move') {
         const tgt = a.follow ? findEntity(s, a.follow) : null;
         const tx = tgt ? tgt.x : a.x, tz = tgt ? tgt.z : a.z;
@@ -262,7 +262,7 @@ export function resolveRound(state0, ordersIn) {
         const d = norm(a.x - u.x, a.z - u.z);
         r.st.dir = d.l > 0 ? d : { x: 1, z: 0 };
         r.st.left = skillDef(u.type, 'dash').length;
-        if (inEnemyZone(u)) { r.st.phase = 'cancel'; ev({ type: 'cancel', id: u.id, reason: 'Dash blocked by control zone' }); }
+        if (inEnemyZone(u)) { r.st.phase = 'cancel'; ev({ type: 'cancel', id: u.id, code: 'zone', action: 'dash', reason: 'Dash blocked: it started inside an enemy control zone' }); }
         else { useSkill(r, 'dash'); zoneOff(r); ev({ type: 'dash', id: u.id }); }
       }
     }
@@ -293,15 +293,18 @@ export function resolveRound(state0, ordersIn) {
           // target died before the attack landed: redirect to the closest reachable enemy
           const left = st.phase === 'approach' ? Math.max(0, a.moveAp - st.app) : 0;
           tgt = retarget(r, left, wantB);
-          if (!tgt) { st.phase = 'cancel'; ev({ type: 'cancel', id: u.id, reason: 'No target in reach' }); break; }
-          st.target = tgt.id; ev({ type: 'retarget', id: u.id, target: tgt.id });
+          const lost = st.target;
+          if (!tgt) { st.phase = 'cancel'; ev({ type: 'cancel', id: u.id, code: 'deadtarget', action: a.kind, target: lost, reason: 'Target died first and no other enemy was in reach' }); break; }
+          st.target = tgt.id; ev({ type: 'retarget', id: u.id, target: tgt.id, from: lost, code: 'deadtarget' });
         }
         if (st.phase === 'approach') {
           if (inReach(u, tgt)) { st.phase = 'strike'; st.sel = 0; zoneOff(r); }
           else if (st.app >= a.moveAp) {
             const nt = retarget(r, 0, wantB);
-            if (nt) { st.target = nt.id; tgt = nt; st.phase = 'strike'; st.sel = 0; zoneOff(r); ev({ type: 'retarget', id: u.id, target: nt.id }); }
-            else { st.phase = 'cancel'; ev({ type: 'cancel', id: u.id, reason: 'Target out of reach' }); break; }
+            const gap = Math.max(0, dist(u.x, u.z, tgt.x, tgt.z) - reachDist(u, tgt));
+            const needAp = a.moveAp + Math.ceil(gap / sp);
+            if (nt) { const from = tgt.id; st.target = nt.id; tgt = nt; st.phase = 'strike'; st.sel = 0; zoneOff(r); ev({ type: 'retarget', id: u.id, target: nt.id, from, code: 'outofreach' }); }
+            else { st.phase = 'cancel'; ev({ type: 'cancel', id: u.id, code: 'outofreach', action: a.kind, target: tgt.id, needAp, hadAp: a.moveAp, zone: zf < 1, reason: `Target out of reach (needed ~${needAp} AP of approach, had ${a.moveAp})` }); break; }
           } else {
             st.app++;
             if (!st.path || ++st.repath >= 6) { st.repath = 0; st.path = nav.path(u.x, u.z, tgt.x, tgt.z); }
@@ -323,7 +326,7 @@ export function resolveRound(state0, ordersIn) {
                 hits.push({ srcId: u.id, srcUnit: u, dst: tgt, dmg: r.def.strike.dmg, melee: true, kind: 'melee' });
               }
               ev({ type: 'strike', id: u.id, target: tgt.id });
-            } else ev({ type: 'miss', id: u.id, target: tgt.id });
+            } else ev({ type: 'miss', id: u.id, target: tgt.id, code: 'moved', reason: 'Target moved out of reach during the swing' });
           }
         }
         break;
@@ -371,7 +374,7 @@ export function resolveRound(state0, ordersIn) {
             tgt = null; let bd = 1e9;
             for (const e of enemyUnits(u.owner)) { const d = dist(u.x, u.z, e.x, e.z); if (ok(e) && canSee(u.owner, e) && d < bd) { bd = d; tgt = e; } }
           }
-          if (!tgt) { ev({ type: 'cancel', id: u.id, reason: 'Disrupt: no target in range' }); break; }
+          if (!tgt) { ev({ type: 'cancel', id: u.id, code: 'range', action: 'disrupt', target: a.target, reason: `Disrupt: no enemy within range ${sk.range}` }); break; }
           useSkill(r, 'disrupt'); zoneOff(r);
           const tr = rtById.get(tgt.id);
           let drained = 0, tierNow = false;
@@ -465,7 +468,7 @@ export function resolveRound(state0, ordersIn) {
       let blk = blockedAt(u, c.x, c.z, all);
       let nx = c.x, nz = c.z;
       if (blk && c.m.mode === 'dash') {
-        st.phase = 'done'; ev({ type: 'dashstop', id: u.id }); continue; // stops on contact; rest is lost
+        st.phase = 'done'; ev({ type: 'dashstop', id: u.id, code: blk === 'wall' ? 'wall' : 'unit' }); continue; // stops on contact; rest is lost
       }
       if (blk && blk !== 'wall') {
         // stop on contact if the blocker is at/near the destination
@@ -497,7 +500,7 @@ export function resolveRound(state0, ordersIn) {
       moved.push(c.m);
       if (c.m.mode === 'dash') {
         st.left -= c.m.d;
-        if (inEnemyZone(u)) { st.phase = 'cancel'; ev({ type: 'cancel', id: u.id, reason: 'Dash ran into a control zone' }); }
+        if (inEnemyZone(u)) { st.phase = 'cancel'; ev({ type: 'cancel', id: u.id, code: 'zone', action: 'dash', reason: 'Dash stopped: it ran into an enemy control zone' }); }
         else if (st.left <= 1e-6) st.phase = 'done';
       } else if (c.m.kind === 'move' && st.path && !st.path.length) st.phase = 'arrived';
     }

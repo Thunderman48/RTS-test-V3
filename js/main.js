@@ -1,4 +1,5 @@
 // Game controller: menu, modes (AI / host / guest), planning UI, resolution playback.
+import * as THREE from 'three';
 import { CONFIG } from './config.js';
 import { createGame, visibleEnemies, findEntity, unitDef, moveSpeed, emptyOrders, armyCount, hqOf, commanderOf, skillDef } from './sim/state.js';
 import { dist } from './sim/geom.js';
@@ -6,15 +7,16 @@ import { Nav } from './sim/nav.js';
 import { resolveRound } from './sim/resolve.js';
 import { buildStancePlan } from './sim/stances.js';
 import { aiOrders } from './ai/ai.js';
-import { View3D } from './render/scene.js';
+import { View3D, disposeDeep } from './render/scene.js';
 import { Playback, displayFromState } from './render/playback.js';
 import { FloatTexts, eventFx } from './render/fx.js';
-import { ribbon, ring, dashedRing, disc, makeUnitMesh, makeBuildingMesh, PALETTE } from './render/models.js';
+import { ribbon, ring, dashedRing, disc, makeUnitMesh, makeBuildingMesh, PALETTE, arrow } from './render/models.js';
+import { glyph } from './ui/icons.js';
 import { Input } from './ui/input.js';
 import { Planner } from './ui/planner.js';
 import { renderTopbar, renderStrip, renderPanel, toast } from './ui/hud.js';
 import { helpHTML } from './ui/help.js';
-import { describe, involvesVisible, nameMap, Feed, reportHTML, segLabel } from './ui/log.js';
+import { describe, involvesVisible, nameMap, Feed, reportHTML, segLabel, buildDigest, digestHTML } from './ui/log.js';
 import { Net, randomCode } from './net/net.js';
 
 const $ = id => document.getElementById(id);
@@ -39,6 +41,12 @@ class Game {
     this.guestOrders = {}; this.net = null;
     this.frame = 0;
     this.feed = new Feed($('feed'));
+    this.listeners = {};
+    this.intentMap = new Map();
+    let st = null, fc = null;
+    try { st = localStorage.getItem('tiers-step'); fc = localStorage.getItem('tiers-follow'); } catch {}
+    this.stepMode = st !== '0';
+    this.followCam = fc !== '0';
     this.bindDOM();
     // menu backdrop
     this.state = createGame(1);
@@ -64,7 +72,7 @@ class Game {
     $('btn-build').onclick = () => { this.panelTab = this.panelTab === 'build' ? 'orders' : 'build'; this.uiMode = null; this.changed(); };
     $('btn-multi').onclick = () => { this.multi = !this.multi; $('btn-multi').classList.toggle('on', this.multi); toast(this.multi ? 'Multi-select on: tap units to add or remove' : 'Multi-select off'); };
     $('btn-replay').onclick = () => this.replay();
-    $('btn-log').onclick = () => this.openReport();
+    $('btn-log').onclick = () => (this.digest ? this.openDigest() : this.openReport());
     $('report-close').onclick = () => $('report').classList.add('hidden');
     $('btn-pause').onclick = () => this.openPause();
     $('btn-menu').onclick = () => this.openPause();
@@ -77,6 +85,13 @@ class Game {
       document.querySelectorAll('#playctl [data-speed]').forEach(x => x.classList.toggle('on', x === b));
     });
     $('btn-skip').onclick = () => this.skipPlayback();
+    $('btn-auto').onclick = () => this.setAuto(this.stepMode);
+    $('btn-follow').onclick = () => {
+      this.followCam = !this.followCam;
+      try { localStorage.setItem('tiers-follow', this.followCam ? '1' : '0'); } catch {}
+      if (!this.followCam) this.view.stopAnim();
+      this.syncStepButtons();
+    };
   }
 
   openPause() {
@@ -87,6 +102,10 @@ class Game {
   }
 
   toast(m, w) { toast(m, w); }
+
+  // tiny event emitter (used by the tutorial)
+  on(name, fn) { (this.listeners[name] ||= []).push(fn); return () => { this.listeners[name] = this.listeners[name].filter(f => f !== fn); }; }
+  emit(name, data) { for (const fn of this.listeners[name] || []) { try { fn(data); } catch (e) { console.error(e); } } }
 
   // ======================================================================== modes
   startAI() {
@@ -623,7 +642,11 @@ class Game {
 
   onKey(e) {
     const k = e.key;
-    if (k === ' ' || k === 'Enter') { e.preventDefault(); if (this.phase === 'planning') this.ready(); else if (this.playback) this.skipPlayback(); }
+    if (k === ' ' || k === 'Enter') {
+      e.preventDefault();
+      if (this.phase === 'planning') this.ready();
+      else if (this.playback) { if (this.playback.holding) this.nextTier(); }
+    }
     if (k === 'Escape') { if (this.uiMode) this.uiMode = null; else this.selection = []; this.changed(); }
     if (k === 'Backspace' && this.selection.length === 1) { e.preventDefault(); this.planner.undo(this.selection[0]); }
   }
@@ -632,6 +655,8 @@ class Game {
   ready() {
     if (this.phase !== 'planning') return;
     const orders = this.planner.final();
+    this.lastOrders = orders;
+    this.emit('ready');
     this.uiMode = null;
     if (this.mode === 'ai') {
       let o1;
@@ -673,26 +698,41 @@ class Game {
 
   play(pre, log, post, isReplay = false) {
     this.phase = isReplay ? 'replay' : 'resolution';
-    this.playback = new Playback(pre, log, post);
+    this.playback = new Playback(pre, log, post, { step: this.stepMode });
     this.playback.isReplay = isReplay;
     this.deadline = null;
     this.view.clearOverlay();
     this.view.clearGhosts();
+    this.clearIntents();
     $('playctl').classList.remove('hidden');
     $('btn-ready').classList.add('hidden');
     $('btn-build').classList.add('hidden'); $('btn-multi').classList.add('hidden');
-    this.panelTab = 'orders';
-    if (!isReplay) { this.newTrails = new Map(); this.knownDead = new Set(); }
-    this.names = nameMap(pre, post);
-    this.feed.clear();
     $('summary').classList.add('hidden');
+    $('digest').classList.add('hidden');
+    this.panelTab = 'orders';
+    if (!isReplay) {
+      this.digest = null; this.chipList = []; $('chips').innerHTML = '';
+      this.newTrails = new Map(); this.knownDead = new Set();
+      this.roundMarks = { deaths: [] };
+      this.clearMarks();
+      this.report = { round: log.round, lines: [], sum: { dealt: 0, taken: 0, killed: 0, lost: 0 } };
+    }
+    this.names = nameMap(pre, post);
+    this.logged = new WeakSet();
+    this.segLines = new Map();
+    this.hpShown = new Map();
+    this.feed.clear();
     this.lastFeedSeg = null;
-    if (!isReplay) this.report = { round: log.round, lines: [], sum: { dealt: 0, taken: 0, killed: 0, lost: 0 } };
+    this.lastItem = -1; this.lastPhase = null;
+    this.syncStepButtons();
     this.changed();
+    this.emit('playStart');
   }
 
-  // Turn a resolution event into a readable line (feed + report)
+  // Turn a resolution event into a readable line (feed + tier card + report)
   logEvent(e, live) {
+    if (this.logged.has(e)) return;
+    this.logged.add(e);
     const pb = this.playback;
     const visId = id => {
       const u = pb.disp.units.get(id) || pb.disp.buildings.get(id);
@@ -701,7 +741,9 @@ class Game {
     if (!involvesVisible(e, this.names, this.me, visId)) return;
     const d = describe(e, this.names, this.me);
     if (!d) return;
-    const label = segLabel(e.__seg);
+    const seg = e.__seg;
+    const label = segLabel(seg);
+    if (seg) { if (!this.segLines.has(seg)) this.segLines.set(seg, []); this.segLines.get(seg).push(d); }
     if (live) { this.feed.push(d, label !== this.lastFeedSeg ? label : ''); this.lastFeedSeg = label; }
     if (pb.isReplay || !this.report) return;
     this.report.lines.push({ ...d, label });
@@ -714,6 +756,7 @@ class Game {
     $('report-title').textContent = `Round ${this.report.round} report`;
     $('report-body').innerHTML = reportHTML(this.report);
     $('report').classList.remove('hidden');
+    this.emit('reportOpened');
   }
 
   showSummary() {
@@ -731,15 +774,42 @@ class Game {
 
   replay() {
     if (!this.lastRound || this.phase !== 'planning') return;
-    this.savedDraft = JSON.parse(JSON.stringify(this.planner.draft));
     const { pre, log, post } = this.lastRound;
     this.play(pre, log, post, true);
+  }
+
+  // ---- step controls --------------------------------------------------------
+  syncStepButtons() {
+    $('btn-auto').classList.toggle('on', !this.stepMode);
+    $('btn-auto').textContent = this.stepMode ? 'Auto ▸▸' : 'Auto ✓';
+    $('btn-follow').classList.toggle('on', this.followCam);
+  }
+  nextTier() {
+    if (!this.playback) return;
+    $('tiercard').classList.add('hidden');
+    this.clearIntents();
+    this.playback.next();
+    this.emit('next');
+  }
+  replayTier() {
+    if (!this.playback) return;
+    $('tiercard').classList.add('hidden');
+    this.clearIntents();
+    this.playback.replaySegment();
+    this.lastPhase = null; this.lastItem = -1;
+    this.texts.clear();
+  }
+  setAuto(on) {
+    this.stepMode = !on;
+    try { localStorage.setItem('tiers-step', this.stepMode ? '1' : '0'); } catch {}
+    if (this.playback) { this.playback.step = this.stepMode; if (!this.stepMode && this.playback.holding) this.nextTier(); }
+    this.syncStepButtons();
   }
 
   skipPlayback() {
     if (!this.playback) return;
     const evs = this.playback.skip();
-    for (const e of evs) { if (e.type === 'death') this.knownDead?.add(e.id); this.logEvent(e, false); }
+    for (const e of evs) { if (e.type === 'death') { this.knownDead?.add(e.id); this.addDeathMark(e); } this.logEvent(e, false); }
     this.finishPlayback();
   }
 
@@ -748,7 +818,10 @@ class Game {
     this.playback = null;
     this.texts.clear();
     this.feed.clear();
+    this.clearIntents();
     $('banner').classList.add('hidden');
+    $('tiercard').classList.add('hidden');
+    $('timeline').classList.add('hidden');
     if (pb.isReplay) {
       this.phase = 'planning';
       $('playctl').classList.add('hidden');
@@ -759,8 +832,8 @@ class Game {
     }
     this.state = pb.post;
     this.lastRound = { pre: pb.pre, log: pb.log, post: pb.post };
-    this.showSummary();
     this.trails = this.newTrails || new Map();
+    this.emit('roundEnd', { round: pb.log.round });
     if (this.state.winner !== null && this.state.winner !== undefined) {
       const w = this.state.winner;
       if (w === -1) this.gameOver('Draw', 'Both sides fell.');
@@ -769,7 +842,114 @@ class Game {
       this.computeVisibility(); this.updateFogFromState(); this.syncPlanningDisplay();
       return;
     }
+    const vis = id => this.lastSeen.has(id) || !!this.knownDead?.has(id);
+    try { this.digest = buildDigest(pb.pre, pb.log, pb.post, this.me, this.lastOrders, vis); } catch (e) { console.error(e); this.digest = null; }
     this.beginPlanning();
+    this.buildChips();
+    if (this.digest) this.openDigest(); else this.showSummary();
+  }
+
+  // ---- round digest card + map chips -------------------------------------------
+  openDigest() {
+    const d = this.digest; if (!d) return;
+    const el = $('digest');
+    el.innerHTML = `<div class="tc-head"><div><div class="tc-k">What happened</div><div class="tc-title">Round ${d.round}</div></div>
+      <button class="p-close" data-dg="close" aria-label="Close">✕</button></div>
+      <div class="dg-body">${digestHTML(d)}</div>
+      <div class="tc-btns two"><button class="btn" data-dg="report">All events</button><button class="btn" data-dg="replay">↺ Watch again</button><button class="btn primary" data-dg="close">Plan next round ▸</button></div>`;
+    el.classList.remove('hidden');
+    el.querySelectorAll('[data-dg="close"]').forEach(b => b.onclick = () => { el.classList.add('hidden'); this.emit('digestClosed'); });
+    el.querySelector('[data-dg="report"]').onclick = () => this.openReport();
+    el.querySelector('[data-dg="replay"]').onclick = () => { el.classList.add('hidden'); this.replay(); };
+    el.querySelectorAll('.dg-row').forEach(r => r.onclick = () => {
+      if (window.innerWidth < 720) el.classList.add('hidden');
+      this.selectAndFocus(r.dataset.id);
+    });
+    this.emit('digestOpened');
+  }
+
+  buildChips() {
+    const d = this.digest;
+    this.chipList = [];
+    const layer = $('chips');
+    layer.innerHTML = '';
+    if (!d) return;
+    const add = (id, html, cls, title) => {
+      const el = document.createElement('div');
+      el.className = 'chip-mark ' + cls; el.innerHTML = html; if (title) el.title = title;
+      el.onclick = ev => { ev.stopPropagation(); this.selectAndFocus(id); if (title) toast(title, cls === 'fail'); };
+      layer.appendChild(el);
+      this.chipList.push({ id, el });
+    };
+    for (const [id, dmg] of d.hurt) {
+      const r = d.byId.get(id);
+      if (r && r.died) continue;
+      add(id, '−' + dmg, 'dmg', null);
+    }
+    for (const r of d.units) if (r.fails.length && !r.died) add(r.id, '⊘', 'fail', r.fails[0]);
+  }
+
+  updateChips() {
+    if (!this.chipList || !this.chipList.length) return;
+    const show = this.phase === 'planning' || this.phase === 'waiting';
+    const off = {};
+    for (const c of this.chipList) {
+      const u = this.state.units.find(x => x.id === c.id);
+      const visible = show && u && (u.owner === this.me || this.visibleIds.has(u.id));
+      c.el.style.display = visible ? '' : 'none';
+      if (!visible) continue;
+      const p = this.view.project(u.x, 0.2, u.z);
+      const k = off[c.id] = (off[c.id] || 0) + 1;
+      c.el.style.transform = `translate(${p.x + 18 + (k - 1) * 30}px, ${p.y - 6}px)`;
+    }
+  }
+
+  // ---- intent arrows + round markers ----------------------------------------
+  clearIntents() { this.intentMap = new Map(); for (const c of [...this.view.intents.children]) { this.view.intents.remove(c); disposeDeep(c); } }
+  clearMarks() { for (const c of [...this.view.marks.children]) { this.view.marks.remove(c); disposeDeep(c); } }
+  addDeathMark(e) {
+    const u = this.playback?.disp.units.get(e.id) || this.state.units.find(x => x.id === e.id);
+    if (!u) return;
+    if (u.owner !== this.me && !this.isVisible(u.x, u.z)) return;
+    if (this.roundMarks?.deaths.some(d => d.id === e.id)) return;
+    this.roundMarks?.deaths.push({ id: e.id, x: u.x, z: u.z, owner: u.owner, type: u.type });
+    const g = new THREE.Group();
+    const col = PALETTE.accent;
+    g.add(ribbon([{ x: u.x - 0.45, z: u.z - 0.45 }, { x: u.x + 0.45, z: u.z + 0.45 }], 0.14, col, 0.95, 0, 0.07));
+    g.add(ribbon([{ x: u.x - 0.45, z: u.z + 0.45 }, { x: u.x + 0.45, z: u.z - 0.45 }], 0.14, col, 0.95, 0, 0.07));
+    const r = ring(0.7, 0.06, u.owner === 0 ? WHITE : BLACK, 0.9, 0.065, 24); r.position.set(u.x, 0.065, u.z); g.add(r);
+    this.view.marks.add(g);
+  }
+  onIntentEvent(e, disp) {
+    const M = this.intentMap;
+    switch (e.type) {
+      case 'act':
+        if (['attack', 'shove', 'disrupt'].includes(e.kind) && e.target) M.set(e.id, { kind: e.kind, target: e.target });
+        else if (['shoot', 'frag', 'dash'].includes(e.kind) && e.x !== undefined) M.set(e.id, { kind: e.kind, x: e.x, z: e.z });
+        else M.delete(e.id);
+        break;
+      case 'strike': case 'miss': case 'cancel': case 'shot': case 'frag': case 'disrupt': case 'dashstop': case 'sweep':
+        if (e.type !== 'shot' || !e.ow) M.delete(e.id);
+        break;
+      case 'retarget': { const m = M.get(e.id); if (m) m.target = e.target; break; }
+      case 'death': M.delete(e.id); for (const [k, m] of M) if (m.target === e.id) M.delete(k); break;
+    }
+    void disp;
+  }
+  drawIntents() {
+    const G = this.view.intents;
+    for (const c of [...G.children]) { G.remove(c); disposeDeep(c); }
+    const pb = this.playback; if (!pb) return;
+    for (const [id, m] of this.intentMap) {
+      const u = pb.disp.units.get(id);
+      if (!u || u.hp <= 0 || (u.owner !== this.me && !this.isVisible(u.x, u.z))) continue;
+      let to;
+      if (m.target) { const t = pb.disp.units.get(m.target) || pb.disp.buildings.get(m.target); if (!t) continue; to = { x: t.x, z: t.z }; }
+      else to = { x: m.x, z: m.z };
+      const ink = u.owner === 0 ? WHITE : BLACK;
+      const melee = m.kind === 'attack' || m.kind === 'shove';
+      G.add(arrow(u, to, melee ? 0.16 : 0.09, m.kind === 'disrupt' || m.kind === 'shoot' || m.kind === 'frag' ? PALETTE.accent : ink, melee ? 0 : 0.25));
+    }
   }
 
   gameOver(title, msg) {
@@ -799,6 +979,7 @@ class Game {
     if (this.panelDirty) { this.panelDirty = false; renderPanel(this); renderStrip(this); }
     if (this.phase !== 'menu' && (this.frame % 10 === 0 || this.topDirty)) { this.topDirty = false; renderTopbar(this); }
     this.tickTimer();
+    this.updateChips();
     this.texts.update(dt);
     this.view.render();
   }
@@ -826,27 +1007,38 @@ class Game {
 
   tickPlayback(dt) {
     const pb = this.playback;
-    if (this.paused) { this.syncPlaybackDisplay(); return; }
-    const res = pb.advance(dt * this.speed);
-    const banner = $('banner');
-    if (res.banner) {
-      banner.classList.remove('hidden');
-      const seg = res.banner.seg;
-      let who = '';
-      if (seg.kind === 'tier') {
-        const names = seg.units.map(id => pb.disp.units.get(id)).filter(u => u && (u.owner === this.me || this.isVisibleUnit(u)))
-          .map(u => `${u.owner === this.me ? 'Your' : 'Enemy'} ${CONFIG.units[u.type].name}`);
-        const hidden = seg.units.length - names.length;
-        who = names.join(' · ') + (hidden > 0 ? ` · ${hidden} unseen` : '');
-      }
-      banner.innerHTML = `<div class="b-title">${pb.bannerText(seg)}</div>${who ? `<div class="b-sub">${who}</div>` : ''}`;
-      banner.classList.toggle('active', !!res.banner.active);
-    }
+    if (this.paused) { this.syncPlaybackDisplay(dt); return; }
+    const evs = pb.advance(dt * this.speed);
     const ctx = { disp: pb.disp, vis: (x, z) => this.isVisible(x, z), me: this.me, nodes: pb.disp.nodes };
-    for (const e of res.events) {
-      if (e.type === 'death') { this.knownDead?.add(e.id); this.lastSeen.delete(e.id); }
+    for (const e of evs) {
+      if (e.type === 'death') { this.knownDead?.add(e.id); this.lastSeen.delete(e.id); if (!pb.isReplay) this.addDeathMark(e); }
       eventFx(this.view, this.texts, e, ctx);
+      this.onIntentEvent(e, pb.disp);
       this.logEvent(e, true);
+    }
+    if (pb.done) { this.finishPlayback(); return; }
+    const seg = pb.curSeg, phase = pb.phase;
+    // entering a new tier: frame the camera on the units acting in it
+    if (pb.cursor !== this.lastItem) {
+      this.lastItem = pb.cursor;
+      this.clearIntents();
+      if (this.followCam && seg) this.view.frame(this.segPoints(seg, pb), 0.8);
+      this.emit('tierStart', { seg });
+    }
+    const banner = $('banner');
+    if (phase === 'banner') {
+      banner.classList.remove('hidden', 'active');
+      banner.innerHTML = `<div class="b-title">${pb.bannerText(seg)}</div><div class="b-sub">${this.tierWho(seg, pb)}</div>`;
+    } else banner.classList.add('hidden');
+    // timeline during the tier
+    if (seg && seg.kind === 'tier' && phase !== 'banner') this.renderTimeline(seg, pb);
+    else $('timeline').classList.add('hidden');
+    if (phase !== this.lastPhase) {
+      this.lastPhase = phase;
+      $('playctl').classList.toggle('hidden', phase === 'hold');
+      $('feed').style.visibility = phase === 'hold' ? 'hidden' : '';
+      if (phase === 'hold') this.showTierCard(seg, pb);
+      else $('tiercard').classList.add('hidden');
     }
     // fog + visibility from current display
     if (this.frame % 4 === 0) {
@@ -856,22 +1048,127 @@ class Game {
       this.fogSources = src;
       this.view.updateFog(src);
     }
-    this.syncPlaybackDisplay();
-    if (pb.done) this.finishPlayback();
+    this.drawIntents();
+    this.syncPlaybackDisplay(dt);
+  }
+
+  segPoints(seg, pb) {
+    const pts = [];
+    const ids = seg.kind === 'tier' ? seg.units : [];
+    for (const id of ids) {
+      const u = pb.disp.units.get(id);
+      if (!u || (u.owner !== this.me && !this.isVisible(u.x, u.z))) continue;
+      pts.push({ x: u.x, z: u.z });
+      const tr = seg.tracks[id]; if (tr && tr.length) { const l = tr[tr.length - 1]; pts.push({ x: l[1], z: l[2] }); }
+    }
+    for (const e of seg.events) {
+      if ((e.type === 'hit' || e.type === 'spawn' || e.type === 'build') && pts.length < 40) {
+        const t = pb.disp.units.get(e.dst || e.id) || pb.disp.buildings.get(e.dst || e.id);
+        if (t && (t.owner === this.me || this.isVisible(t.x, t.z))) pts.push({ x: t.x, z: t.z });
+        else if (e.x !== undefined && e.owner === this.me) pts.push({ x: e.x, z: e.z });
+      }
+    }
+    return pts;
+  }
+
+  tierWho(seg, pb) {
+    if (!seg || seg.kind !== 'tier') return seg && seg.kind === 'buildings' ? 'Turrets fire, then income, construction and training' : '';
+    const mine = [], theirs = []; let hidden = 0;
+    for (const id of seg.units) {
+      const u = pb.disp.units.get(id); if (!u) continue;
+      const nm = CONFIG.units[u.type].name;
+      if (u.owner === this.me) mine.push(nm); else if (this.isVisible(u.x, u.z)) theirs.push(nm); else hidden++;
+    }
+    const parts = [];
+    if (mine.length) parts.push('Yours: ' + mine.join(', '));
+    if (theirs.length) parts.push('Enemy: ' + theirs.join(', '));
+    if (hidden) parts.push(`${hidden} unseen`);
+    return (parts.join(' · ') || 'No visible units') + ' — all act at the same time';
+  }
+
+  renderTimeline(seg, pb) {
+    const el = $('timeline');
+    el.classList.remove('hidden');
+    const key = seg;
+    if (this.tlSeg !== key) {
+      this.tlSeg = key;
+      const rows = [];
+      for (const id of seg.units) {
+        const u = pb.disp.units.get(id) || this.names.get(id);
+        if (!u) continue;
+        const nm = this.names.get(id) || u;
+        const mine = nm.owner === this.me;
+        if (!mine && !(u.x !== undefined && this.isVisible(u.x, u.z))) continue;
+        const acts = seg.events.filter(e => e.type === 'act' && e.id === id && e.kind !== 'wait');
+        rows.push({ id, mine, type: nm.type, owner: nm.owner, acts });
+      }
+      rows.sort((a, b) => (b.mine - a.mine));
+      const max = window.innerWidth < 720 ? 3 : 6;
+      const shown = rows.slice(0, max);
+      const len = Math.max(1, seg.len);
+      const LBL = { move: 'MOVE', attack: 'ATTACK', shoot: 'SHOOT', shove: 'SHOVE', dash: 'DASH', frag: 'FRAG', disrupt: 'DISRUPT', sweep: 'SWEEP' };
+      let html = `<div class="tl-head"><b>${pb.bannerText(seg)}</b><span>Time inside the tier → (AP = time)</span></div>`;
+      for (const r of shown) {
+        html += `<div class="tl-row${r.mine ? ' mine' : ''}"><span class="tl-name">${glyph(r.type, r.owner, 12)} ${r.mine ? 'Your' : 'Enemy'} ${CONFIG.units[r.type].name}</span><span class="tl-track">`;
+        for (const a of r.acts) {
+          const w = Math.max(1.5, (Math.min(a.cost || 0, len - a.t) / len) * 100);
+          html += `<i class="tl-blk ${a.kind}" style="left:${(a.t / len) * 100}%;width:${w}%">${LBL[a.kind] || ''}</i>`;
+        }
+        if (!r.acts.length) html += `<i class="tl-none">holds / defends</i>`;
+        html += '</span></div>';
+      }
+      if (rows.length > shown.length) html += `<div class="tl-more">+${rows.length - shown.length} more</div>`;
+      html += '<div class="tl-play"></div>';
+      el.innerHTML = html;
+      this.tlPlay = el.querySelector('.tl-play');
+    }
+    const track = el.querySelector('.tl-track');
+    if (track && this.tlPlay) {
+      const k = pb.phase === 'hold' ? 1 : pb.tAP / Math.max(1, seg.len);
+      const tr = track.getBoundingClientRect(), er = el.getBoundingClientRect();
+      this.tlPlay.style.left = (tr.left - er.left + tr.width * k) + 'px';
+    }
+  }
+
+  showTierCard(seg, pb) {
+    const lines = this.segLines.get(seg) || [];
+    const idx = pb.items.filter((it, i) => !it.silent && i <= pb.cursor).length;
+    const total = pb.items.filter(it => !it.silent).length;
+    const last = idx >= total;
+    const el = $('tiercard');
+    el.innerHTML = `<div class="tc-head"><div><div class="tc-k">Step ${idx} of ${total}</div><div class="tc-title">${pb.bannerText(seg)} — done</div></div>
+        <button class="btn mini" data-tc="report">Full report</button></div>
+      <div class="tc-who">${this.tierWho(seg, pb)}</div>
+      <div class="tc-lines">${lines.length ? lines.map(d => `<div class="feed-line ${d.kind}${d.mine ? ' mine' : ''}">${d.html}</div>`).join('') : '<div class="note">Nothing hit anything. Units moved or held position.</div>'}</div>
+      <div class="tc-btns"><button class="btn" data-tc="replay">◂ Replay step</button>
+        <button class="btn primary" data-tc="next">${last ? 'Finish round ▸' : 'Next step ▸'}</button>
+        <button class="btn" data-tc="auto">Auto ▸▸</button></div>`;
+    el.classList.remove('hidden');
+    el.querySelector('[data-tc="next"]').onclick = () => this.nextTier();
+    el.querySelector('[data-tc="replay"]').onclick = () => this.replayTier();
+    el.querySelector('[data-tc="auto"]').onclick = () => this.setAuto(true);
+    el.querySelector('[data-tc="report"]').onclick = () => { this.openReport(); };
+    this.emit('tierShown', { seg, last });
   }
 
   isVisibleUnit(u) { return !!u && this.isVisible(u.x, u.z); }
 
-  syncPlaybackDisplay() {
+  syncPlaybackDisplay(dt = 0) {
     const pb = this.playback;
     const units = [], buildings = [];
     const seg = pb.curSeg;
-    const acting = seg && seg.kind === 'tier' ? new Set(seg.units) : null;
+    const acting = seg && seg.kind === 'tier' && pb.phase !== 'banner' ? new Set(seg.units) : null;
     for (const [id, u] of pb.disp.units) {
       const mine = u.owner === this.me;
       const vis = mine || this.isVisible(u.x, u.z);
       const isAct = !!acting && acting.has(id) && u.hp > 0;
-      units.push({ ...u, visible: vis, defends: 0, acting: isAct, dim: !!acting && !isAct });
+      // HP bars drain smoothly
+      let shown = this.hpShown.get(id);
+      if (shown === undefined) shown = u.hp;
+      shown += (u.hp - shown) * Math.min(1, dt * 4);
+      if (Math.abs(shown - u.hp) < 0.3) shown = u.hp;
+      this.hpShown.set(id, shown);
+      units.push({ ...u, hp: shown, visible: vis, defends: 0, acting: isAct, dim: !!acting && !isAct });
       if (!mine && vis && !pb.isReplay && u.hp > 0) {
         this.lastSeen.set(id, { x: u.x, z: u.z, type: u.type, owner: u.owner });
         const tr = this.newTrails.get(id) || [];

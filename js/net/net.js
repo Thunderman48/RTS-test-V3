@@ -1,6 +1,6 @@
 // Online multiplayer over WebRTC using PeerJS (works from static hosting like GitHub Pages).
 // The host is authoritative: it resolves each round and sends the result to the guest.
-const PREFIX = 'tiers-rts-v2-';
+const PREFIX = 'tiers-rts-g3-';
 const ALPHA = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 
 export function randomCode() {

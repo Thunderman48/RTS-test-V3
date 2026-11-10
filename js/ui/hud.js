@@ -181,6 +181,18 @@ function unitHead(g, u, extra = '') {
     <button class="p-close" data-act="deselect" aria-label="Close">✕</button></div>${hpBar(u)}`;
 }
 
+function lastRoundLine(g, u) {
+  const r = g.digest?.byId.get(u.id);
+  if (!r) return '';
+  const bits = [];
+  if (r.hpBefore !== null && r.hpAfter !== r.hpBefore) bits.push(`HP ${r.hpBefore}→${r.hpAfter}`);
+  bits.push(r.summary);
+  if (r.kills.length) bits.push('killed ' + r.kills.join(', '));
+  let html = `<div class="lastround"><b>Last round:</b> ${esc(bits.join(' · '))}</div>`;
+  for (const f of r.fails) html += `<div class="dg-fail">⊘ ${esc(f)}</div>`;
+  return html;
+}
+
 function renderOwnUnit(g, u, show) {
   const P = g.planner;
   const plan = P.plan(u.id);
@@ -199,6 +211,7 @@ function renderStanceCard(g, units, show) {
   if (one) {
     const controlled = !!P.plan(one.id);
     const preview = controlled ? null : g.stancePreview.get(one.id);
+    html += lastRoundLine(g, one);
     html += `<div class="stance-now"><span class="stance-k">Stance</span><span class="stance-v">${STANCE_NAMES[cur]}${cur !== one.stance ? ' <small>(new)</small>' : ''}</span></div>
       <div class="stance-desc">${esc(STANCE_DESC[cur])}</div>
       <div class="will"><b>${controlled ? 'Your orders' : 'This round'}:</b> ${esc(describePlan(g, one, controlled ? P.plan(one.id) : preview))}</div>`;

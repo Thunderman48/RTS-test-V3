@@ -59,6 +59,8 @@ export class View3D {
     this.overlay = new THREE.Group(); this.scene.add(this.overlay);
     this.fxGroup = new THREE.Group(); this.scene.add(this.fxGroup);
     this.ghosts = new THREE.Group(); this.scene.add(this.ghosts);
+    this.marks = new THREE.Group(); this.scene.add(this.marks);     // round markers (deaths, damage)
+    this.intents = new THREE.Group(); this.scene.add(this.intents); // attack/aim arrows during playback
     this.fx = [];
     this.raycaster = new THREE.Raycaster();
     this.clock = new THREE.Clock();
@@ -96,7 +98,21 @@ export class View3D {
     this.camera.position.set(c.x - Math.sin(c.yaw) * horiz, Math.sin(c.pitch) * c.dist, c.z + Math.cos(c.yaw) * horiz);
     this.camera.lookAt(c.x, 0, c.z);
   }
+  // Smoothly move the camera to frame a set of points.
+  frame(points, dur = 0.7) {
+    if (!points.length) return;
+    let minx = 1e9, maxx = -1e9, minz = 1e9, maxz = -1e9;
+    for (const p of points) { minx = Math.min(minx, p.x); maxx = Math.max(maxx, p.x); minz = Math.min(minz, p.z); maxz = Math.max(maxz, p.z); }
+    const cx = (minx + maxx) / 2, cz = (minz + maxz) / 2;
+    const span = Math.max(maxx - minx, maxz - minz);
+    const portrait = (this.canvas.clientHeight || 1) > (this.canvas.clientWidth || 1);
+    const dist = Math.max(22, Math.min(46, span * (portrait ? 2.6 : 1.7) + 14));
+    this.camAnim = { t: 0, dur, from: { x: this.cam.x, z: this.cam.z, dist: this.cam.dist }, to: { x: cx, z: cz, dist } };
+  }
+  stopAnim() { this.camAnim = null; }
+
   panPixels(dx, dy) {
+    this.camAnim = null;
     const h = this.canvas.clientHeight || 600;
     const k = (this.cam.dist * Math.tan((this.camera.fov * Math.PI) / 360) * 2) / h;
     const cy = Math.cos(this.cam.yaw), sy = Math.sin(this.cam.yaw);
@@ -104,8 +120,8 @@ export class View3D {
     this.cam.x -= (dx * cy - dy * sy / Math.sin(this.cam.pitch)) * k;
     this.cam.z -= (dx * sy + dy * cy / Math.sin(this.cam.pitch)) * k;
   }
-  zoom(f) { this.cam.dist *= f; }
-  rotate(da) { this.cam.yaw += da; }
+  zoom(f) { this.camAnim = null; this.cam.dist *= f; }
+  rotate(da) { this.camAnim = null; this.cam.yaw += da; }
   focus(x, z) { this.cam.x = x; this.cam.z = z; }
 
   pick(clientX, clientY) {
@@ -160,10 +176,18 @@ export class View3D {
       const act = e.mesh.userData.base.userData.act;
       act.visible = !!u.acting;
       if (act.visible) act.scale.setScalar(1 + 0.12 * Math.sin((this.time || 0) * 8));
-      const s = u.dying ? Math.max(0.01, 1 - u.dying) : 1;
-      e.mesh.scale.setScalar(s);
+      // dying units tip over and sink; the label hides
       const body = e.mesh.userData.body;
-      body.position.y = u.flash ? 0.15 * Math.sin(u.flash * 30) : 0;
+      if (u.dying !== undefined) {
+        body.rotation.x = Math.min(1.45, u.dying * 2.2);
+        body.position.y = -0.35 * Math.max(0, u.dying - 0.5);
+        e.label.visible = u.dying < 0.3;
+        e.mesh.userData.base.visible = u.dying < 0.6;
+      } else {
+        body.rotation.x = 0; e.label.visible = true; e.mesh.userData.base.visible = true;
+        body.position.y = u.flash ? 0.15 * Math.sin(u.flash * 30) : 0;
+      }
+      e.mesh.scale.setScalar(1);
     }
     for (const b of disp.buildings) {
       seenIds.add(b.id);
@@ -242,6 +266,14 @@ export class View3D {
     }
     for (const [, e] of this.entities) {
       const sp = e.mesh.userData.spin; if (sp) sp.rotation.y += dt * 0.8;
+    }
+    if (this.camAnim) {
+      const A = this.camAnim; A.t += dt;
+      const k = Math.min(1, A.t / A.dur), e = k * k * (3 - 2 * k);
+      this.cam.x = A.from.x + (A.to.x - A.from.x) * e;
+      this.cam.z = A.from.z + (A.to.z - A.from.z) * e;
+      this.cam.dist = A.from.dist + (A.to.dist - A.from.dist) * e;
+      if (k >= 1) this.camAnim = null;
     }
     this.updateCamera();
     this.renderer.render(this.scene, this.camera);

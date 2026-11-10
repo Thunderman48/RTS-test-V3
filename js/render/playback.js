@@ -1,8 +1,9 @@
-// Turns a resolution log into an animated timeline over a display state.
+// Turns a resolution log into an animated, tier-by-tier playback over a display state.
+// Step mode: each tier plays, then holds on a result card until next() is called.
 import { CONFIG } from '../config.js';
 
-const SEC_PER_AP = 0.03;      // 100 AP ≈ 3 s at 1x
-const BANNER = 1.0;           // pause before each tier
+export const SEC_PER_AP = 0.04;  // 100 AP ≈ 4 s at 1x
+const BANNER = 0.9;              // title card before each tier
 
 export function displayFromState(s) {
   const units = new Map(), buildings = new Map();
@@ -11,63 +12,106 @@ export function displayFromState(s) {
   return { units, buildings, nodes: s.map.nodes.map(n => ({ ...n })) };
 }
 
+function cloneDisp(d) {
+  return {
+    units: new Map([...d.units].map(([k, v]) => [k, { ...v }])),
+    buildings: new Map([...d.buildings].map(([k, v]) => [k, { ...v }])),
+    nodes: d.nodes.map(n => ({ ...n })),
+  };
+}
+
+const BORING = new Set(['tier', 'zoneoff', 'act']);
+export const segInteresting = seg => seg.events.some(e => !BORING.has(e.type));
+
 export class Playback {
-  constructor(pre, log, post) {
+  constructor(pre, log, post, { step = true } = {}) {
     this.pre = pre; this.log = log; this.post = post;
+    this.step = step;
     this.disp = displayFromState(pre);
     this.items = [];
-    let t = 0;
     for (const seg of log.segments) {
-      let pad = BANNER;
-      if (seg.kind === 'start') pad = 0.2;
-      if (seg.kind === 'buildings' && !seg.events.length) continue;
-      const dur = Math.max(0.3, seg.len * SEC_PER_AP);
-      this.items.push({ seg, start: t + pad, bannerStart: t, dur });
-      t += pad + dur;
-    }
-    this.total = t + 0.4;
-    this.time = 0;
-    this.cursor = 0;           // current item
-    this.evIdx = 0;
-    this.trackCur = {};
-    this.done = false;
-    this.enemyTrails = new Map(); // id -> [{x,z}]
-  }
-
-  // Advance by dt seconds of playback time. Returns {events:[...], banner:{...}|null}
-  advance(dt) {
-    const fired = [];
-    if (this.done) return { events: fired, banner: null };
-    this.time += dt;
-    for (const [, u] of this.disp.units) { if (u.flash) u.flash = Math.max(0, u.flash - dt * 2); if (u.dying !== undefined) u.dying += dt * 2; }
-    for (const [, b] of this.disp.buildings) if (b.dying !== undefined) b.dying += dt * 1.5;
-    for (const m of [this.disp.units, this.disp.buildings]) for (const [id, e] of m) if (e.dying >= 1) m.delete(id);
-    let banner = null;
-    while (this.cursor < this.items.length) {
-      const it = this.items[this.cursor];
-      this.curSeg = it.seg;
-      if (this.time < it.start) { banner = { seg: it.seg, k: (this.time - it.bannerStart) / (it.start - it.bannerStart) }; break; }
-      const tAP = Math.min(it.seg.len, (this.time - it.start) / SEC_PER_AP);
-      this.applyTracks(it.seg, tAP);
-      const evs = it.seg.events;
-      while (this.evIdx < evs.length && evs[this.evIdx].t <= tAP + 1e-6) {
-        const e = evs[this.evIdx++];
-        this.applyEvent(e);
-        Object.defineProperty(e, '__seg', { value: it.seg, configurable: true, enumerable: false });
-        fired.push(e);
-      }
-      if (this.time >= it.start + it.dur) {
-        // flush the rest of this segment
-        this.applyTracks(it.seg, it.seg.len + 1);
-        while (this.evIdx < evs.length) { const e = evs[this.evIdx++]; this.applyEvent(e); Object.defineProperty(e, '__seg', { value: it.seg, configurable: true, enumerable: false }); fired.push(e); }
-        this.cursor++; this.evIdx = 0; this.trackCur = {};
+      const interesting = segInteresting(seg);
+      if (seg.kind !== 'tier' && !interesting) {
+        // still apply silently (tier reveals etc.)
+        this.items.push({ seg, pad: 0, dur: 0, silent: true });
         continue;
       }
-      banner = { seg: it.seg, k: 1, active: true };
-      break;
+      const dur = seg.kind === 'tier' ? Math.max(0.6, seg.len * SEC_PER_AP) : 1.2;
+      this.items.push({ seg, pad: BANNER, dur, hold: true });
     }
-    if (this.time >= this.total) { this.done = true; this.curSeg = null; }
-    return { events: fired, banner };
+    this.cursor = 0; this.local = 0; this.evIdx = 0; this.trackCur = {};
+    this.holding = false; this.done = false;
+    this.snap = cloneDisp(this.disp);
+    if (!this.items.length) this.done = true;
+  }
+
+  get item() { return this.items[this.cursor] || null; }
+  get curSeg() { return this.item ? this.item.seg : null; }
+  // time inside the current segment, in AP
+  get tAP() { const it = this.item; if (!it) return 0; return Math.max(0, Math.min(it.seg.len, (this.local - it.pad) / SEC_PER_AP)); }
+  get phase() {
+    if (this.done) return 'done';
+    if (this.holding) return 'hold';
+    const it = this.item;
+    return it && this.local < it.pad ? 'banner' : 'play';
+  }
+
+  tickDecay(dt) {
+    for (const [, u] of this.disp.units) { if (u.flash) u.flash = Math.max(0, u.flash - dt * 2); if (u.dying !== undefined && u.dying < 1) u.dying = Math.min(1, u.dying + dt * 1.5); }
+    for (const [, b] of this.disp.buildings) if (b.dying !== undefined && b.dying < 1) b.dying = Math.min(1, b.dying + dt * 1.2);
+  }
+
+  // Advance by dt seconds. Returns fired events.
+  advance(dt) {
+    const fired = [];
+    this.tickDecay(dt);
+    if (this.done || this.holding) return fired;
+    this.local += dt;
+    while (!this.done && !this.holding) {
+      const it = this.item;
+      if (it.silent) { this.flushItem(it, fired); this.finishItem(); continue; }
+      if (this.local < it.pad) break;
+      const tAP = Math.min(it.seg.len, (this.local - it.pad) / SEC_PER_AP);
+      this.applyTracks(it.seg, tAP);
+      const evs = it.seg.events;
+      while (this.evIdx < evs.length && evs[this.evIdx].t <= tAP + 1e-6) fired.push(this.fire(evs[this.evIdx++], it.seg));
+      if (this.local < it.pad + it.dur) break;
+      this.flushItem(it, fired);
+      if (this.step && it.hold) { this.holding = true; break; }
+      this.finishItem();
+      // carry over remaining time into the next item
+    }
+    return fired;
+  }
+
+  fire(e, seg) {
+    this.applyEvent(e);
+    Object.defineProperty(e, '__seg', { value: seg, configurable: true, enumerable: false });
+    return e;
+  }
+
+  flushItem(it, fired) {
+    this.applyTracks(it.seg, it.seg.len + 1);
+    const evs = it.seg.events;
+    while (this.evIdx < evs.length) fired.push(this.fire(evs[this.evIdx++], it.seg));
+  }
+
+  finishItem() {
+    this.holding = false;
+    this.cursor++; this.local = 0; this.evIdx = 0; this.trackCur = {};
+    for (const m of [this.disp.units, this.disp.buildings]) for (const [id, e] of m) if (e.dying >= 1) m.delete(id);
+    this.snap = cloneDisp(this.disp);
+    if (this.cursor >= this.items.length) this.done = true;
+  }
+
+  // Continue after a held tier.
+  next() { if (this.holding) this.finishItem(); }
+
+  // Play the current tier again from its start.
+  replaySegment() {
+    if (this.done) return;
+    this.disp = cloneDisp(this.snap);
+    this.local = this.item.pad * 0.4; this.evIdx = 0; this.trackCur = {}; this.holding = false;
   }
 
   applyTracks(seg, t) {
@@ -114,16 +158,22 @@ export class Playback {
     }
   }
 
+  // Play everything that is left without stopping. Returns the events fired.
   skip() {
     const fired = [];
-    while (!this.done) { const r = this.advance(0.5); fired.push(...r.events); }
+    this.step = false;
+    let guard = 0;
+    while (!this.done && guard++ < 10000) {
+      if (this.holding) this.finishItem();
+      fired.push(...this.advance(1));
+    }
     return fired;
   }
 
   bannerText(seg) {
-    if (seg.kind === 'start') return 'Resolution';
+    if (seg.kind === 'start') return 'Before anyone moves';
     if (seg.kind === 'buildings') return 'Buildings act';
-    const names = { 8: 'Tier 8', 7: 'Tier 7', 6: 'Tier 6 · Fast', 5: 'Tier 5 · Normal', 4: 'Tier 4 · Slow' };
+    const names = { 6: 'Tier 6 · Fast', 5: 'Tier 5 · Normal', 4: 'Tier 4 · Slow' };
     return names[seg.tier] || 'Tier ' + seg.tier;
   }
 }

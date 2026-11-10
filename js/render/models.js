@@ -266,3 +266,27 @@ export function makeUnitBase(team) {
   g.userData.act = act;
   return g;
 }
+
+// Flat arrow on the ground from a to b (shaft ribbon + triangle head)
+export function arrow(a, b, width, color, dash = 0, y = 0.09) {
+  const g = new THREE.Group();
+  const dx = b.x - a.x, dz = b.z - a.z, l = Math.hypot(dx, dz);
+  if (l < 0.3) return g;
+  const ux = dx / l, uz = dz / l;
+  const head = Math.min(0.6, l * 0.4);
+  const end = { x: b.x - ux * (head + 0.35), z: b.z - uz * (head + 0.35) };
+  const start = { x: a.x + ux * 0.5, z: a.z + uz * 0.5 };
+  if (Math.hypot(end.x - start.x, end.z - start.z) > 0.05) g.add(ribbon([start, end], width, color, 0.95, dash, y));
+  const tip = { x: b.x - ux * 0.35, z: b.z - uz * 0.35 };
+  const hw = Math.max(0.22, width * 2);
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute([
+    tip.x, y, tip.z,
+    end.x - uz * hw, y, end.z + ux * hw,
+    end.x + uz * hw, y, end.z - ux * hw,
+  ], 3));
+  const m = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.95, depthWrite: false, side: THREE.DoubleSide }));
+  m.renderOrder = 6;
+  g.add(m);
+  return g;
+}

@@ -112,3 +112,101 @@ export function segLabel(seg) {
   const n = { 6: ' · fast', 5: ' · normal', 4: ' · slow' }[seg.tier] || '';
   return 'Tier ' + seg.tier + n;
 }
+
+// ---------------------------------------------------------------------------------
+// Round digest: per-unit "what happened to my units and why", enemy summary, base.
+// visible(id) -> whether the viewer could see that entity during the round
+export function buildDigest(pre, log, post, me, myOrders, visible = () => true) {
+  const names = nameMap(pre, post);
+  const unitName = id => { const n = names.get(id); return n ? (n.kind === 'u' ? CONFIG.units[n.type].name : CONFIG.buildings[n.type].name) : '?'; };
+  const rows = new Map();
+  const row = id => {
+    if (!rows.has(id)) {
+      const u0 = pre.units.find(u => u.id === id), u1 = post.units.find(u => u.id === id);
+      const u = u0 || u1;
+      rows.set(id, {
+        id, type: u.type, hpBefore: u0 ? u0.hp : null, hpAfter: u1 ? u1.hp : 0, maxHp: u.maxHp,
+        died: false, spawned: !u0, dealt: 0, taken: 0, kills: [], hitBy: new Map(), did: [], fails: [],
+        controlled: !!(myOrders && myOrders.units && myOrders.units[id]), stance: u0 ? u0.stance : (u1 ? u1.stance : ''),
+      });
+    }
+    return rows.get(id);
+  };
+  for (const u of pre.units) if (u.owner === me && u.hp > 0) row(u.id);
+  const lastHitter = new Map();
+  const enemy = { dealt: 0, killedMine: 0, seen: new Set(), lost: 0 };
+  const base = { income: log.econ ? log.econ.income[me] : 0, built: [], ready: [], captured: 0, lostNodes: 0, buildingsLost: [], enemyBuildingsKilled: [] };
+  const own = id => names.get(id)?.owner === me;
+  const ACT = { attack: 'attacked', shoot: 'fired', move: 'moved', dash: 'dashed', frag: 'threw a Frag', shove: 'shoved', disrupt: 'used Disrupt', sweep: 'used Sweep' };
+  for (const seg of log.segments) for (const e of seg.events) {
+    switch (e.type) {
+      case 'act':
+        if (own(e.id) && ACT[e.kind]) { const r = row(e.id); const w = ACT[e.kind] + (e.target && e.kind === 'attack' ? ' ' + (own(e.target) ? 'your ' : 'enemy ') + unitName(e.target) : ''); if (r.did[r.did.length - 1] !== w) r.did.push(w); }
+        if (!own(e.id) && visible(e.id)) enemy.seen.add(e.id);
+        break;
+      case 'skill': if (own(e.id)) { const r = row(e.id); if (e.skill === 'fortify' || e.skill === 'rally') r.did.unshift('used ' + (e.name || e.skill)); } break;
+      case 'hit': {
+        lastHitter.set(e.dst, e.src);
+        if (own(e.src) && names.get(e.src)?.kind === 'u') row(e.src).dealt += e.dmg;
+        if (own(e.dst) && names.get(e.dst)?.kind === 'u') {
+          const r = row(e.dst); r.taken += e.dmg;
+          const k = (own(e.src) ? 'your ' : 'enemy ') + unitName(e.src);
+          r.hitBy.set(k, (r.hitBy.get(k) || 0) + e.dmg);
+        }
+        if (!own(e.src) && own(e.dst)) enemy.dealt += e.dmg;
+        break;
+      }
+      case 'death': {
+        const killer = lastHitter.get(e.id);
+        if (own(e.id)) { row(e.id).died = true; enemy.killedMine++; }
+        else if (killer && own(killer) && names.get(killer)?.kind === 'u') row(killer).kills.push(unitName(e.id));
+        if (!own(e.id)) enemy.lost++;
+        break;
+      }
+      case 'bdestroy': (own(e.id) ? base.buildingsLost : base.enemyBuildingsKilled).push(unitName(e.id)); break;
+      case 'cancel': case 'miss': if (own(e.id)) row(e.id).fails.push(e.reason || 'Order failed'); break;
+      case 'dashstop': if (own(e.id)) row(e.id).fails.push(`Dash stopped early: hit ${e.code === 'wall' ? 'a wall' : 'a unit'}`); break;
+      case 'built': if (own(e.id)) base.built.push(unitName(e.id)); break;
+      case 'spawn': if (e.owner === me) base.ready.push(unitName(e.id)); break;
+      case 'capture': if (e.owner === me) base.captured++; else base.lostNodes++; break;
+    }
+  }
+  const units = [...rows.values()].filter(r => !r.spawned);
+  for (const r of units) {
+    r.summary = r.did.length ? r.did.join(', ') : (r.controlled ? 'did nothing (no actions given)' : `followed ${r.stance} stance: held and defended`);
+    r.hitByText = [...r.hitBy].sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k} (${v})`).join(', ');
+  }
+  const hurt = new Map();
+  for (const seg of log.segments) for (const e of seg.events) if (e.type === 'hit' && names.get(e.dst)?.kind === 'u' && (own(e.dst) || visible(e.dst))) hurt.set(e.dst, (hurt.get(e.dst) || 0) + e.dmg);
+  return { me, round: log.round, units, byId: new Map(units.map(r => [r.id, r])), enemy: { ...enemy, seen: enemy.seen.size }, base, supply: post.players[me].supply, hurt };
+}
+
+export function digestHTML(d) {
+  const S = d.units.reduce((a, r) => ({ dealt: a.dealt + r.dealt, taken: a.taken + r.taken, kills: a.kills + r.kills.length }), { dealt: 0, taken: 0, kills: 0 });
+  let html = `<div class="rep-sum">
+    <div><span class="k">You dealt</span><b>${S.dealt}</b></div>
+    <div><span class="k">You took</span><b>${S.taken}</b></div>
+    <div><span class="k">Enemies killed</span><b>${d.enemy.lost}</b></div>
+    <div><span class="k">Units lost</span><b>${d.enemy.killedMine}</b></div></div>`;
+  html += '<h4>Your units</h4><div class="dg-units">';
+  for (const r of d.units) {
+    const hp = r.died ? '<b class="dead">DIED</b>' : `${r.hpBefore}→<b>${r.hpAfter}</b>`;
+    const delta = r.died ? '' : r.hpAfter < r.hpBefore ? ` <span class="minus">−${r.hpBefore - r.hpAfter}</span>` : r.hpAfter > r.hpBefore ? ` <span class="plus">+${r.hpAfter - r.hpBefore}</span>` : '';
+    html += `<div class="dg-row${r.died ? ' died' : ''}${r.fails.length ? ' failed' : ''}" data-id="${r.id}">
+      <div class="dg-top">${glyph(r.type, d.me, 14)} <b>${CONFIG.units[r.type].name}</b> <span class="dg-ctl">${r.controlled ? 'your orders' : 'stance'}</span><span class="dg-hp">HP ${hp}${delta}</span></div>
+      <div class="dg-did">${esc(r.summary[0].toUpperCase() + r.summary.slice(1))}.${r.dealt ? ` Dealt <b>${r.dealt}</b>.` : ''}${r.kills.length ? ` Killed ${esc(r.kills.join(', '))}.` : ''}${r.taken ? ` Took ${r.taken} from ${esc(r.hitByText)}.` : ''}</div>
+      ${r.fails.map(f => `<div class="dg-fail">⊘ ${esc(f)}</div>`).join('')}
+    </div>`;
+  }
+  html += '</div>';
+  html += `<h4>Enemy (what you could see)</h4><div class="dg-text">${d.enemy.seen ? `${d.enemy.seen} enemy unit${d.enemy.seen > 1 ? 's' : ''} acted in view. ` : 'No enemy acted in view. '}They dealt <b>${d.enemy.dealt}</b> damage to you${d.enemy.killedMine ? ` and killed ${d.enemy.killedMine} of your units` : ''}.${d.base.enemyBuildingsKilled.length ? ` You destroyed: ${esc(d.base.enemyBuildingsKilled.join(', '))}.` : ''}</div>`;
+  const b = d.base;
+  const parts = [`+${b.income} supply (now ${d.supply})`];
+  if (b.built.length) parts.push('finished ' + b.built.join(', '));
+  if (b.ready.length) parts.push('ready: ' + b.ready.join(', '));
+  if (b.captured) parts.push(`captured ${b.captured} node${b.captured > 1 ? 's' : ''}`);
+  if (b.lostNodes) parts.push(`lost ${b.lostNodes} node${b.lostNodes > 1 ? 's' : ''}`);
+  if (b.buildingsLost.length) parts.push('LOST ' + b.buildingsLost.join(', '));
+  html += `<h4>Your base</h4><div class="dg-text">${esc(parts.join(' · '))}</div>`;
+  return html;
+}
