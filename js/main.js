@@ -8,9 +8,10 @@ import { resolveRound } from './sim/resolve.js';
 import { buildStancePlan } from './sim/stances.js';
 import { aiOrders } from './ai/ai.js';
 import { View3D, disposeDeep } from './render/scene.js';
-import { Playback, displayFromState } from './render/playback.js';
+import { Playback, displayFromState, statusIcons } from './render/playback.js';
 import { FloatTexts, eventFx } from './render/fx.js';
-import { ribbon, ring, dashedRing, disc, makeUnitMesh, makeBuildingMesh, PALETTE, arrow } from './render/models.js';
+import { ribbon, ring, dashedRing, disc, makeUnitMesh, makeBuildingMesh, PALETTE, arrow, tintGhost } from './render/models.js';
+import { canPlace } from './sim/orders.js';
 import { glyph } from './ui/icons.js';
 import { showGlossary } from './ui/glossary.js';
 import { approachAP } from './sim/stances.js';
@@ -34,6 +35,9 @@ class Game {
     this.planner = new Planner(this);
     this.input = new Input(this.canvas, this.view, {
       tap: (x, y) => this.onTap(x, y, false),
+      dragStart: (x, y) => this.ghostDragStart(x, y),
+      dragMove: (x, y) => this.ghostDragMove(x, y),
+      dragEnd: () => { this.ghostDragging = false; this.refreshPanel(); this.keepGhostVisible(); },
       longpress: (x, y) => this.onTap(x, y, true),
       hover: (x, y) => this.onHover(x, y),
       key: e => this.onKey(e),
@@ -345,6 +349,21 @@ class Game {
   }
   refreshPanel() { this.panelDirty = true; }
 
+  // What a unit will have ready this round (for the status icons during planning)
+  planStatus(u, plan) {
+    const def = unitDef(u);
+    const hq = hqOf(this.state, u.owner);
+    const nearHQ = hq && dist(hq.x, hq.z, u.x, u.z) <= CONFIG.defenderBonus.radius;
+    let defends = def.defends + (nearHQ ? CONFIG.defenderBonus.defends : 0) + (plan?.defends || 0);
+    if (plan?.parry) defends = Math.max(0, defends - 1);
+    const buffs = plan?.buffs || [];
+    if (buffs.includes('fortify')) defends += skillDef(u.type, 'fortify').defends;
+    const c = this.state.units.find(x => x.owner === this.me && x.type === 'commander' && x.hp > 0);
+    const cp = c && this.planner.plan(c.id);
+    const rallied = !!(cp && cp.buffs.includes('rally') && dist(c.x, c.z, u.x, u.z) <= skillDef('commander', 'rally').radius);
+    return { defends, parry: !!plan?.parry, ow: plan?.overwatch || 0, buffs, upgrades: plan?.upgrades || 0, rallied };
+  }
+
   computeStancePreviews() {
     this.stancePreview.clear();
     const view = this.knownView || { units: [], buildings: [] };
@@ -366,7 +385,7 @@ class Game {
       const vis = all || mine || this.visibleIds.has(u.id);
       const plan = mine ? (P.plan(u.id) || this.stancePreview.get(u.id)) : null;
       const tier = Math.max(CONFIG.minTier, def.tier - u.tierDebuff + (mine ? (P.plan(u.id)?.upgrades || 0) : 0));
-      units.push({ ...u, tier, visible: vis, defends: mine && this.showAll ? def.defends + (plan?.defends || 0) : 0 });
+      units.push({ ...u, tier, visible: vis, icons: mine ? statusIcons(this.planStatus(u, plan)) : [] });
     }
     for (const b of s.buildings) {
       if (b.hp <= 0) continue;
@@ -397,7 +416,7 @@ class Game {
         const near = !mine && this.ownSelected().some(o => dist(o.x, o.z, u.x, u.z) <= 8);
         if (!near) continue;
       }
-      const r = dashedRing(def.zone, selSet.has(u.id) ? 0.07 : 0.045, mine ? ink : 0x3a3a3a, selSet.has(u.id) ? 0.7 : mine ? 0.22 : 0.5, 0.035, Math.round(def.zone * 10));
+      const r = dashedRing(def.zone, selSet.has(u.id) ? 0.08 : 0.055, 0xa86bff, selSet.has(u.id) ? 0.85 : mine ? 0.45 : 0.75, 0.035, Math.round(def.zone * 10));
       r.position.set(u.x, 0, u.z); O.add(r);
     }
     // enemy last-round trails
@@ -531,10 +550,19 @@ class Game {
       const m = makeBuildingMesh(bo.type, this.me, { ghost: true });
       m.position.set(bo.x, 0, bo.z); O.add(m);
     }
-    if (this.hoverBuild && this.uiMode?.startsWith('build:')) {
-      const t = this.uiMode.slice(6);
-      const m = makeBuildingMesh(t, this.me, { ghost: true });
-      m.position.set(this.hoverBuild.x, 0, this.hoverBuild.z); O.add(m);
+    if (this.ghost && this.uiMode?.startsWith('build:')) {
+      const g = this.ghost;
+      const col = g.err ? 0xff3b30 : 0x34c759;
+      const m = makeBuildingMesh(g.type, this.me, { ghost: true });
+      tintGhost(m, col);
+      m.position.set(g.x, 0, g.z); O.add(m);
+      const r = CONFIG.buildings[g.type].r;
+      const d = disc(r + 0.25, col, 0.3, 0.05); d.position.set(g.x, 0.05, g.z); O.add(d);
+      const rr = ring(r + 0.25, 0.1, col, 0.95, 0.06); rr.position.set(g.x, 0.06, g.z); O.add(rr);
+      // drag handle arrows
+      for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) O.add(arrow({ x: g.x + dx * (r + 0.4), z: g.z + dz * (r + 0.4) }, { x: g.x + dx * (r + 1.3), z: g.z + dz * (r + 1.3) }, 0.08, col, 0, 0.07));
+      this.modeTags.push({ x: g.x, z: g.z + r + 0.6, text: g.err ? '✕ ' + g.err : '✓ Drag to move · Confirm to build', ok: !g.err });
+      this.renderModeTags();
     }
   }
 
@@ -563,11 +591,81 @@ class Game {
     return { p, e: best };
   }
 
-  onHover(cx, cy) {
-    if (this.phase !== 'planning' || !this.uiMode?.startsWith('build:')) { if (this.hoverBuild) { this.hoverBuild = null; this.changed(true); } return; }
-    const p = this.view.pick(cx, cy);
-    this.hoverBuild = p; this.dirty = true;
+  onHover() {}
+
+  // ---- building placement: drag a ghost, then Confirm --------------------------
+  startPlacing(type) {
+    this.uiMode = 'build:' + type;
+    this.panelTab = 'orders';
+    const spot = this.suggestSpot(type);
+    this.ghost = { type, x: spot.x, z: spot.z };
+    this.checkGhost();
+    this.view.frame([{ x: spot.x, z: spot.z }], 0.5);
+    this.emit('placing', { type });
   }
+  suggestSpot(type) {
+    const anchors = this.state.buildings.filter(b => b.owner === this.me && b.hp > 0 && b.built && (b.type === 'hq' || b.type === 'outpost'));
+    const enemyHQ = this.state.buildings.find(b => b.owner !== this.me && b.type === 'hq') || { x: this.me === 0 ? 43 : 5, z: 16 };
+    let best = null, bd = 1e9;
+    for (const a of anchors) for (let r = 3; r <= CONFIG.economy.buildRadius; r += 1) for (let k = 0; k < 16; k++) {
+      const ang = k / 16 * Math.PI * 2;
+      const x = Math.round((a.x + Math.cos(ang) * r) * 2) / 2, z = Math.round((a.z + Math.sin(ang) * r) * 2) / 2;
+      if (canPlace(this.state, this.me, type, x, z, this.planner.draft.builds)) continue;
+      const d = dist(x, z, enemyHQ.x, enemyHQ.z) + r * 0.6;
+      if (d < bd) { bd = d; best = { x, z }; }
+    }
+    const hq = anchors[0] || { x: 10, z: 16 };
+    return best || { x: hq.x + (this.me === 0 ? 4 : -4), z: hq.z };
+  }
+  checkGhost() {
+    const g = this.ghost; if (!g) return;
+    g.err = canPlace(this.state, this.me, g.type, g.x, g.z, this.planner.draft.builds);
+    if (!g.err && this.planner.supplyLeft() < CONFIG.buildings[g.type].cost) g.err = 'Not enough supply';
+    this.dirty = true;
+  }
+  moveGhost(p) {
+    if (!this.ghost || !p) return;
+    this.ghost.x = Math.round(p.x * 2) / 2; this.ghost.z = Math.round(p.z * 2) / 2;
+    this.checkGhost();
+  }
+  ghostDragStart(cx, cy) {
+    if (this.phase !== 'planning' || !this.ghost || !this.uiMode?.startsWith('build:')) return false;
+    const p = this.view.pick(cx, cy); if (!p) return false;
+    const r = CONFIG.buildings[this.ghost.type].r + 1.2;
+    const tolPx = 44 / Math.max(1, this.view.pxPerUnit(p.x, p.z));
+    if (dist(p.x, p.z, this.ghost.x, this.ghost.z) > Math.max(r, tolPx)) return false;
+    this.ghostDragging = true;
+    this.ghostOff = { x: this.ghost.x - p.x, z: this.ghost.z - p.z };
+    return true;
+  }
+  ghostDragMove(cx, cy) {
+    const p = this.view.pick(cx, cy); if (!p) return;
+    this.moveGhost({ x: p.x + this.ghostOff.x, z: p.z + this.ghostOff.z });
+    this.refreshPanel();
+  }
+  // if the ghost ends up behind the bottom panel, bring it back into view
+  keepGhostVisible() {
+    const g = this.ghost; if (!g) return;
+    const p = this.view.project(g.x, 0, g.z);
+    const top = this.panelTop();
+    if (p.y > top - 30 || p.y < 90 || p.x < 10 || p.x > window.innerWidth - 10) this.view.frame([{ x: g.x, z: g.z }], 0.5);
+  }
+  panelTop() {
+    const el = document.getElementById('bottom');
+    return el ? el.getBoundingClientRect().top : window.innerHeight;
+  }
+
+  confirmBuild() {
+    const g = this.ghost; if (!g) return;
+    this.checkGhost();
+    if (g.err) { toast(g.err, true); return; }
+    if (this.planner.addBuild(g.type, g.x, g.z)) {
+      toast(`${CONFIG.buildings[g.type].name} planned: construction starts at the end of this round`);
+      this.emit('built', { type: g.type });
+      this.ghost = null; this.uiMode = null; this.panelTab = 'build'; this.changed();
+    }
+  }
+  cancelPlacing() { this.ghost = null; this.uiMode = null; this.panelTab = 'build'; this.changed(); }
 
   ownSelected() { return this.selection.map(id => this.state.units.find(u => u.id === id)).filter(u => u && u.owner === this.me && u.hp > 0); }
 
@@ -583,7 +681,7 @@ class Game {
     const isEnemy = e && e.owner !== undefined && e.owner !== this.me && e.owner !== -1 && e.id[0] !== 'n';
 
     if (mode && mode.startsWith('build:')) {
-      if (P.addBuild(mode.slice(6), p.x, p.z)) { this.uiMode = null; this.hoverBuild = null; this.panelTab = 'build'; this.changed(); }
+      this.moveGhost(p); this.refreshPanel(); // tap moves the ghost; Confirm places it
       return;
     }
     if (mode === 'advance') {
@@ -675,7 +773,7 @@ class Game {
     const [k, arg] = act.split(':');
     switch (k) {
       case 'deselect': this.selection = []; this.uiMode = null; this.panelTab = 'orders'; break;
-      case 'cancelmode': this.uiMode = null; this.hoverBuild = null; break;
+      case 'cancelmode': if (this.uiMode?.startsWith('build:')) { this.cancelPlacing(); return; } this.uiMode = null; break;
       case 'mode': this.uiMode = this.uiMode === arg ? null : arg; break;
       case 'tab': this.panelTab = arg; this.uiMode = null; break;
       case 'control':
@@ -712,7 +810,9 @@ class Game {
       }
       case 'openbuild': this.panelTab = 'build'; break;
       case 'closebuild': this.panelTab = 'orders'; break;
-      case 'place': this.uiMode = 'build:' + arg; this.panelTab = 'orders'; break;
+      case 'place': this.startPlacing(arg); break;
+      case 'confirmbuild': this.confirmBuild(); return;
+      case 'cancelbuild': this.cancelPlacing(); return;
       case 'unbuild': P.removeBuild(+arg); break;
     }
     this.changed();
@@ -1021,9 +1121,11 @@ class Game {
   }
 
   updateChips() {
+    const top = this.panelTop();
     for (const t of this.modeTags || []) {
       if (!t.el) continue;
       const p = this.view.project(t.x, 0.2, t.z);
+      t.el.style.display = p.y + 30 > top ? 'none' : '';
       t.el.style.transform = `translate(${p.x}px, ${p.y + 16}px) translate(-50%, 0)`;
     }
     if (!this.chipList || !this.chipList.length) return;
@@ -1305,7 +1407,7 @@ class Game {
       shown += (u.hp - shown) * Math.min(1, dt * 4);
       if (Math.abs(shown - u.hp) < 0.3) shown = u.hp;
       this.hpShown.set(id, shown);
-      units.push({ ...u, hp: shown, visible: vis, defends: 0, acting: isAct, dim: !!acting && !isAct });
+      units.push({ ...u, hp: shown, visible: vis, icons: statusIcons(u.st), acting: isAct, dim: !!acting && !isAct });
       if (!mine && vis && !pb.isReplay && u.hp > 0) {
         this.lastSeen.set(id, { x: u.x, z: u.z, type: u.type, owner: u.owner });
         const tr = this.newTrails.get(id) || [];

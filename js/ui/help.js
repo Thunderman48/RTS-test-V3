@@ -83,6 +83,30 @@ ${['commander', 'fighter', 'assassin', 'ranged', 'tank'].map(row).join('')}</tab
 <li>Build near your HQ or an Outpost. Units out of combat for ${CONFIG.economy.outOfCombatRounds} rounds slowly heal (faster near base). Paid heal: ${CONFIG.economy.healCost} supply near base.</li>
 </ul>
 
+<h3>Colours & icons</h3>
+<p>Effects use one colour each, so you can tell at a glance what happened:</p>
+<table>
+<tr><td><span class="sw" style="background:#ff4a1c"></span> Orange</td><td>Damage (−N)</td><td><span class="sw" style="background:#3fa9ff"></span> Blue</td><td>Defend used: shield dome + "BLOCKED"</td></tr>
+<tr><td><span class="sw" style="background:#ffc400"></span> Gold</td><td>Parry + counter-attack</td><td><span class="sw" style="background:#ff2d55"></span> Red</td><td>Overwatch shot</td></tr>
+<tr><td><span class="sw" style="background:#a86bff"></span> Purple</td><td>Control zones / slowed</td><td><span class="sw" style="background:#9be15d"></span> Lime</td><td>Tier up, Rally, AP returned</td></tr>
+<tr><td><span class="sw" style="background:#2ec4b6"></span> Teal</td><td>Cover (barricade)</td><td><span class="sw" style="background:#3ee6ff"></span> Cyan</td><td>Dash</td></tr>
+<tr><td><span class="sw" style="background:#ff4fd8"></span> Magenta</td><td>Sweep</td><td><span class="sw" style="background:#d9b8ff"></span> Violet</td><td>Disrupt (−AP, −tier)</td></tr>
+<tr><td><span class="sw" style="background:#7aa7c7"></span> Steel</td><td>Fortify</td><td><span class="sw" style="background:#ffb020"></span> Amber</td><td>Shove, turrets, construction</td></tr>
+<tr><td><span class="sw" style="background:#34c759"></span> Green</td><td>Healing</td><td><span class="sw" style="background:#3a3a3a"></span> Grey</td><td>Missed / cancelled</td></tr>
+</table>
+<p>The small coloured squares above a unit show what it has ready this round, and they tick down as they are used during the round: <b>blue shield ×N</b> defends, <b>gold X</b> parry, <b>red eye ×N</b> overwatch, <b>steel shield</b> fortify, <b>lime chevrons</b> rallied / tier up, <b>purple circle</b> slowed.</p>
+
+<h3>Attacking</h3>
+<ul>
+<li>The first time you attack an enemy, the unit automatically gets enough AP to walk to it (plus a bit extra in case it steps away). If the hit lands early, the unused AP goes to the unit's next action.</li>
+<li>If the enemy is too far to reach this round, the order becomes a move toward it instead, so no AP is wasted.</li>
+</ul>
+
+<h3>Building</h3>
+<ul>
+<li>Tap <b>Build</b>, pick a building: a ghost appears on a good spot near your HQ. <b>Drag</b> it (or tap the map) to move it: green = OK, red = blocked (the reason is shown). Press <b>Confirm</b>.</li>
+</ul>
+
 <h3>Name plates</h3>
 <ul>
 <li>Every unit has a <b>name plate</b>: the square is its tier (when it acts), then its name and HP bar. White plates are the white side, black plates the black side.</li>

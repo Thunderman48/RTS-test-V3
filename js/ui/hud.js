@@ -148,7 +148,7 @@ export function describePlan(g, u, plan) {
   for (const a of plan.actions) {
     let txt;
     switch (a.kind) {
-      case 'move': txt = a.follow ? `follow ${name(a.follow)}` : 'move'; break;
+      case 'move': txt = a.intent === 'approach' ? `move toward ${name(a.follow)} (too far to attack yet)` : a.follow ? `follow ${name(a.follow)}` : 'move'; break;
       case 'attack': txt = `attack ${name(a.target)}`; break;
       case 'shoot': txt = 'shoot'; break;
       case 'shove': txt = `shove ${name(a.target)}`; break;
@@ -428,10 +428,12 @@ function renderBuildMenu(g, show) {
 function renderPlacing(g, show) {
   const t = g.uiMode.slice(6);
   const d = CONFIG.buildings[t];
-  show(`<div class="p-head"><div class="p-icon">${glyph(t, g.me, 34)}</div><div><div class="p-title">Place ${d.name}</div>
-    <div class="p-sub">${d.cost} supply · ${d.rounds} rounds · ${buildingDesc(t)}</div></div></div>
-    <div class="tagline">▸ Tap inside a build ring to place it</div>
-    <div class="btns"><button class="btn" data-act="cancelmode">Cancel</button></div>`);
+  const err = g.ghost?.err;
+  show(`<div class="p-head"><div class="p-icon">${glyph(t, g.me, 34)}</div><div class="p-main"><div class="p-title">Place ${d.name}</div>
+    <div class="p-sub">${d.cost} supply · ${d.rounds} round${d.rounds > 1 ? 's' : ''} to build · ${buildingDesc(t)}</div></div></div>
+    <div class="place-help">${err ? `<span class="bad">✕ ${esc(err)}</span>` : '<span class="ok">✓ This spot works.</span>'} Drag the ghost (or tap the map) to move it.</div>
+    <div class="place-btns"><button class="btn" data-act="cancelbuild">Cancel</button>
+      <button class="control" data-act="confirmbuild" ${err ? 'disabled' : ''}>Confirm ✓</button></div>`);
   bindPanel(g, null);
 }
 

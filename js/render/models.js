@@ -206,22 +206,73 @@ export function dashedRing(r, width, color, opacity = 1, y = 0.05, n = 28) {
 
 // Name plate sprite: [tier] NAME / HP bar + defend pips.
 // White team = white plate with black ink, black team = black plate with white ink.
+// Name plate sprite: a row of status icons, then [tier] NAME / HP bar.
+// White team = white plate with black ink, black team = black plate with white ink.
+const LABEL_W = 288, LABEL_H = 126, ICON_ROW = 46;
 export function makeLabel(kind = 'unit') {
   const c = document.createElement('canvas');
-  c.width = 288; c.height = 80;
+  c.width = LABEL_W; c.height = LABEL_H;
   const tex = new THREE.CanvasTexture(c);
   tex.colorSpace = THREE.SRGBColorSpace;
   tex.anisotropy = 4;
   const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, depthTest: false, transparent: true }));
   const w = kind === 'building' ? 2.9 : 2.25;
-  sp.scale.set(w, w * 80 / 288, 1);
+  sp.scale.set(w, w * LABEL_H / LABEL_W, 1);
   sp.renderOrder = 20;
-  sp.userData = { c, tex, key: '', w };
+  sp.userData = { c, tex, key: '', w, ratio: LABEL_H / LABEL_W };
   return sp;
 }
 
-export function drawLabel(sp, { tier = null, name = '', hpFrac, team, defends = 0, low = false, dim = false, tag = '' }) {
-  const key = `${tier}|${name}|${hpFrac.toFixed(3)}|${team}|${defends}|${dim}|${tag}`;
+// Status icon colours (match the effect colours in fx.js)
+export const ICONS = {
+  def: { bg: '#3fa9ff', fg: '#04121f', label: 'Defends ready' },
+  parry: { bg: '#ffc400', fg: '#1a1300', label: 'Parry ready' },
+  ow: { bg: '#ff2d55', fg: '#ffffff', label: 'Overwatch charges' },
+  fort: { bg: '#7aa7c7', fg: '#06121c', label: 'Fortified' },
+  rally: { bg: '#9be15d', fg: '#0f1a05', label: 'Rallied (+1 tier)' },
+  tier: { bg: '#9be15d', fg: '#0f1a05', label: 'Tier upgrade' },
+  slow: { bg: '#a86bff', fg: '#ffffff', label: 'Slowed by a control zone' },
+};
+
+function drawIcon(g, k, x, y, s, n) {
+  const ic = ICONS[k]; if (!ic) return;
+  g.fillStyle = ic.bg; g.fillRect(x, y, s, s);
+  g.strokeStyle = '#0b0b0b'; g.lineWidth = 3; g.strokeRect(x + 1.5, y + 1.5, s - 3, s - 3);
+  g.fillStyle = ic.fg; g.strokeStyle = ic.fg; g.lineWidth = 4;
+  const cx = x + s / 2, cy = y + s / 2, r = s * 0.32;
+  g.beginPath();
+  switch (k) {
+    case 'def': case 'fort':
+      g.moveTo(cx, cy - r); g.lineTo(cx + r, cy - r * 0.6); g.lineTo(cx + r * 0.8, cy + r * 0.4); g.lineTo(cx, cy + r); g.lineTo(cx - r * 0.8, cy + r * 0.4); g.lineTo(cx - r, cy - r * 0.6); g.closePath(); g.fill();
+      if (k === 'fort') { g.strokeStyle = ic.bg; g.beginPath(); g.moveTo(cx - r * 0.45, cy); g.lineTo(cx + r * 0.45, cy); g.moveTo(cx, cy - r * 0.45); g.lineTo(cx, cy + r * 0.45); g.stroke(); }
+      break;
+    case 'parry':
+      g.moveTo(cx - r, cy - r); g.lineTo(cx + r, cy + r); g.moveTo(cx + r, cy - r); g.lineTo(cx - r, cy + r); g.stroke();
+      break;
+    case 'ow':
+      g.ellipse(cx, cy, r * 1.1, r * 0.65, 0, 0, Math.PI * 2); g.stroke();
+      g.beginPath(); g.arc(cx, cy, r * 0.32, 0, Math.PI * 2); g.fill();
+      break;
+    case 'rally': case 'tier':
+      g.moveTo(cx - r, cy + r * 0.1); g.lineTo(cx, cy - r * 0.8); g.lineTo(cx + r, cy + r * 0.1);
+      if (k === 'rally') { g.moveTo(cx - r, cy + r * 0.9); g.lineTo(cx, cy); g.lineTo(cx + r, cy + r * 0.9); }
+      else { g.moveTo(cx, cy - r * 0.8); g.lineTo(cx, cy + r); }
+      g.stroke();
+      break;
+    case 'slow':
+      g.setLineDash([5, 4]); g.arc(cx, cy, r, 0, Math.PI * 2); g.stroke(); g.setLineDash([]);
+      break;
+  }
+  if (n !== undefined && n !== null && n !== true && n > 1) {
+    g.fillStyle = '#0b0b0b'; g.fillRect(x + s - 18, y + s - 18, 18, 18);
+    g.fillStyle = '#ffffff'; g.font = '900 15px "Helvetica Neue", Arial, sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle';
+    g.fillText(String(n), x + s - 9, y + s - 8);
+  }
+}
+
+// icons: [{k:'def', n:2}, {k:'parry'}, ...]
+export function drawLabel(sp, { tier = null, name = '', hpFrac, team, low = false, dim = false, tag = '', icons = [] }) {
+  const key = `${tier}|${name}|${hpFrac.toFixed(3)}|${team}|${dim}|${tag}|${icons.map(i => i.k + (i.n || '')).join(',')}`;
   if (sp.userData.key === key) return;
   sp.userData.key = key;
   const { c, tex } = sp.userData;
@@ -229,27 +280,26 @@ export function drawLabel(sp, { tier = null, name = '', hpFrac, team, defends = 
   g.clearRect(0, 0, c.width, c.height);
   const ink = team === 0 ? '#0b0b0b' : '#f6f6f4';
   const paper = team === 0 ? '#f6f6f4' : '#0b0b0b';
-  const W = c.width, H = c.height;
+  const W = c.width, Y = ICON_ROW;
+  icons.slice(0, 6).forEach((ic, i) => drawIcon(g, ic.k, 4 + i * 46, 2, 40, ic.n));
   let x0 = 4;
   // tier badge (inverted colours so it pops)
   if (tier !== null) {
-    g.fillStyle = ink; g.fillRect(4, 4, 72, 72);
+    g.fillStyle = ink; g.fillRect(4, Y + 4, 72, 72);
     g.fillStyle = paper; g.font = '900 46px "Helvetica Neue", Arial, sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle';
-    g.fillText(String(tier), 40, 43);
+    g.fillText(String(tier), 40, Y + 43);
     x0 = 80;
   }
   // plate
-  g.fillStyle = paper; g.fillRect(x0, 4, W - x0 - 4, 72);
-  g.strokeStyle = ink; g.lineWidth = 4; g.strokeRect(x0 + 2, 6, W - x0 - 8, 68);
+  g.fillStyle = paper; g.fillRect(x0, Y + 4, W - x0 - 4, 72);
+  g.strokeStyle = ink; g.lineWidth = 4; g.strokeRect(x0 + 2, Y + 6, W - x0 - 8, 68);
   // name
   g.fillStyle = ink; g.font = '800 26px "Helvetica Neue", Arial, sans-serif'; g.textAlign = 'left'; g.textBaseline = 'alphabetic';
-  g.fillText((name + (tag ? ' · ' + tag : '')).toUpperCase(), x0 + 12, 34, W - x0 - 24);
+  g.fillText((name + (tag ? ' · ' + tag : '')).toUpperCase(), x0 + 12, Y + 34, W - x0 - 24);
   // hp bar
   const bx = x0 + 12, bw = W - x0 - 28;
-  g.fillStyle = team === 0 ? '#c9c9c6' : '#3a3a3a'; g.fillRect(bx, 44, bw, 14);
-  g.fillStyle = low ? PALETTE.accentCss : ink; g.fillRect(bx, 44, Math.max(0, bw * hpFrac), 14);
-  // defend pips
-  for (let i = 0; i < Math.min(8, defends); i++) { g.fillStyle = ink; g.fillRect(bx + i * 16, 62, 11, 7); }
+  g.fillStyle = team === 0 ? '#c9c9c6' : '#3a3a3a'; g.fillRect(bx, Y + 46, bw, 16);
+  g.fillStyle = low ? PALETTE.accentCss : ink; g.fillRect(bx, Y + 46, Math.max(0, bw * hpFrac), 16);
   tex.needsUpdate = true;
   sp.material.opacity = dim ? 0.45 : 1;
 }
@@ -289,4 +339,17 @@ export function arrow(a, b, width, color, dash = 0, y = 0.09) {
   m.renderOrder = 6;
   g.add(m);
   return g;
+}
+
+// Recolour a ghost mesh (own material copies so cached materials stay untouched)
+export function tintGhost(obj, color) {
+  obj.traverse(c => {
+    if (!c.material) return;
+    c.material = c.material.clone();
+    c.material.__cached = false;
+    c.material.color = new THREE.Color(color);
+    c.material.transparent = true;
+    c.material.opacity = c.isLineSegments ? 0.9 : 0.55;
+    c.material.depthWrite = false;
+  });
 }

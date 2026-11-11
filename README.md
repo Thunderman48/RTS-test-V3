@@ -9,6 +9,30 @@ A playable prototype of the **Turn-Based RTS (Design Doc V3)**. It combines RTS 
 
 **Versions:** this is **V3**. Earlier versions stay playable: [`v1/`](v1/) at `…/RTS-test-V3/v1/` and [`v2/`](v2/) at `…/RTS-test-V3/v2/`.
 
+### What changed in V3.1
+* **Attacks don't waste AP anymore.**
+  * The first time you attack an enemy, the unit gets enough approach AP to reach it, plus a margin in case it steps away. A second attack on the same target gets only a small top-up.
+  * If the enemy is too far to reach this round, the order becomes a move toward it ("in reach in ~N rounds").
+  * **Rule change:** when a hit lands before the approach AP is used up, the leftover AP goes to the unit's next action ("+N AP back").
+* **Building on touch.** Pick a building and a ghost appears on a good spot near your HQ. **Drag** it, or tap the map, to move it. It turns **green** when the spot is OK and **red** with the reason when it isn't. Press **Confirm** to place it.
+* **Colour-coded effects** (UI stays black & white):
+  * damage: orange
+  * defend: blue shield dome + "BLOCKED N"
+  * parry: gold burst, plus a counter-slash
+  * overwatch: red tracer + eye
+  * control zones: purple rings, "SLOWED", zone break
+  * tier up / Rally / AP returned: lime
+  * dash: cyan
+  * sweep: magenta
+  * disrupt: violet lightning
+  * fortify: steel
+  * shove / turrets / construction: amber
+  * heal: green
+  * miss / cancel: grey
+
+  Help → *Colours & icons* has the full key.
+* **Status icons** above each unit show what it has ready this round: defends ×N, parry, overwatch ×N, fortify, rallied / tier up, slowed. During the round they tick down as each one is used.
+
 ### What changed in V3: easy to understand and control
 V3 is built around three questions: *What will my units do? What just happened, and why? What should I do next?*
 * **Guided tutorial (~5 min).** It's on the menu and is offered the first time you play vs AI. A coach card gives one instruction at a time, highlights what to tap, and blocks anything else. You fight a small scripted skirmish: select, stance, Control, attack, Defend +1, turn order, Ready, step through the round, read the report, use the hero, destroy an Outpost.
@@ -162,4 +186,4 @@ tests/sim.test.mjs            headless rule tests (node tests/sim.test.mjs)
 node tests/sim.test.mjs
 ```
 
-There are 25 tests. They cover the round digest and the tutorial scenario, the commander's skills, free control and free stance changes, tier order and upgrades, AP-as-duration, exact ties, control zones, dash cancellation, parry and counters, overwatch, shot blocking and frags over walls, defend ordering, AP drain and tier debuff, wounds, CP limits, production timing, the win condition, a full AI-vs-AI match, and determinism (host and guest compute identical results).
+There are 29 tests. They cover the early-hit AP return, automatic approach AP and too-far moves, the new effect events, the round digest and the tutorial scenario, the commander's skills, free control and free stance changes, tier order and upgrades, AP-as-duration, exact ties, control zones, dash cancellation, parry and counters, overwatch, shot blocking and frags over walls, defend ordering, AP drain and tier debuff, wounds, CP limits, production timing, the win condition, a full AI-vs-AI match, and determinism (host and guest compute identical results).

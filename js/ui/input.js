@@ -30,6 +30,11 @@ export class Input {
   down(e) {
     this.c.setPointerCapture?.(e.pointerId);
     this.pts.set(e.pointerId, { x: e.clientX, y: e.clientY, sx: e.clientX, sy: e.clientY, t: performance.now(), btn: e.button });
+    // something on the map can claim the drag (e.g. a building ghost being placed)
+    if (this.pts.size === 1 && e.button !== 2 && this.h.dragStart && this.h.dragStart(e.clientX, e.clientY)) {
+      this.objDrag = true; this.drag = true; this.longFired = false;
+      return;
+    }
     if (this.pts.size === 1) {
       this.drag = false; this.multi = false;
       clearTimeout(this.longTimer);
@@ -52,6 +57,7 @@ export class Input {
   move(e) {
     const p = this.pts.get(e.pointerId);
     if (!p) return;
+    if (this.objDrag) { p.x = e.clientX; p.y = e.clientY; this.h.dragMove?.(e.clientX, e.clientY); return; }
     const dx = e.clientX - p.x, dy = e.clientY - p.y;
     p.x = e.clientX; p.y = e.clientY;
     if (this.pts.size === 1) {
@@ -78,6 +84,12 @@ export class Input {
     if (!p) return;
     this.pts.delete(e.pointerId);
     clearTimeout(this.longTimer);
+    if (this.objDrag) {
+      this.objDrag = false; this.drag = false;
+      const moved = Math.hypot(p.x - p.sx, p.y - p.sy) > 9;
+      this.h.dragEnd?.(p.x, p.y, moved);
+      return;
+    }
     if (this.pts.size === 2) this.initGesture();
     if (this.pts.size > 0) return;
     if (!cancel && !this.drag && !this.multi && !this.longFired && performance.now() - p.t < 700) {

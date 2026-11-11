@@ -418,3 +418,28 @@ body.tutorial #feed { display: none !important; }
   body.aiming #coach { padding: 6px 10px; }
   #coach .co-text { max-height: 22vh; overflow-y: auto; }
 }
+
+/* ---------- building placement ---------- */
+.place-help { font-size: 13px; color: var(--soft); margin: 2px 0 8px; line-height: 1.4; }
+.place-help .ok { color: #34c759; font-weight: 800; }
+.place-help .bad { color: #ff3b30; font-weight: 800; }
+.place-btns { display: grid; grid-template-columns: 1fr 2fr; gap: 8px; }
+.place-btns .control { margin-top: 0; height: 52px; }
+.place-btns .btn { height: 52px; }
+
+/* ---------- colour-coded effect tags ---------- */
+.ftext.tag.c-def { background: #3fa9ff; color: #04121f; border-color: #04121f; }
+.ftext.tag.c-cover { background: #2ec4b6; color: #04121f; border-color: #04121f; }
+.ftext.tag.c-parry { background: #ffc400; color: #1a1300; border-color: #1a1300; }
+.ftext.tag.c-ow { background: #ff2d55; color: #fff; border-color: #2b0008; }
+.ftext.tag.c-zone { background: #a86bff; color: #fff; border-color: #1c0a35; }
+.ftext.tag.c-tier { background: #9be15d; color: #0f1a05; border-color: #0f1a05; }
+.ftext.tag.c-dash { background: #3ee6ff; color: #02181c; border-color: #02181c; }
+.ftext.tag.c-frag { background: #ff6a00; color: #fff; border-color: #2a1000; }
+.ftext.tag.c-sweep { background: #ff4fd8; color: #fff; border-color: #2a0022; }
+.ftext.tag.c-disrupt { background: #d9b8ff; color: #1c0a35; border-color: #1c0a35; }
+.ftext.tag.c-fort { background: #7aa7c7; color: #06121c; border-color: #06121c; }
+.ftext.tag.c-shove, .ftext.tag.c-build { background: #ffb020; color: #1a1000; border-color: #1a1000; }
+.ftext.tag.c-grey { background: #3a3a3a; color: #e6e6e6; border-color: #777; }
+.ftext.heal { color: #34c759; font-size: 16px; }
+.help-body .sw { display: inline-block; width: 12px; height: 12px; border: 1px solid #000; vertical-align: -1px; margin-right: 4px; }

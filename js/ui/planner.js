@@ -152,6 +152,11 @@ export class Planner {
     return this.addAction(id, a);
   }
 
+  // Melee attack with automatic approach AP.
+  // First attack on a target: enough AP to reach it plus a margin in case it steps away
+  // (any AP not needed is returned to the next action when the hit lands).
+  // Follow-up attacks on the same target: a small top-up only.
+  // If the target can't be reached this round, the order becomes a move toward it.
   orderAttack(id, targetId, kind = 'attack') {
     const u = this.unit(id);
     const def = unitDef(u);
@@ -160,13 +165,34 @@ export class Planner {
     const plan = this.plan(id) || emptyPlan();
     const from = this.predict(u, plan);
     const reach = CONFIG.unitRadius + entRadius(t) + CONFIG.meleeReach - 0.1;
-    const need = approachAP(this.g.nav, { ...u, x: from.x, z: from.z }, t.x, t.z, reach) + 4;
+    const need = approachAP(this.g.nav, { ...u, x: from.x, z: from.z }, t.x, t.z, reach);
     const strike = kind === 'shove' ? skillDef(u.type, 'shove').ap : def.strike.ap;
     const left = this.apLeft(u, this.plan(id));
+    if (left < 1) { this.g.toast('No AP left for this unit', true); return false; }
+    const followUp = plan.actions.some(a => (a.kind === 'attack' || a.kind === 'shove') && a.target === t.id);
+    if (need > left - strike) {
+      if (followUp && left >= strike) return this.addAction(id, { kind, target: t.id, moveAp: Math.max(0, left - strike) });
+      // too far: walk toward it with everything left instead of an attack that would fail
+      const per = Math.max(1, apFor(u) - strike);
+      const rounds = 1 + Math.ceil(Math.max(0, need - left) / per);
+      this.g.toast(`Too far to attack this round: moving toward it instead (in reach in ~${rounds} round${rounds > 1 ? 's' : ''})`);
+      return this.addAction(id, { kind: 'move', ap: left, follow: t.id, intent: 'approach' });
+    }
     if (left < strike) { this.g.toast(`Not enough AP (${strike} needed to strike)`, true); return false; }
-    const moveAp = Math.max(0, Math.min(need, left - strike));
-    if (moveAp < need - 4) this.g.toast('Target may be out of reach this round — AP for approach is short');
-    return this.addAction(id, { kind, target: t.id, moveAp });
+    let moveAp;
+    if (followUp) moveAp = Math.min(10, left - strike);
+    else {
+      const mobile = t.id[0] === 'u';
+      const margin = mobile ? Math.ceil(need * 0.25) + 10 : 2;
+      moveAp = Math.min(left - strike, need + margin);
+      // don't leave an awkward leftover: either enough for one Defend +1, or none
+      const rem = left - strike - moveAp, D = CONFIG.extraDefendCost;
+      if (rem > 0 && rem < D) {
+        if (moveAp - (D - rem) >= need + 4) moveAp -= D - rem;
+        else moveAp += rem;
+      }
+    }
+    return this.addAction(id, { kind, target: t.id, moveAp: Math.max(0, moveAp) });
   }
 
   orderPoint(id, kind, x, z) { return this.addAction(id, { kind, x, z }); }

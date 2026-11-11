@@ -154,7 +154,7 @@ export class View3D {
       if (!e) {
         const mesh = makeUnitMesh(u.type, u.owner);
         const label = makeLabel('unit');
-        mesh.add(label); label.position.y = 1.85;
+        mesh.add(label); label.position.y = 2.15;
         const base = makeUnitBase(u.owner);
         mesh.add(base);
         mesh.userData.base = base;
@@ -172,7 +172,7 @@ export class View3D {
       e.mesh.rotation.y += d * 0.25;
       e.mesh.visible = u.visible !== false;
       e.label.material.rotation = 0;
-      drawLabel(e.label, { tier: u.tier, name: CONFIG.units[u.type].name, hpFrac: Math.max(0, u.hp / u.maxHp), team: u.owner, defends: u.defends || 0, low: u.hp / u.maxHp < 0.34, dim: !!u.dim, tag: u.tag || '' });
+      drawLabel(e.label, { tier: u.tier, name: CONFIG.units[u.type].name, hpFrac: Math.max(0, u.hp / u.maxHp), team: u.owner, low: u.hp / u.maxHp < 0.34, dim: !!u.dim, tag: u.tag || '', icons: u.icons || [] });
       const act = e.mesh.userData.base.userData.act;
       act.visible = !!u.acting;
       if (act.visible) act.scale.setScalar(1 + 0.12 * Math.sin((this.time || 0) * 8));
@@ -197,7 +197,7 @@ export class View3D {
       if (!e) {
         const mesh = makeBuildingMesh(b.type, b.owner, { ghost: !b.built });
         const label = makeLabel('building');
-        mesh.add(label); label.position.y = b.type === 'hq' ? 3.7 : 2.5;
+        mesh.add(label); label.position.y = b.type === 'hq' ? 3.9 : 2.75;
         mesh.position.set(b.x, 0, b.z);
         if (b.type === 'barricade') mesh.rotation.y = Math.atan2(this.W / 2 - b.x, 0) > 0 ? Math.PI / 2 : -Math.PI / 2;
         this.scene.add(mesh);
@@ -208,7 +208,7 @@ export class View3D {
       const s = b.dying ? Math.max(0.01, 1 - b.dying) : 1;
       const sy = s * (b.built ? 1 : 0.35 + 0.65 * (b.progress || 0));
       e.mesh.scale.set(1, sy, 1);
-      e.label.scale.y = (e.label.userData.w * 80 / 288) / Math.max(0.05, sy);
+      e.label.scale.y = (e.label.userData.w * e.label.userData.ratio) / Math.max(0.05, sy);
       const bname = CONFIG.buildings[b.type].name + (b.built ? '' : ' (building)');
       drawLabel(e.label, { name: bname, hpFrac: Math.max(0, b.hp / b.maxHp), team: b.owner, low: b.hp / b.maxHp < 0.34, dim: !!b.dim });
       if (b.aim && e.mesh.userData.head) e.mesh.userData.head.rotation.y = Math.atan2(b.aim.x - b.x, b.aim.z - b.z);

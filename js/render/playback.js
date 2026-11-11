@@ -20,7 +20,7 @@ function cloneDisp(d) {
   };
 }
 
-const BORING = new Set(['tier', 'zoneoff', 'act']);
+const BORING = new Set(['tier', 'zoneoff', 'act', 'prep', 'slowed', 'apreturn']);
 export const segInteresting = seg => seg.events.some(e => !BORING.has(e.type));
 
 export class Playback {
@@ -134,12 +134,17 @@ export class Playback {
     switch (e.type) {
       case 'hit': {
         const t = D.units.get(e.dst) || D.buildings.get(e.dst);
-        if (t) { t.hp = e.hp; t.flash = 1; }
+        if (t) { t.hp = e.hp; t.flash = 1; if (t.st && e.defended && !e.cover && e.defLeft !== undefined) t.st = { ...t.st, defends: e.defLeft }; }
         break;
       }
       case 'death': { const u = D.units.get(e.id); if (u) { u.dying = 0; u.hp = 0; } break; }
       case 'bdestroy': { const b = D.buildings.get(e.id); if (b) { b.dying = 0; b.hp = 0; } break; }
       case 'tier': { const u = D.units.get(e.id); if (u) u.tier = e.tier; break; }
+      // status icons: what each unit has ready, ticked off as it is used
+      case 'prep': { const u = D.units.get(e.id); if (u) u.st = { defends: e.defends, parry: e.parry, ow: e.ow, buffs: e.buffs || [], upgrades: e.upgrades, rallied: e.rallied, slow: false }; break; }
+      case 'parry': { const u = D.units.get(e.id); if (u && u.st) u.st = { ...u.st, parry: false }; break; }
+      case 'slowed': { const u = D.units.get(e.id); if (u && u.st) u.st = { ...u.st, slow: true }; break; }
+      case 'act': { const u = D.units.get(e.id); if (u && u.st && u.st.slow) u.st = { ...u.st, slow: false }; break; }
       case 'push': { const u = D.units.get(e.id); if (u) { u.x = e.x; u.z = e.z; } break; }
       case 'heal': { const u = D.units.get(e.id); if (u) u.hp = e.hp; break; }
       case 'spawn': {
@@ -154,7 +159,7 @@ export class Playback {
       }
       case 'built': { const b = D.buildings.get(e.id); if (b) { b.built = true; b.progress = 1; } break; }
       case 'capture': { const n = D.nodes.find(x => x.id === e.node); if (n) n.owner = e.owner; break; }
-      case 'shot': { const b = D.buildings.get(e.id); if (b) b.aim = { x: e.bx, z: e.bz }; const u = D.units.get(e.id); if (u) u.face = { x: e.bx, z: e.bz }; break; }
+      case 'shot': { const b = D.buildings.get(e.id); if (b) b.aim = { x: e.bx, z: e.bz }; const u = D.units.get(e.id); if (u) { u.face = { x: e.bx, z: e.bz }; if (e.ow && u.st) u.st = { ...u.st, ow: Math.max(0, u.st.ow - 1) }; } break; }
     }
   }
 
@@ -176,4 +181,18 @@ export class Playback {
     const names = { 6: 'Tier 6 · Fast', 5: 'Tier 5 · Normal', 4: 'Tier 4 · Slow' };
     return names[seg.tier] || 'Tier ' + seg.tier;
   }
+}
+
+// Turn a status object into the icon list drawn above a unit
+export function statusIcons(st) {
+  if (!st) return [];
+  const out = [];
+  if (st.defends > 0) out.push({ k: 'def', n: st.defends });
+  if (st.parry) out.push({ k: 'parry' });
+  if (st.ow > 0) out.push({ k: 'ow', n: st.ow });
+  if ((st.buffs || []).includes('fortify')) out.push({ k: 'fort' });
+  if (st.rallied || (st.buffs || []).includes('rally')) out.push({ k: 'rally' });
+  if (st.upgrades > 0) out.push({ k: 'tier', n: st.upgrades });
+  if (st.slow) out.push({ k: 'slow' });
+  return out;
 }

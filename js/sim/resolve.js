@@ -154,7 +154,7 @@ export function resolveRound(state0, ordersIn) {
         const dst = h.dst;
         if (!isUnit(dst)) {
           dst.hp -= h.dmg;
-          ev({ type: 'hit', src: h.srcId, dst: dst.id, dmg: h.dmg, kind: h.kind, hp: Math.max(0, dst.hp) });
+          ev({ type: 'hit', src: h.srcId, dst: dst.id, dmg: h.dmg, raw: h.dmg, blocked: 0, kind: h.kind, hp: Math.max(0, dst.hp) });
           markCombat(h.srcUnit);
           continue;
         }
@@ -177,7 +177,9 @@ export function resolveRound(state0, ordersIn) {
         const dmg = damageAfter(h.dmg, armor, defended);
         dst.hp -= dmg;
         markCombat(dst, h.srcUnit);
-        ev({ type: 'hit', src: h.srcId, dst: dst.id, dmg, defended, cover, kind: h.kind, hp: Math.max(0, dst.hp) });
+        // blocked = what the defend/cover saved compared with an undefended hit
+        const blocked = defended ? Math.max(0, damageAfter(h.dmg, armor, false) - dmg) : 0;
+        ev({ type: 'hit', src: h.srcId, dst: dst.id, dmg, raw: h.dmg, blocked, defended, cover, kind: h.kind, hp: Math.max(0, dst.hp), defLeft: r ? r.defends : 0 });
       }
     }
     if (counters.length) applyHits(counters, false);
@@ -269,6 +271,10 @@ export function resolveRound(state0, ordersIn) {
     r.el += 1;
     const st = r.st;
     const zf = inEnemyZone(u) ? CONFIG.zoneMoveFactor : 1;
+    if (zf < 1 && st && !st.slowedLogged && (a.kind === 'move' || ((a.kind === 'attack' || a.kind === 'shove') && st.phase === 'approach'))) {
+      st.slowedLogged = true;
+      ev({ type: 'slowed', id: u.id });
+    }
     switch (a.kind) {
       case 'wait': break;
       case 'move': {
@@ -327,6 +333,7 @@ export function resolveRound(state0, ordersIn) {
               }
               ev({ type: 'strike', id: u.id, target: tgt.id });
             } else ev({ type: 'miss', id: u.id, target: tgt.id, code: 'moved', reason: 'Target moved out of reach during the swing' });
+            st.early = true; // the swing is over: unused approach AP goes to the next action
           }
         }
         break;
@@ -410,6 +417,18 @@ export function resolveRound(state0, ordersIn) {
       }
     }
     for (let i = n0; i < moves.length; i++) { moves[i].actIdx = myIdx; moves[i].st = st; moves[i].kind = a.kind; }
+    if (st && st.early && r.el < a.cost) {
+      // Early hit: end the attack now and give the unused approach AP to the next action.
+      const saved = a.cost - r.el;
+      const nx = r.actions[r.idx + 1];
+      if (nx) {
+        if (nx.kind === 'move' || nx.kind === 'wait') { nx.ap += saved; nx.cost += saved; }
+        else if (nx.kind === 'attack' || nx.kind === 'shove') { nx.moveAp = (nx.moveAp || 0) + saved; nx.cost += saved; }
+      }
+      ev({ type: 'apreturn', id: u.id, ap: saved, to: nx ? nx.kind : null });
+      r.idx++; r.el = 0; r.st = null;
+      return;
+    }
     if (r.el >= a.cost) { r.idx++; r.el = 0; r.st = null; }
   }
 
@@ -568,7 +587,11 @@ export function resolveRound(state0, ordersIn) {
     }
     ev({ type: 'rally', id: r.u.id, ids, x: r3(r.u.x), z: r3(r.u.z), r: k.radius });
   }
-  for (const r of rts) ev({ type: 'tier', id: r.u.id, tier: r.tier, upgrades: r.plan.upgrades });
+  for (const r of rts) {
+    ev({ type: 'tier', id: r.u.id, tier: r.tier, upgrades: r.plan.upgrades });
+    // what each unit has ready this round (for the status icons)
+    ev({ type: 'prep', id: r.u.id, defends: r.defends, parry: !!r.parry, ow: r.ow, buffs: [...(r.plan.buffs || [])], upgrades: r.plan.upgrades, rallied: !!r.rallied });
+  }
   log.segments.push(startSeg);
 
   // ---- tiers fastest -> slowest ----------------------------------------------

@@ -5,6 +5,8 @@ import { resolveRound, damageAfter } from '../js/sim/resolve.js';
 import { validateOrders } from '../js/sim/orders.js';
 import { aiOrders } from '../js/ai/ai.js';
 import { buildDigest } from '../js/ui/log.js';
+import { Planner } from '../js/ui/planner.js';
+import { Nav } from '../js/sim/nav.js';
 import { createTutorialState, tutorialEnemyOrders } from '../js/tutorial/scenario.js';
 
 let pass = 0, fail = 0;
@@ -302,6 +304,63 @@ test('tutorial scenario: attacking as taught wins within a few rounds', () => {
   assert(!s.buildings.some(b => b.id === ids.outpost), 'outpost destroyed');
   assert(s.units.filter(u => u.owner === 0).length === 3, 'no losses');
   console.log(`      (outpost destroyed in round ${rounds})`);
+});
+
+test('early hit returns unused approach AP to the next action', () => {
+  const s = arena();
+  const f = addUnit(s, 0, 'fighter', 20, 16);
+  const e = addUnit(s, 1, 'ranged', 21.3, 16); e.stance = 'hold'; // no control zone, so the move isn't slowed
+  // 40 approach AP but already in reach: hit lands at ~25, the 40 go to the move
+  const { state, log } = resolveRound(s, orders({ [f.id]: { actions: [{ kind: 'attack', target: e.id, moveAp: 40 }, { kind: 'move', ap: 20, x: 20, z: 30 }] } }));
+  const ret = allEvents(log).find(x => x.type === 'apreturn' && x.id === f.id);
+  assert(ret && ret.ap === 40 && ret.to === 'move', 'apreturn 40 to move, got ' + JSON.stringify(ret));
+  const moved = state.units.find(u => u.id === f.id).z - 16;
+  const per = CONFIG.units.fighter.tier * CONFIG.moveFactor;
+  assert(Math.abs(moved - 60 * per) < 0.1, `moved ${moved.toFixed(2)} ≈ ${(60 * per).toFixed(2)}`);
+});
+
+test('hit events carry raw/blocked; prep and slowed events exist', () => {
+  const s = arena();
+  const a = addUnit(s, 0, 'fighter', 20, 16);
+  const t = addUnit(s, 1, 'tank', 21.3, 16); t.stance = 'hold';
+  const m = addUnit(s, 0, 'ranged', 22, 18.4);
+  const { log } = resolveRound(s, orders({ [a.id]: { actions: [{ kind: 'attack', target: t.id, moveAp: 0 }] }, [m.id]: { actions: [{ kind: 'move', ap: 40, x: 30, z: 19.2 }] } }));
+  const ev = allEvents(log);
+  const h = ev.find(x => x.type === 'hit' && x.dst === t.id);
+  assert(h && h.raw >= h.dmg && h.defended && h.blocked > 0, 'raw/blocked on defended hit');
+  assert(ev.some(x => x.type === 'prep' && x.id === t.id && x.defends >= 2), 'prep event');
+  assert(ev.some(x => x.type === 'slowed' && x.id === m.id), 'slowed event inside tank zone');
+});
+
+function fakeGame(s) {
+  const g = { state: s, me: 0, nav: new Nav(s), toasts: [], toast(m) { this.toasts.push(m); }, changed() {}, emit() {} };
+  g.planner = new Planner(g);
+  return g;
+}
+
+test('planner: first attack gets approach AP + margin; follow-up gets a small top-up', () => {
+  const s = arena();
+  const f = addUnit(s, 0, 'fighter', 20, 16);
+  const e = addUnit(s, 1, 'ranged', 22.5, 16);
+  const g = fakeGame(s);
+  g.planner.control(f.id);
+  g.planner.orderAttack(f.id, e.id);
+  g.planner.orderAttack(f.id, e.id);
+  const acts = g.planner.plan(f.id).actions;
+  assert(acts[0].kind === 'attack' && acts[0].moveAp >= 20, 'first attack has margin, got ' + acts[0].moveAp);
+  assert(acts[1].kind === 'attack' && acts[1].moveAp <= 10, 'follow-up is small, got ' + acts[1].moveAp);
+});
+
+test('planner: unreachable target becomes a move toward it', () => {
+  const s = arena();
+  const f = addUnit(s, 0, 'tank', 8, 8);
+  const e = addUnit(s, 1, 'ranged', 30, 25);
+  const g = fakeGame(s);
+  g.planner.control(f.id);
+  g.planner.orderAttack(f.id, e.id);
+  const a = g.planner.plan(f.id).actions[0];
+  assert(a.kind === 'move' && a.follow === e.id && a.ap === 100, 'move with all AP, got ' + JSON.stringify(a));
+  assert(g.toasts.some(t => /Too far/.test(t)), 'explained');
 });
 
 test('production: unit spawns after its build rounds, at the end of the round', () => {
