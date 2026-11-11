@@ -1,6 +1,7 @@
 // "What happened": plain-language event feed during playback + round report afterwards.
 import { CONFIG } from '../config.js';
 import { glyph } from './icons.js';
+import { icon } from './iconset.js';
 
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
@@ -24,7 +25,35 @@ function who(names, id, me) {
 }
 
 // Returns {html, mine:bool, kind} or null for events not worth a line.
+// Icon for each kind of event line
+function eventIcon(e) {
+  switch (e.type) {
+    case 'hit':
+      if (e.cover || e.defended) return 'blocked';
+      return { overwatch: 'overwatch', frag: 'frag', sweep: 'sweep', shove: 'shove', counter: 'parry', turret: 'range', shot: 'shoot' }[e.kind] || 'attack';
+    case 'parry': return 'parry';
+    case 'death': case 'bdestroy': case 'revivezone': return 'kill';
+    case 'skill': return e.skill;
+    case 'cancel': return 'cancel';
+    case 'miss': return 'miss';
+    case 'retarget': return 'attack';
+    case 'disrupt': return 'disrupt';
+    case 'rally': return 'rally';
+    case 'spawn': return 'spawn';
+    case 'built': case 'build': return 'build';
+    case 'capture': return 'node';
+    case 'heal': return 'heal';
+    default: return null;
+  }
+}
+
 export function describe(e, names, me) {
+  const d = describe0(e, names, me);
+  if (d) { const n = eventIcon(e); if (n) d.html = `<span class="ev-ic">${icon(n, 15)}</span>` + d.html; }
+  return d;
+}
+
+function describe0(e, names, me) {
   const W = id => who(names, id, me);
   switch (e.type) {
     case 'act': return null; // shown as floating tags over the unit instead
@@ -91,10 +120,10 @@ export class Feed {
 export function reportHTML(report) {
   const s = report.sum;
   let html = `<div class="rep-sum">
-    <div><span class="k">Damage dealt</span><b>${s.dealt}</b></div>
-    <div><span class="k">Damage taken</span><b>${s.taken}</b></div>
-    <div><span class="k">Enemies killed</span><b>${s.killed}</b></div>
-    <div><span class="k">Units lost</span><b>${s.lost}</b></div></div>`;
+    <div><span class="k">${icon('attack', 12)} Damage dealt</span><b>${s.dealt}</b></div>
+    <div><span class="k">${icon('hp', 12)} Damage taken</span><b>${s.taken}</b></div>
+    <div><span class="k">${icon('kill', 12)} Enemies killed</span><b>${s.killed}</b></div>
+    <div><span class="k">${icon('lost', 12)} Units lost</span><b>${s.lost}</b></div></div>`;
   let cur = null;
   for (const l of report.lines) {
     if (l.label !== cur) { if (cur !== null) html += '</div>'; cur = l.label; html += `<h4>${esc(l.label)}</h4><div class="rep-group">`; }
@@ -184,29 +213,29 @@ export function buildDigest(pre, log, post, me, myOrders, visible = () => true) 
 export function digestHTML(d) {
   const S = d.units.reduce((a, r) => ({ dealt: a.dealt + r.dealt, taken: a.taken + r.taken, kills: a.kills + r.kills.length }), { dealt: 0, taken: 0, kills: 0 });
   let html = `<div class="rep-sum">
-    <div><span class="k">You dealt</span><b>${S.dealt}</b></div>
-    <div><span class="k">You took</span><b>${S.taken}</b></div>
-    <div><span class="k">Enemies killed</span><b>${d.enemy.lost}</b></div>
-    <div><span class="k">Units lost</span><b>${d.enemy.killedMine}</b></div></div>`;
+    <div><span class="k">${icon('attack', 12)} You dealt</span><b>${S.dealt}</b></div>
+    <div><span class="k">${icon('hp', 12)} You took</span><b>${S.taken}</b></div>
+    <div><span class="k">${icon('kill', 12)} Enemies killed</span><b>${d.enemy.lost}</b></div>
+    <div><span class="k">${icon('lost', 12)} Units lost</span><b>${d.enemy.killedMine}</b></div></div>`;
   html += '<h4>Your units</h4><div class="dg-units">';
   for (const r of d.units) {
-    const hp = r.died ? '<b class="dead">DIED</b>' : `${r.hpBefore}→<b>${r.hpAfter}</b>`;
+    const hp = r.died ? `${icon('kill', 13)}<b class="dead">DIED</b>` : `${icon('hp', 12)}${r.hpBefore}→<b>${r.hpAfter}</b>`;
     const delta = r.died ? '' : r.hpAfter < r.hpBefore ? ` <span class="minus">−${r.hpBefore - r.hpAfter}</span>` : r.hpAfter > r.hpBefore ? ` <span class="plus">+${r.hpAfter - r.hpBefore}</span>` : '';
     html += `<div class="dg-row${r.died ? ' died' : ''}${r.fails.length ? ' failed' : ''}" data-id="${r.id}">
       <div class="dg-top">${glyph(r.type, d.me, 14)} <b>${CONFIG.units[r.type].name}</b> <span class="dg-ctl">${r.controlled ? 'your orders' : 'stance'}</span><span class="dg-hp">HP ${hp}${delta}</span></div>
       <div class="dg-did">${esc(r.summary[0].toUpperCase() + r.summary.slice(1))}.${r.dealt ? ` Dealt <b>${r.dealt}</b>.` : ''}${r.kills.length ? ` Killed ${esc(r.kills.join(', '))}.` : ''}${r.taken ? ` Took ${r.taken} from ${esc(r.hitByText)}.` : ''}</div>
-      ${r.fails.map(f => `<div class="dg-fail">⊘ ${esc(f)}</div>`).join('')}
+      ${r.fails.map(f => `<div class="dg-fail">${icon('cancel', 13)} ${esc(f)}</div>`).join('')}
     </div>`;
   }
   html += '</div>';
   html += `<h4>Enemy (what you could see)</h4><div class="dg-text">${d.enemy.seen ? `${d.enemy.seen} enemy unit${d.enemy.seen > 1 ? 's' : ''} acted in view. ` : 'No enemy acted in view. '}They dealt <b>${d.enemy.dealt}</b> damage to you${d.enemy.killedMine ? ` and killed ${d.enemy.killedMine} of your units` : ''}.${d.base.enemyBuildingsKilled.length ? ` You destroyed: ${esc(d.base.enemyBuildingsKilled.join(', '))}.` : ''}</div>`;
   const b = d.base;
-  const parts = [`+${b.income} supply (now ${d.supply})`];
-  if (b.built.length) parts.push('finished ' + b.built.join(', '));
-  if (b.ready.length) parts.push('ready: ' + b.ready.join(', '));
-  if (b.captured) parts.push(`captured ${b.captured} node${b.captured > 1 ? 's' : ''}`);
-  if (b.lostNodes) parts.push(`lost ${b.lostNodes} node${b.lostNodes > 1 ? 's' : ''}`);
-  if (b.buildingsLost.length) parts.push('LOST ' + b.buildingsLost.join(', '));
-  html += `<h4>Your base</h4><div class="dg-text">${esc(parts.join(' · '))}</div>`;
+  const parts = [`${icon('income', 14)} +${b.income} supply (now ${icon('supply', 13)}${d.supply})`];
+  if (b.built.length) parts.push(`${icon('build', 14)} finished ${esc(b.built.join(', '))}`);
+  if (b.ready.length) parts.push(`${icon('spawn', 14)} ready: ${esc(b.ready.join(', '))}`);
+  if (b.captured) parts.push(`${icon('node', 14)} captured ${b.captured} node${b.captured > 1 ? 's' : ''}`);
+  if (b.lostNodes) parts.push(`${icon('node', 14)} lost ${b.lostNodes} node${b.lostNodes > 1 ? 's' : ''}`);
+  if (b.buildingsLost.length) parts.push(`${icon('kill', 14)} LOST ${esc(b.buildingsLost.join(', '))}`);
+  html += `<h4>Your base</h4><div class="dg-text base-lines">${parts.map(p => `<div>${p}</div>`).join('')}</div>`;
   return html;
 }

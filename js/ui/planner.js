@@ -283,8 +283,9 @@ export class Planner {
     const def = CONFIG.buildings[type];
     const err = canPlace(this.s, this.me, type, x, z, this.draft.builds);
     if (err) { this.g.toast(err, true); return false; }
-    if (this.supplyLeft() < def.cost) { this.g.toast('Not enough supply', true); return false; }
+    if (this.supplyLeft() < def.cost) { { this.g.toast('Not enough supply', true); this.g.flashSupply?.(); } return false; }
     this.draft.builds.push({ type, x, z });
+    this.g.spendFx?.(x, z, def.cost);
     this.g.changed();
     return true;
   }
@@ -292,11 +293,13 @@ export class Planner {
 
   addProduction(bid, unit) {
     const def = CONFIG.units[unit];
-    if (this.supplyLeft() < def.cost) { this.g.toast('Not enough supply', true); return false; }
+    if (this.supplyLeft() < def.cost) { { this.g.toast('Not enough supply', true); this.g.flashSupply?.(); } return false; }
     const army = this.s.units.filter(u => u.owner === this.me && u.type !== 'commander').length
       + this.s.buildings.filter(b => b.owner === this.me).reduce((n, b) => n + b.queue.length, 0) + this.draft.production.length;
     if (army >= CONFIG.economy.armyCap) { this.g.toast(`Army cap reached (${CONFIG.economy.armyCap})`, true); return false; }
     this.draft.production.push({ building: bid, unit });
+    const b = this.s.buildings.find(x => x.id === bid);
+    if (b) this.g.spendFx?.(b.x, b.z, def.cost);
     this.g.changed();
     return true;
   }
@@ -319,7 +322,7 @@ export class Planner {
     else {
       const u = this.unit(id);
       if (!nearBase(this.s, u)) { this.g.toast('Must be near your HQ or an Outpost', true); return; }
-      if (this.supplyLeft() < CONFIG.economy.healCost) { this.g.toast('Not enough supply', true); return; }
+      if (this.supplyLeft() < CONFIG.economy.healCost) { { this.g.toast('Not enough supply', true); this.g.flashSupply?.(); } return; }
       this.draft.heals.push(id);
     }
     this.g.changed();

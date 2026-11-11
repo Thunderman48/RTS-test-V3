@@ -1,5 +1,6 @@
 import { CONFIG } from '../config.js';
 import { glyph } from './icons.js';
+import { icon, ICON_LEGEND } from './iconset.js';
 
 export function helpHTML() {
   const U = CONFIG.units;
@@ -82,6 +83,9 @@ ${['commander', 'fighter', 'assassin', 'ranged', 'tank'].map(row).join('')}</tab
 <li>HQ gives ${CONFIG.economy.hqIncome} supply per round; each captured <b>resource node</b> gives ${CONFIG.economy.nodeIncome}. Capture a node by being the only side near it at round end.</li>
 <li>Build near your HQ or an Outpost. Units out of combat for ${CONFIG.economy.outOfCombatRounds} rounds slowly heal (faster near base). Paid heal: ${CONFIG.economy.healCost} supply near base.</li>
 </ul>
+
+<h3>Icons</h3>
+${ICON_LEGEND.map(([grp, items]) => `<h4>${grp}</h4><div class="legend">${items.map(([n, t]) => `<span>${icon(n, 18)} ${t}</span>`).join('')}</div>`).join('')}
 
 <h3>Colours & icons</h3>
 <p>Effects use one colour each, so you can tell at a glance what happened:</p>

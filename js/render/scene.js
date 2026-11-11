@@ -2,7 +2,7 @@
 import * as THREE from 'three';
 import { CONFIG } from '../config.js';
 import {
-  PALETTE, makeUnitMesh, makeBuildingMesh, makeWallMesh, makeNodeMesh, makeLabel, drawLabel, ring, makeUnitBase,
+  PALETTE, makeUnitMesh, makeBuildingMesh, makeWallMesh, makeNodeMesh, makeLabel, drawLabel, ring, makeUnitBase, makeIconSprite,
 } from './models.js';
 
 export class View3D {
@@ -77,6 +77,21 @@ export class View3D {
       const rr = ring(CONFIG.economy.nodeRadius, 0.06, 0x333333, 0.35, 0.03, 40); rr.position.x = n.x; rr.position.z = n.z; this.scene.add(rr);
       this.nodeMeshes.set(n.id, m);
     }
+  }
+
+  // floating "+4 supply" badge over each resource node, tinted by owner
+  nodeBadge(n) {
+    const key = n.owner;
+    this.nodeBadges ||= new Map();
+    const old = this.nodeBadges.get(n.id);
+    if (old && old.key === key) return;
+    if (old) { this.scene.remove(old.sp); old.sp.material.map.dispose(); old.sp.material.dispose(); }
+    const bg = key === 0 ? 'rgba(246,246,244,0.95)' : key === 1 ? 'rgba(11,11,11,0.92)' : 'rgba(90,90,90,0.9)';
+    const fg = key === 0 ? '#0b0b0b' : '#f6f6f4';
+    const sp = makeIconSprite('income', '+' + CONFIG.economy.nodeIncome, { bg, fg, scale: 0.95 });
+    sp.position.set(n.x, 2.0, n.z);
+    this.scene.add(sp);
+    this.nodeBadges.set(n.id, { sp, key });
   }
 
   resize() {
@@ -210,7 +225,7 @@ export class View3D {
       e.mesh.scale.set(1, sy, 1);
       e.label.scale.y = (e.label.userData.w * e.label.userData.ratio) / Math.max(0.05, sy);
       const bname = CONFIG.buildings[b.type].name + (b.built ? '' : ' (building)');
-      drawLabel(e.label, { name: bname, hpFrac: Math.max(0, b.hp / b.maxHp), team: b.owner, low: b.hp / b.maxHp < 0.34, dim: !!b.dim });
+      drawLabel(e.label, { name: bname, hpFrac: Math.max(0, b.hp / b.maxHp), team: b.owner, low: b.hp / b.maxHp < 0.34, dim: !!b.dim, icons: buildingIcons(b) });
       if (b.aim && e.mesh.userData.head) e.mesh.userData.head.rotation.y = Math.atan2(b.aim.x - b.x, b.aim.z - b.z);
     }
     for (const [id, e] of this.entities) {
@@ -220,6 +235,7 @@ export class View3D {
       const m = this.nodeMeshes.get(n.id); if (!m) continue;
       const c = m.userData.crystal;
       c.material.color.setHex(n.owner === -1 ? PALETTE.neutral : PALETTE.team[n.owner].body);
+      this.nodeBadge(n);
     }
   }
 
@@ -289,4 +305,21 @@ export function disposeDeep(o) {
       if (!c.material.__cached) c.material.dispose?.();
     }
   });
+}
+
+// Icons over a building's name plate: what it is doing / what it gives
+function buildingIcons(b) {
+  const def = CONFIG.buildings[b.type];
+  const out = [];
+  if (!b.built) { out.push({ k: 'build', n: `${Math.round((b.progress || 0) * def.rounds)}/${def.rounds}` }); return out; }
+  if (b.queue && b.queue.length) {
+    const q = b.queue[0], n = CONFIG.units[q.unit].buildRounds;
+    out.push({ k: 'queue', n: `${q.progress}/${n}` });
+  }
+  if (b.type === 'hq') out.push({ k: 'income', n: '+' + CONFIG.economy.hqIncome });
+  if (b.type === 'command') out.push({ k: 'cp', n: '+' + CONFIG.cp.perCommandPost });
+  if (def.attack) out.push({ k: 'range', n: def.attack.range });
+  if (def.cover) out.push({ k: 'defend', n: 'cover' });
+  if (def.outpost) out.push({ k: 'retreat' });
+  return out;
 }

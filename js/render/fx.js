@@ -34,7 +34,7 @@ export class FloatTexts {
     this.stack.set(key, { t: now, n });
     const el = document.createElement('div');
     el.className = 'ftext ' + cls;
-    el.textContent = text;
+    if (text.includes('<svg')) el.innerHTML = text; else el.textContent = text;
     this.layer.appendChild(el);
     this.items.push({ el, x, z, y: y + n * 0.55, t: 0, life: cls.includes('long') ? 1.9 : 1.3 });
   }

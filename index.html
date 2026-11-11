@@ -22,14 +22,15 @@
 <div id="hud" class="hidden">
   <div id="topbar">
     <div class="tb-group">
-      <div class="tb-item"><span class="tb-k">Round</span><span class="tb-v" id="tb-round">1</span></div>
+      <div class="tb-item"><span class="tb-k"><i data-ic="round"></i>Round</span><span class="tb-v" id="tb-round">1</span></div>
       <div class="tb-item" id="tb-phase-wrap"><span class="tb-v phase" id="tb-phase">Planning</span></div>
-      <div class="tb-item goal" id="tb-goal" title="Goal: destroy the enemy HQ"><span class="tb-k">Goal</span><span class="tb-v small"><span class="goal-txt">Destroy enemy HQ</span> <i id="goal-arrow">➜</i></span></div>
+      <div class="tb-item goal" id="tb-goal" title="Goal: destroy the enemy HQ"><span class="tb-k"><i data-ic="goal"></i>Goal</span><span class="tb-v small"><span class="goal-txt">Destroy enemy HQ</span> <i id="goal-arrow">➜</i></span></div>
     </div>
     <div class="tb-group">
-      <div class="tb-item"><span class="tb-k" data-gl="Supply">Supply ⓘ</span><span class="tb-v" id="tb-supply">0</span></div>
-      <div class="tb-item"><span class="tb-k" data-gl="CP">CP ⓘ</span><span class="tb-v" id="tb-cp">0</span></div>
-      <div class="tb-item hidden" id="tb-timer-wrap"><span class="tb-k">Time</span><span class="tb-v" id="tb-timer">90</span></div>
+      <div class="tb-item" id="tb-supply-wrap" data-gl="Supply"><span class="tb-k">Supply ⓘ</span><span class="tb-v"><i data-ic="supply" data-size="18"></i><span id="tb-supply">0</span></span></div>
+      <div class="tb-item" data-gl="CP"><span class="tb-k">CP ⓘ</span><span class="tb-v"><i data-ic="cp" data-size="18"></i><span id="tb-cp">0</span></span></div>
+      <div class="tb-item" id="tb-army-wrap" data-gl="Army"><span class="tb-k">Army ⓘ</span><span class="tb-v"><i data-ic="army" data-size="18"></i><span id="tb-army">0</span></span></div>
+      <div class="tb-item hidden" id="tb-timer-wrap"><span class="tb-k">Time</span><span class="tb-v"><i data-ic="timer" data-size="18"></i><span id="tb-timer">90</span></span></div>
     </div>
     <div class="tb-group">
       <button class="icon-btn" id="btn-showall" title="Show all details (zones, plans, defends)">◎</button>

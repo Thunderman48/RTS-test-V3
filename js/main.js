@@ -10,10 +10,11 @@ import { aiOrders } from './ai/ai.js';
 import { View3D, disposeDeep } from './render/scene.js';
 import { Playback, displayFromState, statusIcons } from './render/playback.js';
 import { FloatTexts, eventFx } from './render/fx.js';
-import { ribbon, ring, dashedRing, disc, makeUnitMesh, makeBuildingMesh, PALETTE, arrow, tintGhost } from './render/models.js';
+import { ribbon, ring, dashedRing, disc, makeUnitMesh, makeBuildingMesh, PALETTE, arrow, tintGhost, makeIconSprite } from './render/models.js';
 import { canPlace } from './sim/orders.js';
 import { glyph } from './ui/icons.js';
 import { showGlossary } from './ui/glossary.js';
+import { icon, hydrateIcons } from './ui/iconset.js';
 import { approachAP } from './sim/stances.js';
 import { Tutorial } from './tutorial/tutorial.js';
 import { createTutorialState, tutorialEnemyOrders } from './tutorial/scenario.js';
@@ -83,6 +84,7 @@ class Game {
     $('btn-multi').onclick = () => { this.multi = !this.multi; $('btn-multi').classList.toggle('on', this.multi); toast(this.multi ? 'Multi-select on: tap units to add or remove' : 'Multi-select off'); };
     $('btn-replay').onclick = () => this.replay();
     $('btn-showall').onclick = () => { this.showAll = !this.showAll; this.changed(); };
+    hydrateIcons(document.body);
     document.querySelectorAll('#topbar [data-gl]').forEach(el => el.onclick = ev => { ev.stopPropagation(); showGlossary(el.dataset.gl, el); });
     $('btn-log').onclick = () => (this.digest ? this.openDigest() : this.openReport());
     $('report-close').onclick = () => $('report').classList.add('hidden');
@@ -326,6 +328,7 @@ class Game {
       m.position.set(g.x, 0, g.z);
       this.view.ghosts.add(m);
       const r = ring(0.6, 0.05, GREY, 0.7, 0.04); r.position.set(g.x, 0.04, g.z); this.view.ghosts.add(r);
+      const sp = makeIconSprite('vision', 'last seen', { bg: 'rgba(60,60,60,0.85)', scale: 0.7 }); sp.position.set(g.x, 1.6, g.z); this.view.ghosts.add(sp);
     }
   }
 
@@ -433,6 +436,7 @@ class Game {
       if (p !== this.me && !this.isVisible(rv.x, rv.z)) continue;
       const r = dashedRing(CONFIG.revive.radius, 0.12, p === this.me ? ink : 0x444444, 0.8, 0.05, 20); r.position.set(rv.x, 0, rv.z); O.add(r);
       const d = disc(CONFIG.revive.radius * (rv.progress / CONFIG.revive.rounds), PALETTE.team[p].body, 0.5, 0.04); d.position.set(rv.x, 0.04, rv.z); O.add(d);
+      const sp = makeIconSprite('spawn', `Revive ${rv.progress}/${CONFIG.revive.rounds}`); sp.position.set(rv.x, 1.3, rv.z); O.add(sp);
     }
     // plans
     for (const u of s.units) {
@@ -443,6 +447,9 @@ class Game {
       const sel = selSet.has(u.id);
       const pr = P.predict(u, plan);
       const w = sel ? 0.13 : 0.08;
+      // icon chips at order end-points: for direct orders, and for the selected unit's stance plan
+      const chips = direct ? (sel || this.selection.length === 0 || this.showAll) : sel;
+      const chip = (name, text, at) => { const sp = makeIconSprite(name, text, { scale: sel ? 0.85 : 0.7 }); sp.position.set(at.x, 1.0, at.z); O.add(sp); };
       const quiet = !this.showAll && !sel && this.selection.length > 0;
       const op = (direct ? (sel ? 1 : 0.8) : 0.45) * (quiet ? 0.35 : 1);
       const dash = direct ? 0 : 0.22;
@@ -451,6 +458,9 @@ class Game {
           if (l.pts.length > 1) O.add(ribbon(l.pts, l.kind === 'dash' ? w * 1.6 : w, ink, op, dash, 0.05));
           const end = l.pts[l.pts.length - 1];
           if (l.kind === 'move') { const e = ring(0.28, 0.07, ink, op, 0.05, 24); e.position.set(end.x, 0.05, end.z); O.add(e); }
+          if (chips && l.kind === 'move') chip('move', '', end);
+          if (chips && l.kind === 'dash') chip('dash', '', end);
+          if (chips && (l.kind === 'attack' || l.kind === 'shove')) chip(l.kind === 'shove' ? 'shove' : 'attack', '', l.target);
           if (l.kind === 'attack' || l.kind === 'shove') {
             O.add(ribbon([end, l.target], w * 0.6, ink, op * 0.7, 0.12, 0.05));
             O.add(ribbon([{ x: l.target.x - 0.35, z: l.target.z - 0.35 }, { x: l.target.x + 0.35, z: l.target.z + 0.35 }], 0.1, PALETTE.accent, op, 0, 0.06));
@@ -459,15 +469,19 @@ class Game {
         } else if (l.kind === 'shoot') {
           O.add(ribbon([l.from, l.to], sel ? 0.06 : 0.04, PALETTE.accent, op * 0.85, direct ? 0 : 0.2, 0.06));
           const a = ring(0.22, 0.05, PALETTE.accent, op, 0.06, 16); a.position.set(l.aim.x, 0.06, l.aim.z); O.add(a);
+          if (chips) chip('shoot', '', l.aim);
         } else if (l.kind === 'frag') {
           O.add(ribbon([l.from, l.at], 0.04, PALETTE.accent, op * 0.6, 0.15, 0.06));
           const r = ring(l.r, 0.08, PALETTE.accent, op, 0.06); r.position.set(l.at.x, 0.06, l.at.z); O.add(r);
           const d = disc(l.r, PALETTE.accent, 0.12, 0.05); d.position.set(l.at.x, 0.05, l.at.z); O.add(d);
+          if (chips) chip('frag', '', l.at);
         } else if (l.kind === 'sweep') {
+          if (chips) chip('sweep', '', l.at);
           const r = ring(l.r, 0.1, PALETTE.accent, op, 0.06); r.position.set(l.at.x, 0.06, l.at.z); O.add(r);
           const d = disc(l.r, PALETTE.accent, 0.12, 0.05); d.position.set(l.at.x, 0.05, l.at.z); O.add(d);
         } else if (l.kind === 'disrupt') {
           O.add(ribbon([l.from, l.to], 0.06, PALETTE.accent, op, 0.15, 0.06));
+          if (chips) chip('disrupt', '', l.to);
         }
       }
       if ((plan.buffs || []).includes('rally')) {
@@ -499,8 +513,8 @@ class Game {
         const st = P.draft.stances[e.id];
         const anchor = st ? st.anchor : (e.stance === 'advance' || e.stance === 'holdground') ? e.anchor : null;
         const stn = st ? st.stance : e.stance;
-        if (anchor && stn === 'advance') { O.add(ribbon([e, anchor], 0.05, ink, 0.4, 0.3, 0.04)); const f = ring(0.4, 0.08, ink, 0.6, 0.05, 4); f.position.set(anchor.x, 0.05, anchor.z); O.add(f); }
-        if (anchor && stn === 'holdground') { const f = dashedRing(CONFIG.stance.holdGroundLeash, 0.06, ink, 0.6, 0.05, 20); f.position.set(anchor.x, 0, anchor.z); O.add(f); }
+        if (anchor && stn === 'advance') { O.add(ribbon([e, anchor], 0.05, ink, 0.4, 0.3, 0.04)); const f = ring(0.4, 0.08, ink, 0.6, 0.05, 4); f.position.set(anchor.x, 0.05, anchor.z); O.add(f); const sp = makeIconSprite('advance', 'Advance'); sp.position.set(anchor.x, 1.1, anchor.z); O.add(sp); }
+        if (anchor && stn === 'holdground') { const f = dashedRing(CONFIG.stance.holdGroundLeash, 0.06, ink, 0.6, 0.05, 20); f.position.set(anchor.x, 0, anchor.z); O.add(f); const sp = makeIconSprite('holdground', 'Hold'); sp.position.set(anchor.x, 1.1, anchor.z); O.add(sp); }
       }
       if (e.id[0] === 'b' && CONFIG.buildings[e.type].attack) {
         const c = dashedRing(CONFIG.buildings[e.type].attack.range, 0.05, e.owner === this.me ? ink : 0x444444, 0.45, 0.04, 40); c.position.set(e.x, 0, e.z); O.add(c);
@@ -852,8 +866,8 @@ class Game {
       if (issues.length) {
         const el = $('confirm');
         el.innerHTML = `<div class="card"><h2>Before you end planning</h2>
-          <div class="dg-units">${issues.map(i => `<div class="dg-fail" data-id="${i.id}">⊘ ${i.text}</div>`).join('')}</div>
-          <p class="note">Tip: spend leftover AP on Defend +1, or Release the unit so it follows its stance.</p>
+          <div class="dg-units">${issues.map(i => `<div class="dg-fail" data-id="${i.id}">${icon('ap', 15)} ${i.text}</div>`).join('')}</div>
+          <p class="note">Tip: spend leftover AP on ${icon('defend', 13)} Defend +1, or ${icon('release', 13)} Release the unit so it follows its stance.</p>
           <div class="tc-btns two"><button class="btn" id="cf-fix">Fix it</button><span></span><button class="btn primary" id="cf-go">Ready anyway ▸</button></div></div>`;
         el.classList.remove('hidden');
         $('cf-fix').onclick = () => { el.classList.add('hidden'); this.selection = [issues[0].id]; this.panelTab = 'orders'; this.selectAndFocus(issues[0].id); };
@@ -1055,8 +1069,23 @@ class Game {
     const vis = id => this.lastSeen.has(id) || !!this.knownDead?.has(id);
     try { this.digest = buildDigest(pb.pre, pb.log, pb.post, this.me, this.lastOrders, vis); } catch (e) { console.error(e); this.digest = null; }
     this.beginPlanning();
+    this.incomeFx(pb.log);
     this.buildChips();
     if (this.digest) this.openDigest(); else this.showSummary();
+  }
+
+  // ---- economy popups ------------------------------------------------------------
+  incomeFx(log) {
+    const hq = hqOf(this.state, this.me);
+    if (hq) this.texts.add(hq.x, hq.z, `${icon('income', 16)} +${CONFIG.economy.hqIncome}`, 'econ long', 3.6);
+    for (const n of this.state.map.nodes) if (n.owner === this.me) this.texts.add(n.x, n.z, `${icon('income', 16)} +${CONFIG.economy.nodeIncome}`, 'econ long', 2.6);
+    void log;
+  }
+  spendFx(x, z, cost) { this.texts.add(x, z, `−${cost} ${icon('supply', 15)}`, 'econ spend long', 2.6); }
+  flashSupply() {
+    const el = document.getElementById('tb-supply-wrap');
+    if (!el) return;
+    el.classList.remove('flash'); void el.offsetWidth; el.classList.add('flash');
   }
 
   // ---- round digest card + map chips -------------------------------------------

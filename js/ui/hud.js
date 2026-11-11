@@ -5,6 +5,8 @@ import { apFor, cpPools, unitDef, hqOf, skillDef, cdOf } from '../sim/state.js';
 import { actionCost, prepaidCost, upgradeCost } from '../sim/orders.js';
 import { dist } from '../sim/geom.js';
 import { glChip, showGlossary } from './glossary.js';
+import { icon } from './iconset.js';
+import { glyph as unitGlyph } from './icons.js';
 
 const $ = id => document.getElementById(id);
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
@@ -30,9 +32,14 @@ export function renderTopbar(g) {
   $('tb-phase').textContent = phase;
   const sup = g.planner.supplyLeft();
   const inc = (hqOf(s, me) ? CONFIG.economy.hqIncome : 0) + s.map.nodes.filter(n => n.owner === me).length * CONFIG.economy.nodeIncome;
-  $('tb-supply').innerHTML = `${sup}<small style="font-size:10px;color:#8a8a8a"> +${inc}</small>`;
+  $('tb-supply').innerHTML = `${sup}<small class="tb-inc">+${inc}</small>`;
   const c = g.planner.cp();
-  $('tb-cp').textContent = `${c.leftBase}/${cpPools(s, me).base}`;
+  const tot = cpPools(s, me).base;
+  const pips = tot <= 6 ? `<span class="cp-pips">${'<b></b>'.repeat(c.leftBase)}${'<i></i>'.repeat(Math.max(0, tot - c.leftBase))}</span>` : '';
+  $('tb-cp').innerHTML = `${c.leftBase}/${tot}${pips}`;
+  const army = s.units.filter(u => u.owner === me && u.hp > 0 && u.type !== 'commander').length
+    + s.buildings.filter(b => b.owner === me).reduce((n, b) => n + b.queue.length, 0) + g.planner.draft.production.length;
+  $('tb-army').textContent = `${army}/${CONFIG.economy.armyCap}`;
   $('btn-pause').classList.toggle('hidden', !g.isLocal);
   $('btn-replay').disabled = !g.lastRound || g.phase !== 'planning';
   $('btn-log').disabled = !g.digest && (!g.report || !g.report.lines.length);
@@ -67,7 +74,7 @@ export function renderStrip(g) {
     groups.get(tier).push(u);
   }
   const tiers = [...groups.keys()].sort((a, b) => b - a);
-  let html = `<span class="strip-label">Turn order ${glChip('Tier')}</span>`;
+  let html = `<span class="strip-label">${icon('tier', 12)} Turn order ${glChip('Tier')}</span>`;
   tiers.forEach((t, i) => {
     html += `<div class="tier-col"><span class="tord">${ordinal(i + 1)}</span><span class="tnum">T${t}</span>`;
     const list = groups.get(t);
@@ -116,19 +123,19 @@ function apBarHTML(u, plan, stancePlan) {
   const p = plan || stancePlan;
   const cls = plan ? 'act' : 'stance';
   let html = `<div class="otl-head"><span>${plan ? 'Your orders this round' : 'Stance plan this round'} ${glChip('AP')}</span><span class="otl-ap">${total} AP</span></div><div class="apbar">`;
-  const seg = (ap, c, label, title) => { if (ap > 0) html += `<div class="seg ${c}" title="${title || label} · ${ap} AP" style="width:${(ap / CONFIG.baseAP) * 100}%">${ap >= 12 ? label : ''}</div>`; };
+  const seg = (ap, c, label, title) => { if (ap > 0) html += `<div class="seg ${c}" title="${(title || label).replace(/<[^>]+>/g, '')} · ${ap} AP" style="width:${(ap / CONFIG.baseAP) * 100}%">${ap >= 8 ? label : ''}</div>`; };
   let used = 0;
   if (p) {
     const pre = [];
-    if (p.upgrades) pre.push('TIER+');
-    for (const id of p.buffs || []) pre.push(skillDef(u.type, id).name.toUpperCase());
-    if (p.parry) pre.push('PARRY');
-    if (p.overwatch) pre.push('OVERWATCH');
-    if (p.defends) pre.push(`DEF×${p.defends}`);
+    if (p.upgrades) pre.push(icon('tierup', 11) + (p.upgrades > 1 ? '×' + p.upgrades : ''));
+    for (const id of p.buffs || []) pre.push(icon(id, 11));
+    if (p.parry) pre.push(icon('parry', 11));
+    if (p.overwatch) pre.push(icon('overwatch', 11) + (p.overwatch > 1 ? '×' + p.overwatch : ''));
+    if (p.defends) pre.push(icon('defend', 11) + '×' + p.defends);
     const pc = prepaidCost(u, p);
     seg(pc, plan ? 'pre' : 'stance', pre.join(' '), 'Paid during planning');
     used += pc;
-    p.actions.forEach((a, i) => { const c = actionCost(u, a); seg(c, cls + (i % 2 ? ' alt' : ''), ACT_LABEL[a.kind] || a.kind); used += c; });
+    p.actions.forEach((a, i) => { const c = actionCost(u, a); seg(c, cls + (i % 2 ? ' alt' : ''), icon(a.kind, 11) + (ACT_LABEL[a.kind] || a.kind)); used += c; });
   }
   const left = Math.max(0, total - used);
   if (left > 0) html += `<div class="seg unused" style="width:${(left / CONFIG.baseAP) * 100}%">${plan ? (left >= 12 ? `${left} UNUSED` : '') : ''}</div>`;
@@ -179,7 +186,7 @@ const STANCE_DESC = {
 
 export function renderPanel(g) {
   const panel = $('panel');
-  const show = html => { panel.innerHTML = html; panel.classList.add('show'); };
+  const show = html => { panel.innerHTML = html; decorate(panel, g); panel.classList.add('show'); };
   if (g.phase !== 'planning') { panel.classList.remove('show'); return; }
   if (g.uiMode && g.uiMode.startsWith('build:')) return renderPlacing(g, show);
   if (g.panelTab === 'build') return renderBuildMenu(g, show);
@@ -216,11 +223,21 @@ function unitHead(g, u, extra = '') {
   const hq = hqOf(g.state, u.owner);
   const nearHQ = hq && dist(hq.x, hq.z, u.x, u.z) <= CONFIG.defenderBonus.radius;
   const freeDef = def.defends + (nearHQ ? CONFIG.defenderBonus.defends : 0);
-  const sk = def.skills.map(k => `${k.name} ${cdOf(u, k.id) > 0 ? `(${cdOf(u, k.id)})` : '✓'}`).join(' · ');
+  const sk = def.skills.map(k => { const cd = cdOf(u, k.id); return `<span class="sk-chip${cd > 0 ? ' cd' : ''}" title="${k.name}">${icon(k.id, 14)}${k.name}${cd > 0 ? ' ' + icon('cooldown', 11) + cd : ' ✓'}</span>`; }).join('');
+  const speed = def.tier >= 6 ? 'fast' : def.tier <= 4 ? 'slow' : 'normal';
+  const stats = [
+    `<span title="Health">${icon('hp', 13)}${u.hp}/${u.maxHp}</span>`,
+    `<span title="AP this round">${icon('ap', 13)}${apFor(u)}</span>`,
+    `<span title="Tier">${icon('tier', 13)}T${def.tier}</span>`,
+    `<span title="Speed">${icon('speed', 13)}${speed}</span>`,
+    `<span title="Free defends">${icon('defend', 13)}${freeDef}</span>`,
+    def.shot ? `<span title="Shot range">${icon('range', 13)}${def.shot.range}</span>` : '',
+    `<span title="Vision">${icon('vision', 13)}${def.vision}</span>`,
+  ].join('');
   return `<div class="p-head"><div class="p-icon">${glyph(u.type, u.owner, 34)}</div><div class="p-main">
     <div class="p-title">${def.hero ? 'Hero · ' : ''}${def.name}${extra}</div>
-    <div class="p-sub">${def.tier >= 6 ? 'Fast' : def.tier <= 4 ? 'Slow' : 'Normal'} speed · ${freeDef} free defend${freeDef > 1 ? 's' : ''} ${glChip('Defend')} · ${sk} ${glChip('Cooldown')}</div></div>
-    <div class="p-stats">HP ${u.hp}/${u.maxHp}</div>
+    <div class="statrow">${stats}${glChip('Defend')}</div>
+    <div class="skillrow">${sk}${glChip('Cooldown')}</div></div>
     <button class="p-close" data-act="deselect" aria-label="Close">✕</button></div>${hpBar(u)}`;
 }
 
@@ -255,7 +272,7 @@ function renderStanceCard(g, units, show) {
     const controlled = !!P.plan(one.id);
     const preview = controlled ? null : g.stancePreview.get(one.id);
     html += lastRoundLine(g, one);
-    html += `<div class="stance-now"><span class="stance-k">Stance ${glChip('Stance')}</span><span class="stance-v">${STANCE_NAMES[cur]}${cur !== one.stance ? ' <small>(new)</small>' : ''}</span></div>
+    html += `<div class="stance-now"><span class="stance-k">Stance ${glChip('Stance')}</span><span class="stance-v">${icon(cur, 22)} ${STANCE_NAMES[cur]}${cur !== one.stance ? ' <small>(new)</small>' : ''}</span></div>
       <div class="stance-desc">${esc(STANCE_DESC[cur])}</div>
       <div class="will"><b>${controlled ? 'Your orders' : 'This round it will'}:</b> ${esc(describePlan(g, one, controlled ? P.plan(one.id) : preview))}<div class="when">${esc(whenActs(g, one))}</div></div>`;
   } else {
@@ -359,12 +376,12 @@ function renderMulti(g, sel, show) {
 
 function renderEnemyUnit(g, u, show) {
   const def = unitDef(u);
-  const sk = def.skills.map(k => u.revealed?.[k.id] ? `${k.name}: ${cdOf(u, k.id) > 0 ? cdOf(u, k.id) + ' rounds' : 'ready'}` : `${k.name}: not seen yet`).join(' · ');
+  const sk = def.skills.map(k => u.revealed?.[k.id] ? `${icon(k.id, 13)} ${k.name}: ${cdOf(u, k.id) > 0 ? icon('cooldown', 11) + cdOf(u, k.id) + ' rounds' : 'ready'}` : `${icon(k.id, 13)} ${k.name}: not seen yet`).join(' · ');
   const html = `<div class="p-head"><div class="p-icon">${glyph(u.type, u.owner, 34)}</div><div class="p-main">
-    <div class="p-title">Enemy ${def.hero ? 'Hero · ' : ''}${def.name}</div><div class="p-sub">Base tier ${Math.max(CONFIG.minTier, def.tier - u.tierDebuff)}${u.tierDebuff ? ' (debuffed)' : ''} · stance at planning start: ${STANCE_NAMES[u.stance]}</div></div>
+    <div class="p-title">Enemy ${def.hero ? 'Hero · ' : ''}${def.name}</div><div class="p-sub">${icon('tier', 12)} Base tier ${Math.max(CONFIG.minTier, def.tier - u.tierDebuff)}${u.tierDebuff ? ' (debuffed)' : ''} · stance at planning start: ${STANCE_NAMES[u.stance]}</div></div>
     <div class="p-stats">HP ${u.hp}/${u.maxHp}</div>
     <button class="p-close" data-act="deselect">✕</button></div>${hpBar(u)}
-    <div class="will">${esc(sk)}</div>
+    <div class="will">${sk}</div>
     <div class="note">Enemy orders and tier upgrades stay hidden until resolution. ${def.melee ? `Its control zone (radius ${def.zone}, dashed ring) slows your units inside.` : `Shot range ${def.shot.range}.`}</div>`;
   show(html); bindPanel(g, null);
 }
@@ -378,12 +395,13 @@ function renderBuilding(g, b, show) {
     <div class="p-stats">HP ${b.hp}/${b.maxHp}${def.attack ? `<br>Atk ${def.attack.dmg} · rng ${def.attack.range}` : ''}</div>
     <button class="p-close" data-act="deselect">✕</button></div>${hpBar(b)}`;
   if (mine && b.built && def.produces) {
-    const queued = b.queue.map(q => `<span class="qitem">${glyph(q.unit, b.owner, 12)} ${q.progress}/${CONFIG.units[q.unit].buildRounds}</span>`);
+    const queued = b.queue.map((q, i) => { const n = CONFIG.units[q.unit].buildRounds; const pct = Math.round(100 * q.progress / n);
+      return `<span class="qitem${i === 0 ? ' active' : ''}" style="--p:${pct}%">${glyph(q.unit, b.owner, 14)} ${CONFIG.units[q.unit].name} ${icon('round', 11)}${n - q.progress} left</span>`; });
     P.draft.production.forEach((q, i) => { if (q.building === b.id) queued.push(`<span class="qitem" data-act="unprod:${i}">+ ${CONFIG.units[q.unit].name} ✕</span>`); });
-    html += `<div class="qlist">Queue: ${queued.join('') || '<span>empty</span>'}</div><div class="btns">`;
+    html += `<div class="qlist">${icon('queue', 13)} Queue: ${queued.join('') || '<span>empty</span>'}</div><div class="btns">`;
     for (const t of def.produces) {
       const ud = CONFIG.units[t];
-      html += `<button class="btn" data-act="prod:${t}" ${P.supplyLeft() < ud.cost ? 'disabled' : ''}>${glyph(t, b.owner, 14)} ${ud.name}<small>${ud.cost} · ${ud.buildRounds} rnd</small></button>`;
+      html += `<button class="btn" data-act="prod:${t}" ${P.supplyLeft() < ud.cost ? 'disabled' : ''}>${ud.name}<small>${ud.cost} supply · ${ud.buildRounds} rnd</small></button>`;
     }
     const boosted = P.draft.boosts.includes(b.id);
     html += `<button class="btn${boosted ? ' on' : ''}" data-act="boost">Boost<small>1 CP · +1 progress</small></button>`;
@@ -397,17 +415,21 @@ function renderBuilding(g, b, show) {
 }
 
 function buildingDesc(t) {
+  const b = CONFIG.buildings[t];
   return {
-    hq: 'Income, vision, defensive gun. Lose all HQs and you lose.', barracks: 'Trains Fighters, Assassins and Tanks.',
-    turret: 'Shoots the closest enemy in range at the end of the round.', command: `+${CONFIG.cp.perCommandPost} CP per round.`,
-    outpost: 'Retreat point, vision, lets you build nearby.', barricade: `Cover: units within ${CONFIG.coverRadius} get +1 defend vs shots that cross it.`,
+    hq: `${icon('income', 12)} +${CONFIG.economy.hqIncome}/round · trains Fighter, Ranged · ${icon('range', 12)} gun range ${b.attack?.range}. Lose your HQ and you lose.`,
+    barracks: `${icon('queue', 12)} Trains Fighters, Assassins and Tanks.`,
+    turret: `${icon('range', 12)} Shoots the closest enemy within ${b.attack?.range} at the end of each round.`,
+    command: `${icon('cp', 12)} +${CONFIG.cp.perCommandPost} CP every round.`,
+    outpost: `${icon('retreat', 12)} Retreat point, ${icon('vision', 12)} vision, ${icon('build', 12)} lets you build nearby.`,
+    barricade: `${icon('defend', 12)} Cover: units within ${CONFIG.coverRadius} get +1 defend vs shots that cross it.`,
   }[t];
 }
 
 function renderNode(g, n, show) {
   const own = n.owner === -1 ? 'Neutral' : n.owner === g.me ? 'Yours' : 'Enemy';
-  show(`<div class="p-head"><div class="p-icon">${glyph('node', n.owner, 34)}</div><div><div class="p-title">Resource node</div>
-    <div class="p-sub">${own} · +${CONFIG.economy.nodeIncome} supply per round</div></div><button class="p-close" data-act="deselect">✕</button></div>
+  show(`<div class="p-head"><div class="p-icon">${icon('node', 34)}</div><div><div class="p-title">Resource node</div>
+    <div class="p-sub">${own} · ${icon('income', 12)} +${CONFIG.economy.nodeIncome} supply per round</div></div><button class="p-close" data-act="deselect">✕</button></div>
     <div class="note">Captured at the end of a round when only one side has units within ${CONFIG.economy.nodeRadius} of it.</div>`);
   bindPanel(g, null);
 }
@@ -417,7 +439,7 @@ function renderBuildMenu(g, show) {
   let html = `<div class="p-head"><div class="p-title">Build</div><div class="p-stats">Supply ${P.supplyLeft()}</div><button class="p-close" data-act="closebuild">✕</button></div><div class="btns">`;
   for (const [t, d] of Object.entries(CONFIG.buildings)) {
     if (t === 'hq') continue;
-    html += `<button class="btn" data-act="place:${t}" ${P.supplyLeft() < d.cost ? 'disabled' : ''}>${glyph(t, g.me, 14)} ${d.name}<small>${d.cost} · ${d.rounds} rnd</small></button>`;
+    html += `<button class="btn" data-act="place:${t}" ${P.supplyLeft() < d.cost ? 'disabled' : ''}>${d.name}<small>${d.cost} supply · ${d.rounds} rnd</small></button>`;
   }
   html += '</div>';
   if (P.draft.builds.length) html += `<div class="qlist">Planned: ${P.draft.builds.map((b, i) => `<span class="qitem" data-act="unbuild:${i}">${CONFIG.buildings[b.type].name} ✕</span>`).join('')}</div>`;
@@ -452,3 +474,39 @@ function bindPanel(g, u, b, units) {
 }
 
 export { upgradeCost };
+
+// ---- icons on every panel button + cost text ---------------------------------------------
+function iconFor(act) {
+  const [k, arg] = act.split(':');
+  const map = {
+    'mode:move': 'move', 'mode:attack': 'attack', 'mode:shoot': 'shoot', wait: 'wait', 'pre:defends': 'defend', 'pre:upgrades': 'tierup',
+    'pre:parry': 'parry', 'pre:overwatch': 'overwatch', heal: 'heal', undo: 'undo', 'tab:stance': 'stance', release: 'release',
+    control: 'control', 'tab:orders': 'control', boost: 'ap', rally: 'stance', openbuild: 'build', confirmbuild: 'build', cancelbuild: 'release',
+    cancelmode: 'release', deselect: null, closebuild: null,
+  };
+  if (act in map) return map[act];
+  if (k === 'skill' || k === 'mode') return arg;
+  if (k === 'stance') return arg;
+  return null;
+}
+const UNIT_TYPES = ['commander', 'fighter', 'assassin', 'ranged', 'tank'];
+function decorate(panel, g) {
+  panel.querySelectorAll('button[data-act]').forEach(b => {
+    if (b.querySelector('.ic, svg')) return;
+    const act = b.dataset.act;
+    const [k, arg] = act.split(':');
+    let ic = '';
+    if (k === 'place') ic = unitGlyph(arg, g.me, 20);
+    else if (k === 'prod' && UNIT_TYPES.includes(arg)) ic = unitGlyph(arg, g.me, 20);
+    else { const n = iconFor(act); if (n) ic = icon(n, b.classList.contains('control') ? 20 : 18); }
+    if (ic) b.insertAdjacentHTML('afterbegin', `<span class="b-ic">${ic}</span>`);
+  });
+  // costs: "25 AP" -> bolt 25, "40 supply" -> coin 40
+  panel.querySelectorAll('small, .p-sub, .place-help, .note').forEach(el => {
+    el.innerHTML = el.innerHTML
+      .replace(/(\d+) AP\b/g, `${icon('ap', 11)}$1`)
+      .replace(/(\d+) supply\b/g, `${icon('supply', 11)}$1`)
+      .replace(/(\d+) CP\b/g, `${icon('cp', 11)}$1`)
+      .replace(/(\d+) rnd\b/g, `${icon('round', 11)}$1`);
+  });
+}

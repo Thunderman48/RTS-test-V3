@@ -1,5 +1,6 @@
 // Plain-language definitions shown when a player taps an ⓘ chip.
 import { CONFIG } from '../config.js';
+import { icon } from './iconset.js';
 
 export const GLOSSARY = {
   AP: ['Action points (AP)', `Every unit gets ${CONFIG.baseAP} AP each round. Every action costs AP, and the AP cost is also how long the action takes. AP you don't use is lost (except on stance units, which spend it on defends).`],
@@ -12,7 +13,8 @@ export const GLOSSARY = {
   Overwatch: ['Overwatch (Ranged)', `Costs ${CONFIG.overwatchCost} AP per charge. Fires automatically at the closest visible enemy that moves within range ${CONFIG.overwatchRange}. Always hits, low damage.`],
   Cooldown: ['Cooldown', 'After a skill is used, it can\'t be used again for that many rounds. A cooldown of 2 means it is ready again on the third round.'],
   Supply: ['Supply', `Money for buildings and units. Your HQ gives +${CONFIG.economy.hqIncome} each round, and each resource node you hold gives +${CONFIG.economy.nodeIncome}.`],
-  Reach: ['Reach', 'Whether this unit can get to the target this round with the AP it has left. Too-far attacks get cancelled and the AP is lost.'],
+  Army: ['Army', `How many units you have (plus ones being trained) out of the cap of ${CONFIG.economy.armyCap}. The commander doesn't count.`],
+  Reach: ['Reach', 'Whether this unit can get to the target this round with the AP it has left. If not, the attack becomes a move toward the target so no AP is wasted.'],
 };
 
 export function glChip(key) {
@@ -29,7 +31,8 @@ export function showGlossary(key, anchor) {
     document.body.appendChild(pop);
     document.addEventListener('pointerdown', e => { if (pop && !pop.contains(e.target) && !e.target.closest?.('.gl')) pop.classList.add('hidden'); }, true);
   }
-  pop.innerHTML = `<b>${d[0]}</b><p>${d[1]}</p>`;
+  const ICON_OF = { AP: 'ap', Tier: 'tier', CP: 'cp', Stance: 'stance', Defend: 'defend', Zone: 'zone', Parry: 'parry', Overwatch: 'overwatch', Cooldown: 'cooldown', Supply: 'supply', Reach: 'attack', Army: 'army' };
+  pop.innerHTML = `<b>${icon(ICON_OF[key], 18)} ${d[0]}</b><p>${d[1]}</p>`;
   pop.classList.remove('hidden');
   const r = anchor.getBoundingClientRect();
   const w = Math.min(320, window.innerWidth - 16);

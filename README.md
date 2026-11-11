@@ -9,6 +9,25 @@ A playable prototype of the **Turn-Based RTS (Design Doc V3)**. It combines RTS 
 
 **Versions:** this is **V3**. Earlier versions stay playable: [`v1/`](v1/) at `…/RTS-test-V3/v1/` and [`v2/`](v2/) at `…/RTS-test-V3/v2/`.
 
+### What changed in V3.2: icons everywhere
+One coloured icon set (`js/ui/iconset.js`) is used across the whole game, in the same colours as the effects:
+* **Top bar:** supply with income per round, CP with filled/empty pips, army size / cap, round, timer, goal. The supply counter flashes when you can't afford something.
+* **Buttons and panels:**
+  * Every action, skill, prepare, stance, Control/Release, build and production button has an icon.
+  * Costs show as AP / supply / CP / rounds icons.
+  * Unit cards have an icon stat row: HP, AP, tier, speed, defends, range, vision.
+  * Skills show as chips with cooldowns.
+  * Order-bar blocks have icons.
+  * Production queues show progress.
+* **Map:**
+  * Building plates show what each building is doing: construction, production progress, income, +CP, range, cover.
+  * Resource nodes have a `+4` badge in the owner's colour.
+  * Planned orders get icon chips (move, attack, shoot, skill spots, advance/hold points).
+  * Revive zones show progress, and last-seen enemies get an eye marker.
+  * `+8` income pops up over your HQ and nodes after each round; `−40` pops up when you spend.
+* **Logs:** every feed, tier-card, report and digest line starts with its event icon. The digest's tiles and base summary use icons too.
+* Help has an **Icons** legend, glossary popovers show the term's icon, and the tutorial text uses them.
+
 ### What changed in V3.1
 * **Attacks don't waste AP anymore.**
   * The first time you attack an enemy, the unit gets enough approach AP to reach it, plus a margin in case it steps away. A second attack on the same target gets only a small top-up.
@@ -171,7 +190,7 @@ js/sim/                       pure simulation (no DOM): state, map, nav (A*), or
                               resolve (tier timeline, combat, interrupts), economy
 js/ai/ai.js                   AI opponent (same orders API and rules as a player)
 js/render/                    Three.js scene, models, playback of the resolution log, effects
-js/ui/                        input (mouse + touch), planner (draft orders), HUD, help, glossary,
+js/ui/                        input (mouse + touch), planner (draft orders), HUD, help, glossary, iconset,
                               log (feed, tier cards, round digest)
 js/tutorial/                  tutorial scenario (scripted enemy) and coach steps
 v1/, v2/                      saved earlier versions (playable at /v1/ and /v2/)

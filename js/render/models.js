@@ -1,6 +1,7 @@
 // Low-poly, black & white geometric models built from Three.js primitives.
 // Team 0 = white pieces, team 1 = black pieces (like chess).
 import * as THREE from 'three';
+import { drawIconCanvas } from '../ui/iconset.js';
 
 export const PALETTE = {
   board: 0xa9a9a5,
@@ -234,39 +235,18 @@ export const ICONS = {
   slow: { bg: '#a86bff', fg: '#ffffff', label: 'Slowed by a control zone' },
 };
 
+const ICON_KEY = { def: 'defend', ow: 'overwatch', fort: 'fortify', tier: 'tierup' };
 function drawIcon(g, k, x, y, s, n) {
-  const ic = ICONS[k]; if (!ic) return;
-  g.fillStyle = ic.bg; g.fillRect(x, y, s, s);
-  g.strokeStyle = '#0b0b0b'; g.lineWidth = 3; g.strokeRect(x + 1.5, y + 1.5, s - 3, s - 3);
-  g.fillStyle = ic.fg; g.strokeStyle = ic.fg; g.lineWidth = 4;
-  const cx = x + s / 2, cy = y + s / 2, r = s * 0.32;
-  g.beginPath();
-  switch (k) {
-    case 'def': case 'fort':
-      g.moveTo(cx, cy - r); g.lineTo(cx + r, cy - r * 0.6); g.lineTo(cx + r * 0.8, cy + r * 0.4); g.lineTo(cx, cy + r); g.lineTo(cx - r * 0.8, cy + r * 0.4); g.lineTo(cx - r, cy - r * 0.6); g.closePath(); g.fill();
-      if (k === 'fort') { g.strokeStyle = ic.bg; g.beginPath(); g.moveTo(cx - r * 0.45, cy); g.lineTo(cx + r * 0.45, cy); g.moveTo(cx, cy - r * 0.45); g.lineTo(cx, cy + r * 0.45); g.stroke(); }
-      break;
-    case 'parry':
-      g.moveTo(cx - r, cy - r); g.lineTo(cx + r, cy + r); g.moveTo(cx + r, cy - r); g.lineTo(cx - r, cy + r); g.stroke();
-      break;
-    case 'ow':
-      g.ellipse(cx, cy, r * 1.1, r * 0.65, 0, 0, Math.PI * 2); g.stroke();
-      g.beginPath(); g.arc(cx, cy, r * 0.32, 0, Math.PI * 2); g.fill();
-      break;
-    case 'rally': case 'tier':
-      g.moveTo(cx - r, cy + r * 0.1); g.lineTo(cx, cy - r * 0.8); g.lineTo(cx + r, cy + r * 0.1);
-      if (k === 'rally') { g.moveTo(cx - r, cy + r * 0.9); g.lineTo(cx, cy); g.lineTo(cx + r, cy + r * 0.9); }
-      else { g.moveTo(cx, cy - r * 0.8); g.lineTo(cx, cy + r); }
-      g.stroke();
-      break;
-    case 'slow':
-      g.setLineDash([5, 4]); g.arc(cx, cy, r, 0, Math.PI * 2); g.stroke(); g.setLineDash([]);
-      break;
-  }
-  if (n !== undefined && n !== null && n !== true && n > 1) {
-    g.fillStyle = '#0b0b0b'; g.fillRect(x + s - 18, y + s - 18, 18, 18);
-    g.fillStyle = '#ffffff'; g.font = '900 15px "Helvetica Neue", Arial, sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle';
-    g.fillText(String(n), x + s - 9, y + s - 8);
+  const name = ICON_KEY[k] || k;
+  g.fillStyle = 'rgba(11,11,11,0.88)'; g.fillRect(x, y, s, s);
+  drawIconCanvas(g, name, x + 3, y + 3, s - 6);
+  const txt = n === undefined || n === null || n === true || n === 1 ? '' : String(n);
+  if (txt) {
+    g.font = '900 16px "Helvetica Neue", Arial, sans-serif';
+    const w = Math.max(18, g.measureText(txt).width + 6);
+    g.fillStyle = '#ffffff'; g.fillRect(x + s - w + 2, y + s - 16, w, 18);
+    g.fillStyle = '#0b0b0b'; g.textAlign = 'center'; g.textBaseline = 'middle';
+    g.fillText(txt, x + s - w / 2 + 2, y + s - 6);
   }
 }
 
@@ -352,4 +332,28 @@ export function tintGhost(obj, color) {
     c.material.opacity = c.isLineSegments ? 0.9 : 0.55;
     c.material.depthWrite = false;
   });
+}
+
+// Small floating marker: icon + short text, used for map badges (nodes, planned orders, revive, ghosts)
+export function makeIconSprite(name, text = '', { bg = 'rgba(11,11,11,0.9)', fg = '#f6f6f4', scale = 1 } = {}) {
+  const c = document.createElement('canvas');
+  const g = c.getContext('2d');
+  g.font = '800 30px "Helvetica Neue", Arial, sans-serif';
+  const tw = text ? g.measureText(text).width + 14 : 0;
+  c.width = Math.ceil(52 + tw); c.height = 52;
+  const g2 = c.getContext('2d');
+  g2.fillStyle = bg; g2.fillRect(0, 0, c.width, c.height);
+  g2.strokeStyle = '#0b0b0b'; g2.lineWidth = 3; g2.strokeRect(1.5, 1.5, c.width - 3, c.height - 3);
+  drawIconCanvas(g2, name, 6, 6, 40);
+  if (text) {
+    g2.fillStyle = fg; g2.font = '800 30px "Helvetica Neue", Arial, sans-serif'; g2.textBaseline = 'middle'; g2.textAlign = 'left';
+    g2.fillText(text, 50, 28);
+  }
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, depthTest: false, transparent: true }));
+  const h = 0.62 * scale;
+  sp.scale.set(h * c.width / c.height, h, 1);
+  sp.renderOrder = 22;
+  return sp;
 }
