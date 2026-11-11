@@ -7,6 +7,14 @@ A playable prototype of the **Turn-Based RTS (Design Doc V3)**. It combines RTS 
 * **Works on phones**: tap to select and order, drag to pan, pinch to zoom, twist to rotate.
 * **Static site** with no build step and no server, so it runs on GitHub Pages.
 
+**V4 preview (in progress):** a full remake as a tabletop miniatures wargame lives at [`v4/`](v4/) (`…/RTS-test-V3/v4/`). Milestone 1 is playable vs the AI:
+* Painted low-poly miniatures in squads of 3–5 on a diorama table: Kingdom vs Undead Legion.
+* Free movement in inches: drag a path from a squad; the tape shows inches and AP, and a ring shows the reach left.
+* Every attack is a drag-aimed skillshot (Swing arc, Volley line). It hits whatever stands in the shape when it lands, so faster tiers can dodge.
+* Damage removes models, and a squad hits for damage per model × models left.
+* The battle plays back on a scrubbable timeline with a combat log.
+* Tests: `node v4/tests/sim.test.mjs`.
+
 **Versions:** this is **V3**. Earlier versions stay playable: [`v1/`](v1/) at `…/RTS-test-V3/v1/` and [`v2/`](v2/) at `…/RTS-test-V3/v2/`.
 
 ### What changed in V3.2: icons everywhere
