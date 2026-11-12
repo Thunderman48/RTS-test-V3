@@ -4,6 +4,7 @@ import * as THREE from 'three';
 export const COL = {
   swing: 0xff7a1a, volley: 0xff2d55, move: 0xffffff, moveEnemy: 0x222222, ghost: 0xffffff,
   hit: 0xff4a1c, defend: 0x3fa9ff, ok: 0x34c759, bad: 0xff3b30, tier: 0x9be15d,
+  lob: 0xff2d55, charge: 0xffb020, blast: 0xb06bff, rally: 0xf5c542, watch: 0x3ee6ff,
 };
 const LIFT = 0.06; // ground is gently bumpy: keep overlays above it
 const basic = (color, opacity) => new THREE.MeshBasicMaterial({ color, transparent: true, opacity, depthWrite: false, side: THREE.DoubleSide });
@@ -88,11 +89,14 @@ export class Telegraphs {
       const key = t.id + ':' + t.T0;
       seen.add(key);
       let e = this.map.get(key);
-      const col = t.kind === 'volley' ? COL.volley : COL.swing;
+      const col = COL[t.kind] ?? COL.swing;
+      const mk = op => t.shape === 'arc' ? arcShape(t.ox, t.oz, t.dx, t.dz, t.R, t.ch, col, op)
+        : t.shape === 'circle' ? (() => { const d = disc(t.R, col, op); d.position.x = t.ox; d.position.z = t.oz; return d; })()
+        : lineShape(t.ox, t.oz, t.dx, t.dz, t.len, t.w, col, op);
       if (!e) {
         const g = new THREE.Group();
-        const outline = t.shape === 'arc' ? arcShape(t.ox, t.oz, t.dx, t.dz, t.R, t.ch, col, 0.18) : lineShape(t.ox, t.oz, t.dx, t.dz, t.len, t.w, col, 0.18);
-        const fill = t.shape === 'arc' ? arcShape(t.ox, t.oz, t.dx, t.dz, t.R, t.ch, col, 0.5) : lineShape(t.ox, t.oz, t.dx, t.dz, t.len, t.w, col, 0.5);
+        const outline = mk(0.18);
+        const fill = mk(0.5);
         g.add(outline, fill);
         L.add(g);
         e = { g, outline, fill };
@@ -101,7 +105,7 @@ export class Telegraphs {
       const k = Math.max(0, Math.min(1, (T - t.T0) / Math.max(1, t.T1 - t.T0)));
       const after = T > t.T1 ? (T - t.T1) / 4 : 0;
       // the fill grows from the squad outward as the wind-up charges
-      if (t.shape === 'arc') { e.fill.scale.setScalar(Math.max(0.01, k)); }
+      if (t.shape === 'arc' || t.shape === 'circle') { e.fill.scale.setScalar(Math.max(0.01, k)); }
       else { e.fill.scale.set(1, 1, Math.max(0.01, k)); e.fill.position.copy(e.outline.position); }
       const flash = after > 0 ? Math.max(0, 1 - after) : 0;
       setOpacity(e.outline, after > 0 ? 0.6 * flash : 0.2);

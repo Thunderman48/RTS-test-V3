@@ -1,9 +1,10 @@
 // Draft orders for this round + predictions for drawing them.
-import { RULES } from '../data/units.js';
+import { RULES, isMelee, isShooter } from '../data/units.js';
 import { emptyOrders, emptyPlan, defOf, radiusOf, apFor } from '../sim/state.js';
-import { planCost, actionCost, cpUsage } from '../sim/orders.js';
+import { planCost, actionCost, cpUsage, SKILL_KINDS } from '../sim/orders.js';
+import { clampAim, engagedWith } from '../sim/resolve.js';
 import { Nav, pathAP, walkAP } from '../sim/nav.js';
-import { norm } from '../sim/geom.js';
+import { norm, segCircle, dist } from '../sim/geom.js';
 
 export class Planner {
   constructor(g) { this.g = g; this.reset(); }
@@ -13,11 +14,13 @@ export class Planner {
   plan(id) { return this.draft.squads[id] || null; }
   cp() { return cpUsage(this.s, this.g.me, this.draft); }
   apLeft(q) { const p = this.plan(q.id); return apFor(q) - (p ? planCost(q, p) : 0); }
+  skillUsed(id) { const p = this.plan(id); return !!p && p.actions.some(a => SKILL_KINDS.includes(a.kind)); }
+  skillReady(q) { const sk = defOf(q).skill; return !!sk && (q.cd | 0) === 0 && !this.skillUsed(q.id); }
+  enemies(q) { return this.s.squads.filter(e => e.owner !== q.owner && e.hp > 0); }
 
   // Take control (1 CP, hero free). Returns the plan or null.
   ensure(id) {
     if (this.draft.squads[id]) return this.draft.squads[id];
-    const q = this.squad(id);
     const trial = { squads: { ...this.draft.squads, [id]: emptyPlan() } };
     if (!cpUsage(this.s, this.g.me, trial).accepted.includes(id)) {
       this.g.toast(`No command points left (${RULES.cp} per round). This squad keeps its stance.`, true);
@@ -25,8 +28,21 @@ export class Planner {
     }
     const p = emptyPlan(); p.hist = [];
     this.draft.squads[id] = p;
-    void q;
     return p;
+  }
+
+  // the charge lane from (ox,oz) toward (x,z): where it stops and who it hits (enemies where they stand now)
+  chargeLane(q, ox, oz, x, z) {
+    const sk = defOf(q).skill, d = norm(x - ox, z - oz);
+    const dx = d.l > 0.01 ? d.x : q.fx, dz = d.l > 0.01 ? d.z : q.fz;
+    const ex = ox + dx * sk.len, ez = oz + dz * sk.len;
+    let hit = null, ht = 2;
+    for (const e of this.enemies(q)) {
+      const t = segCircle(ox, oz, ex, ez, e.x, e.z, radiusOf(q) + radiusOf(e));
+      if (t >= 0 && t < ht) { ht = t; hit = e; }
+    }
+    const t = hit ? Math.max(0, ht - 0.01) : 1;
+    return { dx, dz, len: sk.len, w: radiusOf(q) * 2, hit, x: ox + (ex - ox) * t, z: oz + (ez - oz) * t };
   }
 
   // Where the squad is after its planned actions, plus drawable legs
@@ -34,24 +50,41 @@ export class Planner {
     const def = defOf(q);
     let x = q.x, z = q.z, fx = q.fx, fz = q.fz, t = 0;
     const legs = [];
+    if (plan && plan.overwatch) { const d = norm(plan.overwatch.x - x, plan.overwatch.z - z); if (d.l > 0.01) { fx = d.x; fz = d.z; } legs.push({ kind: 'overwatch', ox: x, oz: z, dx: fx, dz: fz, R: def.attack.range, ch: RULES.overwatchCos }); }
     for (const a of (plan ? plan.actions : [])) {
       const c = actionCost(q, a);
       if (a.kind === 'move') {
-        const w = walkAP(this.s.terrain, x, z, a.pts, a.ap, def.tier);
+        const w = walkAP(this.s.terrain, x, z, a.pts, a.ap - (a.disengage ? RULES.disengageAP : 0), def.tier);
         const last = w.line[w.line.length - 1], prev = w.line[w.line.length - 2] || { x, z };
         const d = norm(last.x - prev.x, last.z - prev.z);
         if (d.l > 1e-3) { fx = d.x; fz = d.z; }
-        legs.push({ kind: 'move', line: w.line, t0: t, t1: t + c });
+        legs.push({ kind: 'move', line: w.line, t0: t, t1: t + c, disengage: !!a.disengage });
         x = w.x; z = w.z;
       } else if (a.kind === 'swing' || a.kind === 'volley') {
         const d = norm(a.x - x, a.z - z);
         if (d.l > 0.01) { fx = d.x; fz = d.z; }
         legs.push({ kind: a.kind, ox: x, oz: z, dx: fx, dz: fz, t0: t, t1: t + c, R: radiusOf(q) + (def.attack.reach || 0), ch: def.attack.cosHalf, len: def.attack.range, w: def.attack.width });
+      } else if (a.kind === 'lob' || a.kind === 'blast') {
+        const range = a.kind === 'lob' ? def.attack.range : def.skill.range;
+        const c2 = clampAim(x, z, a.x, a.z, range);
+        const d = norm(c2.x - x, c2.z - z);
+        if (d.l > 0.01) { fx = d.x; fz = d.z; }
+        legs.push({ kind: a.kind, ox: x, oz: z, cx: c2.x, cz: c2.z, R: a.kind === 'lob' ? def.attack.radius : def.skill.radius, range, t0: t, t1: t + c });
+      } else if (a.kind === 'rally') {
+        legs.push({ kind: 'rally', cx: x, cz: z, R: def.skill.radius, t0: t, t1: t + c });
+      } else if (a.kind === 'charge') {
+        const ln = this.chargeLane(q, x, z, a.x, a.z);
+        fx = ln.dx; fz = ln.dz;
+        legs.push({ kind: 'charge', ox: x, oz: z, dx: ln.dx, dz: ln.dz, len: ln.len, w: ln.w, hit: ln.hit, ex: ln.x, ez: ln.z, t0: t, t1: t + c });
+        x = ln.x; z = ln.z;
       }
       t += c;
     }
     return { x, z, fx, fz, t, legs };
   }
+
+  // engaged at a position (enemies where they stand now)?
+  engagedAt(q, x, z) { return engagedWith({ ...q, x, z }, this.s.squads); }
 
   // Path from the squad's planned end point to (tx,tz), cut to the AP left.
   previewMove(q, tx, tz) {
@@ -59,13 +92,20 @@ export class Planner {
     const from = this.predict(q);
     const nav = Nav.for(this.s.terrain, radiusOf(q), 'r');
     const pts = nav.path(from.x, from.z, tx, tz);
-    const need = pathAP(this.s.terrain, from.x, from.z, pts, def.tier);
+    // stepping away from an engaged enemy: 30 AP to disengage first
+    let disengage = false;
+    if (pts.length) {
+      const d = norm(pts[0].x - from.x, pts[0].z - from.z);
+      disengage = this.engagedAt(q, from.x, from.z).some(e => (e.x - from.x) * d.x + (e.z - from.z) * d.z < 0);
+    }
+    const extra = disengage ? RULES.disengageAP : 0;
+    const need = pathAP(this.s.terrain, from.x, from.z, pts, def.tier) + extra;
     const left = this.plan(q.id) ? this.apLeft(q) : apFor(q);
     const ap = Math.max(1, Math.min(left, Math.ceil(need)));
-    const w = walkAP(this.s.terrain, from.x, from.z, pts, ap, def.tier);
+    const w = walkAP(this.s.terrain, from.x, from.z, pts, Math.max(0, ap - extra), def.tier);
     let inches = 0;
     for (let i = 1; i < w.line.length; i++) inches += Math.hypot(w.line[i].x - w.line[i - 1].x, w.line[i].z - w.line[i - 1].z);
-    return { from, pts, need: Math.ceil(need), ap, left, line: w.line, end: { x: w.x, z: w.z }, inches, short: need > left + 0.5 };
+    return { from, pts, need: Math.ceil(need), ap, left, line: w.line, end: { x: w.x, z: w.z }, inches, short: need > left + 0.5, disengage };
   }
 
   addMove(id, tx, tz) {
@@ -73,20 +113,38 @@ export class Planner {
     const pv = this.previewMove(q, tx, tz);
     if (pv.left < 1) { this.g.toast('No AP left for this squad', true); return false; }
     const plan = this.ensure(id); if (!plan) return false;
-    plan.actions.push({ kind: 'move', pts: pv.pts, ap: pv.ap });
+    plan.actions.push({ kind: 'move', pts: pv.pts, ap: pv.ap, disengage: pv.disengage });
     plan.hist.push('a');
-    if (pv.short) this.g.toast(`Out of reach this round: it stops after ${pv.inches.toFixed(1)}″`);
+    if (pv.disengage) this.g.toast('Disengaging costs 30 AP and gives the enemy a parting blow');
+    else if (pv.short) this.g.toast(`Out of reach this round: it stops after ${pv.inches.toFixed(1)}″`);
+    this.g.confirm(q, pv.disengage ? 'Disengage' : `Move ${pv.inches.toFixed(1)}″`);
     this.g.changed();
     return true;
   }
 
   addAttack(id, x, z) {
     const q = this.squad(id), def = defOf(q);
-    if (this.apLeft(q) < def.attack.ap && this.plan(id)) { this.g.toast(`Not enough AP (${def.attack.ap} needed)`, true); return false; }
+    if (this.plan(id) && this.apLeft(q) < def.attack.ap) { this.g.toast(`Not enough AP (${def.attack.ap} needed)`, true); return false; }
     const plan = this.ensure(id); if (!plan) return false;
     if (this.apLeft(q) < def.attack.ap) { this.g.toast(`Not enough AP (${def.attack.ap} needed)`, true); return false; }
     plan.actions.push({ kind: def.attack.kind, x, z });
     plan.hist.push('a');
+    this.g.confirm(q, { swing: 'Swing', volley: 'Volley', lob: 'Lob' }[def.attack.kind]);
+    this.g.changed();
+    return true;
+  }
+
+  addSkill(id, x, z) {
+    const q = this.squad(id), sk = defOf(q).skill;
+    if (!sk) return false;
+    if ((q.cd | 0) > 0) { this.g.toast(`${sk.name} is recharging (${q.cd} round${q.cd > 1 ? 's' : ''})`, true); return false; }
+    if (this.skillUsed(id)) { this.g.toast(`${sk.name} can be used once per round`, true); return false; }
+    if (this.plan(id) && this.apLeft(q) < sk.ap) { this.g.toast(`Not enough AP (${sk.ap} needed)`, true); return false; }
+    const plan = this.ensure(id); if (!plan) return false;
+    if (this.apLeft(q) < sk.ap) { this.g.toast(`Not enough AP (${sk.ap} needed)`, true); return false; }
+    plan.actions.push({ kind: sk.kind, x, z });
+    plan.hist.push('a');
+    this.g.confirm(q, sk.name + '!');
     this.g.changed();
     return true;
   }
@@ -102,13 +160,34 @@ export class Planner {
   }
 
   prepaid(id, field) {
-    const q = this.squad(id);
+    const q = this.squad(id), def = defOf(q);
     const plan = this.ensure(id); if (!plan) return false;
+    if (field === 'parry') {
+      if (!isMelee(def)) return false;
+      if (plan.parry) { this.g.toast('Parry is already prepared', true); return false; }
+      if (this.apLeft(q) < RULES.parryCost) { this.g.toast(`Not enough AP (${RULES.parryCost} needed)`, true); return false; }
+      plan.parry = true; plan.hist.push('parry');
+      this.g.confirm(q, 'Parry ready'); this.g.changed();
+      return true;
+    }
     const cost = field === 'defends' ? RULES.defendCost : RULES.tierCost[plan.upgrades] || 999;
     if (field === 'defends' && plan.defends >= RULES.maxDefends) { this.g.toast('Max defends', true); return false; }
     if (field === 'upgrades' && plan.upgrades >= RULES.maxUpgrades) { this.g.toast('Already acting as early as possible', true); return false; }
     if (this.apLeft(q) < cost) { this.g.toast(`Not enough AP (${cost} needed)`, true); return false; }
     plan[field]++; plan.hist.push(field);
+    this.g.confirm(q, field === 'defends' ? '+1 Defend' : 'Act earlier');
+    this.g.changed();
+    return true;
+  }
+
+  setOverwatch(id, x, z) {
+    const q = this.squad(id);
+    if (!isShooter(defOf(q))) return false;
+    const plan = this.ensure(id); if (!plan) return false;
+    if (!plan.overwatch && this.apLeft(q) < RULES.overwatchCost) { this.g.toast(`Not enough AP (${RULES.overwatchCost} needed)`, true); return false; }
+    if (!plan.overwatch) plan.hist.push('overwatch');
+    plan.overwatch = { x, z };
+    this.g.confirm(q, 'Overwatch');
     this.g.changed();
     return true;
   }
@@ -116,7 +195,10 @@ export class Planner {
   undo(id) {
     const plan = this.plan(id); if (!plan) return;
     const h = plan.hist.pop();
-    if (h === 'a') plan.actions.pop(); else if (h) plan[h]--;
+    if (h === 'a') plan.actions.pop();
+    else if (h === 'parry') plan.parry = false;
+    else if (h === 'overwatch') plan.overwatch = null;
+    else if (h) plan[h]--;
     if (!plan.hist.length) delete this.draft.squads[id];
     this.g.changed();
   }
@@ -131,7 +213,8 @@ export class Planner {
 
   final() {
     const o = JSON.parse(JSON.stringify(this.draft));
-    for (const p of Object.values(o.squads)) delete p.hist;
+    for (const p of Object.values(o.squads)) { delete p.hist; for (const a of p.actions) delete a.disengage; }
     return o;
   }
 }
+export { dist };

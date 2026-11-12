@@ -46,6 +46,7 @@ export const ICONSET = {
   defend: { c: BLUE, d: SHIELD },
   tierup: { c: LIME, d: CHEV2 },
   parry: { c: GOLD, d: 'M4 4l16 16M20 4 4 20', s: true, w: 3.2, x: 'M3 8V3h5M21 8V3h-5' },
+  engaged: { c: RED, d: 'M4 4l16 16M20 4 4 20', s: true, w: 3.2, x: 'M3 8V3h5M21 8V3h-5' },
   overwatch: { c: RED, d: EYE, x: 'M12 8.5a3.5 3.5 0 1 0 .01 0Z', xf: INK },
   heal: { c: GREEN, d: 'M9 3h6v6h6v6h-6v6H9v-6H3V9h6Z' },
   undo: { c: GREY, d: 'M9 14 4 9l5-5M4 9h10a6 6 0 0 1 0 12h-3', s: true, w: 2.4 },

@@ -42,6 +42,12 @@ export class Timeline {
       T = t0 + seg.len;
     }
     this.total = T + 6;
+    // overwatch intervals: from the 'watch' event until it fires (or the round ends)
+    this.watches = [];
+    for (const e of this.events) if (e.type === 'watch') {
+      const end = this.events.find(x => x.type === 'watchEnd' && x.id === e.id);
+      this.watches.push({ id: e.id, R: e.R, ch: e.ch, T0: e.T, T1: end ? end.T : this.total });
+    }
     for (const k of this.keys.values()) k.sort((a, b) => a[0] - b[0]);
     this.events.sort((a, b) => a.T - b.T);
   }
@@ -85,7 +91,7 @@ export class Timeline {
       for (const e of this.events) { if (e.T > T) break; if (e.type === 'hit' && e.dst === q.id) struck = T - e.T; }
       const info = this.info(q.id, T);
       out.push({ ...q, ...p, hp: h.hp, models: h.models, dying, atk, struck, flash: struck !== undefined && struck < 5 ? 1 - struck / 5 : 0,
-        defLeft: info.defLeft, tierShown: info.tier, upgrades: info.upgrades, stanceShown: info.stance,
+        defLeft: info.defLeft, tierShown: info.tier, upgrades: info.upgrades, stanceShown: info.stance, parryShown: info.parry, watchShown: info.watch,
         acting: !!acting && acting.has(q.id) && h.hp > 0 && (dying === undefined) });
     }
     return out;
@@ -93,13 +99,23 @@ export class Timeline {
 
   // tier, prepared defends left, upgrades and stance of a squad at time T
   info(id, T) {
-    let tier = null, defLeft = 0, upgrades = 0, stance = null;
+    let tier = null, defLeft = 0, upgrades = 0, stance = null, parry = false, watch = false;
     for (const e of this.events) {
       if (e.T > T && e.type !== 'prep') break;
-      if (e.type === 'prep' && e.id === id) { tier = e.tier; defLeft = e.defends; upgrades = e.upgrades; stance = e.stance; }
+      if (e.type === 'prep' && e.id === id) { tier = e.tier; defLeft = e.defends; upgrades = e.upgrades; stance = e.stance; parry = !!e.parry; watch = !!e.watch; }
       else if (e.type === 'hit' && e.dst === id) defLeft = e.defLeft;
+      else if (e.type === 'parry' && e.id === id) parry = false;
+      else if (e.type === 'watchEnd' && e.id === id) watch = false;
+      else if (e.type === 'buff' && e.ids.includes(id)) defLeft += 1;
     }
-    return { tier, defLeft, upgrades, stance };
+    return { tier, defLeft, upgrades, stance, parry, watch };
+  }
+
+  // overwatch cones active at T: [{id, R, ch}]
+  activeWatches(T) {
+    const out = [];
+    for (const w of this.watches) if (T >= w.T0 && T < w.T1 && !(this.down.has(w.id) && T >= this.down.get(w.id))) out.push(w);
+    return out;
   }
 
   activeTeles(T) { return this.teles.filter(t => T >= t.T0 && T <= t.T1 + 4); }

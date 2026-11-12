@@ -91,7 +91,7 @@ button { font-family: inherit; color: inherit; cursor: pointer; touch-action: ma
 .ready.sm { height: 40px; font-size: 13px; padding: 0 14px; border-radius: 10px; }
 
 /* ---------- dock (selected squad actions) ---------- */
-#dock { position: absolute; right: calc(10px + var(--sar)); bottom: calc(110px + var(--sab)); width: min(440px, calc(100vw - 20px)); padding: 10px 12px 12px; }
+#dock { position: absolute; right: calc(10px + var(--sar)); bottom: calc(150px + var(--sab)); width: min(440px, calc(100vw - 20px)); padding: 10px 12px 12px; }
 .dk-head { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
 .dk-head .nm { font-size: 16px; font-weight: 800; }
 .dk-head .sub { font-size: 12px; color: var(--muted); }
@@ -237,3 +237,40 @@ button { font-family: inherit; color: inherit; cursor: pointer; touch-action: ma
 .opt.on .sw { background: #34c759; } .opt.on .sw::after { transform: translateX(16px); }
 .menu-card .opt { margin-top: 10px; }
 .opt em { font-style: normal; color: #3ee6ff; }
+
+/* ---------- M2: knobs, hints, rehearse ---------- */
+.knob { position: absolute; left: 0; top: 0; width: 44px; height: 44px; border-radius: 50%; display: grid; place-items: center; pointer-events: none; box-shadow: 0 4px 14px rgba(0,0,0,.45); border: 3px solid rgba(255,255,255,.9); z-index: 3; transition: opacity .15s; }
+.knob.move { background: #f4f1ea; }
+.knob.attack { background: #ff7a1a; }
+.knob.skill { background: #8f5bd8; color: #fff; font-weight: 900; font-size: 15px; }
+.knob.off { opacity: .45; filter: grayscale(.6); }
+.knob.on { outline: 3px solid #3ee6ff; outline-offset: 2px; }
+.knob .ic { width: 22px; height: 22px; }
+#hintbar { position: absolute; top: calc(66px + var(--sat)); left: 50%; transform: translateX(-50%); max-width: min(620px, calc(100vw - 20px)); padding: 8px 8px 8px 14px; display: flex; gap: 10px; align-items: center; font-size: 13px; z-index: 4; }
+#hintbar .k { display: inline-block; padding: 0 6px; border-radius: 6px; font-weight: 800; color: #111; }
+#hintbar .k.mv { background: #f4f1ea; } #hintbar .k.at { background: #ff7a1a; } #hintbar .k.sk { background: #8f5bd8; color: #fff; }
+.ib.sm { width: 28px; height: 28px; font-size: 12px; flex: none; }
+.ready-col { display: flex; flex-direction: column; gap: 6px; align-items: stretch; }
+.rehearse { height: 34px; border-radius: 12px; background: rgba(255,255,255,.12); color: var(--text); font-weight: 800; font-size: 13px; padding: 0 14px; }
+.rehearse:hover { background: rgba(255,255,255,.2); }
+#tape.warn { background: #ffb020; color: #111; }
+.ftext.tag { color: #ffd34d; font-size: 16px; }
+.ftext.ok { font-size: 14px; color: #fff; background: rgba(20,18,16,.75); padding: 2px 8px; border-radius: 8px; text-shadow: none; }
+.dk-head .eng { display: inline-block; margin-left: 6px; padding: 1px 7px; border-radius: 6px; background: var(--bad); color: #fff; font-size: 11px; vertical-align: middle; }
+.rh { display: inline-block; padding: 1px 8px; border-radius: 6px; background: #3ee6ff; color: #111; font-weight: 800; margin-right: 4px; }
+.act.sk:not(:disabled) { box-shadow: inset 0 0 0 2px rgba(143,91,216,.7); }
+.dk-btns { grid-template-columns: repeat(4, 1fr) !important; }
+@media (max-width: 720px) {
+  .dk-btns { grid-template-columns: repeat(4, 1fr) !important; }
+  .act { height: 42px; }
+  .ready-col { flex-direction: row; }
+  .rehearse { height: 50px; flex: 0 0 auto; }
+  .ready-col .ready { flex: 1; }
+  #hintbar { top: calc(58px + var(--sat)); font-size: 12px; }
+}
+@media (max-height: 520px) and (orientation: landscape) {
+  .dk-btns { grid-template-columns: repeat(8, 1fr) !important; }
+  #dock { width: min(560px, 58vw); }
+  .rehearse { height: 30px; font-size: 12px; }
+  #hintbar { display: none; }
+}
