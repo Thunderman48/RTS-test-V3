@@ -1,5 +1,5 @@
 // Order costs and validation (shared by the planner UI, the AI and the resolver).
-import { RULES } from '../data/units.js';
+import { RULES, isMelee, isShooter } from '../data/units.js';
 import { defOf, emptyPlan, apFor } from './state.js';
 
 export function upgradeCost(n) { let c = 0; for (let i = 0; i < n; i++) c += RULES.tierCost[i]; return c; }
@@ -8,11 +8,13 @@ export function actionCost(q, a) {
   const def = defOf(q);
   switch (a.kind) {
     case 'move': case 'wait': return a.ap;
-    case 'swing': case 'volley': return def.attack.ap;
+    case 'swing': case 'volley': case 'lob': return def.attack.ap;
+    case 'charge': case 'blast': case 'rally': return def.skill ? def.skill.ap : 0;
     default: return 0;
   }
 }
-export function prepaidCost(plan) { return upgradeCost(plan.upgrades || 0) + (plan.defends || 0) * RULES.defendCost; }
+export const SKILL_KINDS = ['charge', 'blast', 'rally'];
+export function prepaidCost(plan) { return upgradeCost(plan.upgrades || 0) + (plan.defends || 0) * RULES.defendCost + (plan.parry ? RULES.parryCost : 0) + (plan.overwatch ? RULES.overwatchCost : 0); }
 export function planCost(q, plan) { return prepaidCost(plan) + plan.actions.reduce((n, a) => n + actionCost(q, a), 0); }
 
 const num = v => (typeof v === 'number' && isFinite(v) ? v : 0);
@@ -22,9 +24,12 @@ export function sanitizePlan(q, plan) {
   const p = emptyPlan();
   p.upgrades = Math.max(0, Math.min(RULES.maxUpgrades, plan.upgrades | 0));
   p.defends = Math.max(0, Math.min(RULES.maxDefends, plan.defends | 0));
+  if (plan.parry && isMelee(def)) p.parry = true;
+  if (plan.overwatch && isShooter(def)) p.overwatch = { x: num(plan.overwatch.x), z: num(plan.overwatch.z) };
   let used = prepaidCost(p);
   const budget = apFor(q);
   if (used > budget) return emptyPlan();
+  let skillUsed = false;
   for (const a0 of plan.actions || []) {
     let a;
     if (a0.kind === 'move') {
@@ -33,7 +38,11 @@ export function sanitizePlan(q, plan) {
       a = { kind: 'move', pts, ap: Math.max(1, Math.round(num(a0.ap))) };
     } else if (a0.kind === 'wait') a = { kind: 'wait', ap: Math.max(1, Math.round(num(a0.ap))) };
     else if (a0.kind === def.attack.kind) a = { kind: a0.kind, x: num(a0.x), z: num(a0.z) };
-    else continue;
+    else if (def.skill && a0.kind === def.skill.kind) {
+      if (skillUsed || (q.cd | 0) > 0) continue;
+      skillUsed = true;
+      a = { kind: a0.kind, x: num(a0.x), z: num(a0.z) };
+    } else continue;
     const c = actionCost(q, a);
     if (used + c > budget) {
       if ((a.kind === 'move' || a.kind === 'wait') && budget - used >= 1) { a.ap = budget - used; p.actions.push(a); used = budget; }

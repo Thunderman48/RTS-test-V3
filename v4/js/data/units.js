@@ -13,6 +13,15 @@ export const RULES = {
   armorK: 20,                   // damage * armorK / (armorK + armor)
   defendMult: 0.5,              // a defended hit deals half
   cp: 3,                        // squads you can directly control per round (hero is free)
+  // M2 tactics
+  engageGap: 0.35,              // squads this close to an enemy melee squad are engaged
+  disengageAP: 30,              // stepping away from an engaged enemy costs this much AP...
+  partingMult: 0.5,             // ...and that enemy gets a free hit at this strength
+  parryCost: 15,                // prepared parry: negates the next melee hit and ripostes
+  riposteMult: 0.5,
+  overwatchCost: 40,            // prepared overwatch: fire once at the first enemy that moves in the front cone (any tier)
+  overwatchCos: 0.5,            // overwatch fires at enemies moving inside this front cone
+  coverMult: 0.5,               // volleys through a forest deal half damage
   roundLimit: 40,
   planningTimerSec: 120,
 };
@@ -28,6 +37,16 @@ export const PAINT = {
 //  volley : straight line toward the aim point (range, width); stopped by hard cover
 const SWING = (ap, dmg, reach = 1.5) => ({ kind: 'swing', ap, dmg, reach, cosHalf: 0.5 });
 const VOLLEY = (ap, dmg, range, width = 0.7) => ({ kind: 'volley', ap, dmg, range, width });
+//  lob    : arcs over walls onto a circle at the aim point (no line of sight needed)
+const LOB = (ap, dmg, range, radius = 1.5) => ({ kind: 'lob', ap, dmg, range, radius });
+// Skills (once per round at most, then a cooldown in rounds):
+//  charge : lower weapons for `wind` AP, then rush along a lane up to `len`; the first enemy
+//           squad met takes the impact and the squad stops in contact (engaged)
+//  blast  : a circle of necromantic force at the aim point (within `range`)
+//  rally  : a circle around the hero; allies inside gain a defend and hit harder this round
+const CHARGE = (ap, dmg, len, cd = 1) => ({ kind: 'charge', name: 'Charge', ap, wind: 8, dmg, len, cd });
+const BLAST = (ap, dmg, range, radius, cd = 2) => ({ kind: 'blast', name: 'Bone Blast', ap, dmg, range, radius, cd });
+const RALLY = (ap, radius, cd = 2) => ({ kind: 'rally', name: 'Rally', ap, radius, defends: 1, dmgMult: 1.25, cd });
 
 // Unit roles are the same for both sides; looks and numbers differ a little.
 //  models: miniatures in the squad, hpPer: HP of each model, dmg is PER MODEL alive
@@ -35,21 +54,21 @@ export const FACTIONS = {
   kingdom: {
     name: 'Kingdom', short: 'KGD', colorCss: '#3a78d8',
     units: {
-      hero:    { name: 'Lord Commander', role: 'hero', models: 1, hpPer: 120, armor: 9, tier: 5, look: 'lord', vision: 12, defends: 2, attack: SWING(25, 18, 1.6) },
+      hero:    { name: 'Lord Commander', role: 'hero', models: 1, hpPer: 120, armor: 9, tier: 5, look: 'lord', vision: 12, defends: 2, attack: SWING(25, 18, 1.6), skill: RALLY(20, 5) },
       tank:    { name: 'Shieldwall', role: 'tank', models: 3, hpPer: 34, armor: 12, tier: 4, look: 'shield', vision: 9, defends: 2, attack: SWING(30, 4, 1.3) },
       fighter: { name: 'Men-at-arms', role: 'fighter', models: 4, hpPer: 20, armor: 7, tier: 5, look: 'sword', vision: 9, defends: 1, attack: SWING(25, 5, 1.5) },
       ranged:  { name: 'Crossbows', role: 'ranged', models: 4, hpPer: 15, armor: 3, tier: 5, look: 'crossbow', vision: 11, defends: 1, attack: VOLLEY(30, 4, 14) },
-      fast:    { name: 'Outriders', role: 'fast', models: 3, hpPer: 24, armor: 5, tier: 6, look: 'rider', vision: 11, defends: 1, attack: SWING(20, 7, 1.7) },
+      fast:    { name: 'Outriders', role: 'fast', models: 3, hpPer: 24, armor: 5, tier: 6, look: 'rider', vision: 11, defends: 1, attack: SWING(20, 7, 1.7), skill: CHARGE(35, 9, 9) },
     },
   },
   undead: {
     name: 'Undead Legion', short: 'UND', colorCss: '#9b59d0',
     units: {
-      hero:    { name: 'Necromancer', role: 'hero', models: 1, hpPer: 105, armor: 7, tier: 5, look: 'necro', vision: 12, defends: 2, attack: SWING(25, 16, 1.6) },
+      hero:    { name: 'Necromancer', role: 'hero', models: 1, hpPer: 110, armor: 7, tier: 5, look: 'necro', vision: 12, defends: 2, attack: SWING(25, 16, 1.6), skill: BLAST(30, 16, 9, 2.2) },
       tank:    { name: 'Grave Guard', role: 'tank', models: 3, hpPer: 34, armor: 11, tier: 4, look: 'graveguard', vision: 9, defends: 2, attack: SWING(30, 5, 1.3) },
-      fighter: { name: 'Skeleton Warband', role: 'fighter', models: 5, hpPer: 14, armor: 5, tier: 5, look: 'skeleton', vision: 9, defends: 1, attack: SWING(25, 4, 1.5) },
-      ranged:  { name: 'Bone Archers', role: 'ranged', models: 4, hpPer: 14, armor: 2, tier: 5, look: 'archer', vision: 11, defends: 1, attack: VOLLEY(30, 4, 14, 0.9) },
-      fast:    { name: 'Wraiths', role: 'fast', models: 3, hpPer: 22, armor: 4, tier: 6, look: 'wraith', vision: 11, defends: 1, attack: SWING(20, 7, 1.7) },
+      fighter: { name: 'Skeleton Warband', role: 'fighter', models: 5, hpPer: 15, armor: 5, tier: 5, look: 'skeleton', vision: 9, defends: 1, attack: SWING(25, 4, 1.5) },
+      ranged:  { name: 'Bone Archers', role: 'ranged', models: 4, hpPer: 14, armor: 2, tier: 5, look: 'archer', vision: 11, defends: 1, attack: LOB(32, 3, 13, 1.5) },
+      fast:    { name: 'Wraiths', role: 'fast', models: 3, hpPer: 22, armor: 4, tier: 6, look: 'wraith', vision: 11, defends: 1, ghost: true, attack: SWING(20, 7, 1.7), skill: CHARGE(35, 8, 9) },
     },
   },
 };
@@ -64,3 +83,5 @@ export function squadRadius(def, models) {
 }
 
 export function unitDef(faction, role) { return FACTIONS[faction].units[role]; }
+export const isMelee = def => def.attack.kind === 'swing';
+export const isShooter = def => def.attack.kind === 'volley' || def.attack.kind === 'lob';

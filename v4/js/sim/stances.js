@@ -3,7 +3,7 @@
 //  guard   : strike enemies that come close (melee chases up to 8"); ranged volleys targets in range
 //  hold    : stay put, all AP into defends
 //  advance : like guard, but walks toward the nearest enemy when nobody is in reach
-import { RULES } from '../data/units.js';
+import { RULES, isMelee, isShooter } from '../data/units.js';
 import { defOf, radiusOf, emptyPlan, apFor } from './state.js';
 import { Nav, pathAP, walkAP } from './nav.js';
 import { dist } from './geom.js';
@@ -82,24 +82,28 @@ export function buildStancePlan(s, q, enemies) {
   let left = apFor(q);
   const st = q.stance;
   if (st === 'hold' || !enemies.length) { fillDefends(plan, left); return plan; }
-  if (def.attack.kind === 'volley') {
+  if (isShooter(def)) {
     const range = def.attack.range;
     const t = nearestEnemy(s, q, enemies, range);
     if (t) {
-      while (left >= def.attack.ap + (left > 60 ? 0 : 0)) { plan.actions.push({ kind: 'volley', x: t.x, z: t.z }); left -= def.attack.ap; }
+      while (left >= def.attack.ap) { plan.actions.push({ kind: def.attack.kind, x: t.x, z: t.z }); left -= def.attack.ap; }
       fillDefends(plan, left);
       return plan;
     }
+    const e = nearestEnemy(s, q, enemies);
     if (st === 'advance') {
-      const e = nearestEnemy(s, q, enemies);
       const nav = Nav.for(s.terrain, radiusOf(q), 'r');
       const pts = trimPath(q.x, q.z, nav.path(q.x, q.z, e.x, e.z), range * 0.8);
       if (pts.length) { plan.actions.push({ kind: 'move', pts, ap: left }); return plan; }
     }
+    // guard: watch the nearest enemy's approach
+    plan.overwatch = { x: e.x, z: e.z }; left -= RULES.overwatchCost;
     fillDefends(plan, left);
     return plan;
   }
   const t = nearestEnemy(s, q, enemies, st === 'advance' ? 1e9 : GUARD_RANGE);
+  // already in contact: prepare a parry before trading blows
+  if (t && isMelee(def) && nearestEnemy(s, q, enemies, RULES.engageGap)) { plan.parry = true; left -= RULES.parryCost; }
   if (t) left = meleePlan(s, q, t, plan, left);
   fillDefends(plan, left);
   return plan;

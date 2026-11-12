@@ -1,17 +1,23 @@
 // V4 round resolution.
 //  Both sides' orders are resolved together. Speed tiers act fastest -> slowest; inside a tier
 //  every squad acts at once on a shared timeline where an action's AP cost is its duration.
-//  Every attack is a non-targeted skillshot: a Swing arc or a Volley line. Its area is
-//  telegraphed for the whole wind-up and anything inside it when it resolves is hit.
+//  Every attack is a non-targeted skillshot (Swing arc, Volley line, Lob circle, Charge lane,
+//  Bone Blast circle). Its area is telegraphed for the whole wind-up and anything inside it
+//  when it resolves is hit.
+//  Tactics (M2): engagement (stepping away from an enemy melee squad costs AP and gives it a
+//  parting blow), parry (negates the next melee hit and ripostes), overwatch (fires once at the
+//  first enemy that moves in the front cone, in any tier), cover (forests halve volleys),
+//  line of sight (walls and rocks stop volleys; lobs arc over), skill cooldowns.
 // Produces the new state and a log used for scrubbable playback.
-import { RULES } from '../data/units.js';
+import { RULES, isMelee, isShooter } from '../data/units.js';
 import { dist, norm, segRect, segCircle } from './geom.js';
-import { clone, defOf, radiusOf, modelsFor, speedOf, apFor } from './state.js';
+import { clone, defOf, radiusOf, modelsFor, speedOf } from './state.js';
 import { validateOrders, actionCost } from './orders.js';
 import { buildStancePlan } from './stances.js';
 import { terrainFactor, pointBlocked, blocks } from './nav.js';
 
 const r3 = v => Math.round(v * 1000) / 1000;
+const MELEE_HITS = ['swing', 'charge', 'parting'];
 
 export function damageAfter(dmg, armor, defended) {
   const v = dmg * RULES.armorK / (RULES.armorK + armor) * (defended ? RULES.defendMult : 1);
@@ -28,6 +34,43 @@ export function arcHits(ox, oz, dx, dz, R, ch, cx, cz, rc) {
   return cosA >= ch - rc / l;
 }
 
+// Fraction (0..1) along a->b where blocking terrain (walls, rocks) first cuts the line, or 1.
+export function losCut(terrain, ax, az, bx, bz) {
+  let tCut = 1;
+  for (const t of terrain) {
+    if (!blocks(t)) continue;
+    const tt = t.r !== undefined ? segCircle(ax, az, bx, bz, t.x, t.z, t.r) : segRect(ax, az, bx, bz, t, 0);
+    if (tt >= 0 && tt < tCut) tCut = tt;
+  }
+  return tCut;
+}
+// Is the target in cover from a shot along a->b (the line crosses a forest, or it stands in one)?
+export function inCover(terrain, ax, az, bx, bz) {
+  for (const t of terrain) {
+    if (t.kind !== 'forest') continue;
+    if (dist(bx, bz, t.x, t.z) < t.r) return true;
+    const tt = segCircle(ax, az, bx, bz, t.x, t.z, t.r);
+    if (tt >= 0 && tt < 1) return true;
+  }
+  return false;
+}
+// Aim point clamped to a maximum range from (ox,oz)
+export function clampAim(ox, oz, x, z, range) {
+  const d = norm(x - ox, z - oz);
+  if (d.l <= range) return { x, z };
+  return { x: ox + d.x * range, z: oz + d.z * range };
+}
+// Enemy melee squads this squad is engaged with
+export function engagedWith(q, squads) {
+  if (defOf(q).ghost) return [];
+  const out = [];
+  for (const e of squads) {
+    if (e.owner === q.owner || e.hp <= 0 || !isMelee(defOf(e))) continue;
+    if (dist(q.x, q.z, e.x, e.z) <= radiusOf(q) + radiusOf(e) + RULES.engageGap) out.push(e);
+  }
+  return out;
+}
+
 export function resolveRound(state0, ordersIn) {
   const s = clone(state0);
   const round = s.round;
@@ -37,7 +80,7 @@ export function resolveRound(state0, ordersIn) {
   for (const p of [0, 1]) for (const [id, st] of Object.entries(orders[p].stances)) {
     const q = s.squads.find(x => x.id === id); if (q) q.stance = st;
   }
-  // planning-time knowledge (all visible in M1)
+  // planning-time knowledge (everything visible until fog arrives in M3)
   const snapshot = s.squads.filter(q => q.hp > 0).map(q => ({ ...q }));
 
   const rts = [];
@@ -45,13 +88,17 @@ export function resolveRound(state0, ordersIn) {
     if (q.hp <= 0) continue;
     const def = defOf(q);
     const direct = orders[q.owner].squads[q.id];
-    const plan = direct || buildStancePlan(s, q, snapshot.filter(e => e.owner !== q.owner));
+    const plan = direct || buildStancePlan(s, q, snapshot.filter(e => e.owner !== q.owner), snapshot);
     rts.push({
       q, def, plan, direct: !!direct,
       actions: plan.actions.map(a => ({ ...a, cost: actionCost(q, a) })),
       tier: Math.max(RULES.minTier, def.tier + (plan.upgrades || 0)),
       idx: 0, el: 0, st: null,
       defends: def.defends + (plan.defends || 0),
+      parry: !!plan.parry,
+      watch: plan.overwatch ? { active: true } : null,
+      mult: 1,
+      parted: new Set(),           // enemies that already got a parting blow on this squad
       acted: false,
     });
   }
@@ -67,97 +114,217 @@ export function resolveRound(state0, ordersIn) {
     if (last && last[0] === row[0]) tr[tr.length - 1] = row; else tr.push(row);
   };
   const living = () => s.squads.filter(q => q.hp > 0);
+  const atkDmg = (r, base) => base * r.q.models * r.mult;
 
   // ---- start: reveal tiers and what each squad prepared --------------------------
   seg = { kind: 'start', len: 0, tracks: {}, events: [] };
-  for (const r of rts) ev({ type: 'prep', id: r.q.id, tier: r.tier, upgrades: r.plan.upgrades || 0, defends: r.defends, stance: r.direct ? null : r.q.stance });
+  for (const r of rts) {
+    if (r.plan.overwatch) {
+      const d = norm(r.plan.overwatch.x - r.q.x, r.plan.overwatch.z - r.q.z);
+      if (d.l > 0.01) { r.q.fx = d.x; r.q.fz = d.z; rec(r.q, 0); }
+    }
+    ev({ type: 'prep', id: r.q.id, tier: r.tier, upgrades: r.plan.upgrades || 0, defends: r.defends, parry: r.parry, watch: !!r.watch, stance: r.direct ? null : r.q.stance });
+    if (r.watch) ev({ type: 'watch', id: r.q.id, R: r.def.attack.range, ch: RULES.overwatchCos });
+  }
   log.segments.push(seg);
 
   // ---- hits ---------------------------------------------------------------------
   let hits = [];
+  function hitOne(h) {
+    const q = h.dst, r = rtById.get(q.id);
+    if (q.hp <= 0) return;
+    if (r && r.parry && MELEE_HITS.includes(h.kind)) {
+      r.parry = false;
+      ev({ type: 'parry', id: q.id, src: h.src });
+      const src = rtById.get(h.src);
+      if (src && src.q.hp > 0) hitOne({ src: q.id, dst: src.q, dmg: atkDmg(r, r.def.attack.dmg) * RULES.riposteMult, kind: 'riposte' });
+      return;
+    }
+    let defended = false;
+    if (r && r.defends > 0) { r.defends--; defended = true; }
+    const dmg = damageAfter(h.dmg * (h.cover ? RULES.coverMult : 1), defOf(q).armor, defended);
+    const before = q.models;
+    q.hp = Math.max(0, q.hp - dmg);
+    q.models = modelsFor(q, q.hp);
+    ev({ type: 'hit', src: h.src, dst: q.id, dmg, raw: Math.round(h.dmg), defended, cover: !!h.cover, kind: h.kind, hp: q.hp, models: q.models, lost: before - q.models, defLeft: r ? r.defends : 0 });
+  }
   function applyHits(batch) {
     const byDst = new Map();
     for (const h of batch) { if (!byDst.has(h.dst.id)) byDst.set(h.dst.id, []); byDst.get(h.dst.id).push(h); }
     for (const [, list] of byDst) {
-      list.sort((a, b) => b.dmg - a.dmg); // strongest hit uses the defend first
-      for (const h of list) {
-        const q = h.dst, r = rtById.get(q.id);
-        let defended = false;
-        if (r && r.defends > 0) { r.defends--; defended = true; }
-        const dmg = damageAfter(h.dmg, defOf(q).armor, defended);
-        const before = q.models;
-        q.hp = Math.max(0, q.hp - dmg);
-        q.models = modelsFor(q, q.hp);
-        ev({ type: 'hit', src: h.src, dst: q.id, dmg, raw: h.dmg, defended, kind: h.kind, hp: q.hp, models: q.models, lost: before - q.models, defLeft: r ? r.defends : 0 });
-      }
+      list.sort((a, b) => b.dmg - a.dmg); // strongest hit uses the defend / parry first
+      for (const h of list) hitOne(h);
     }
   }
   function checkDeaths() {
     for (const q of s.squads) if (q.hp <= 0 && !q.dead) {
       q.dead = true;
       ev({ type: 'down', id: q.id });
-      const r = rtById.get(q.id); if (r) r.idx = r.actions.length;
+      const r = rtById.get(q.id); if (r) { r.idx = r.actions.length; r.watch = null; }
     }
   }
 
+  // ---- shooting helpers ---------------------------------------------------------
+  // a volley line from (ox,oz) along d: first enemy on the line before a wall
+  function volley(r, ox, oz, dx, dz, overwatch = false) {
+    const q = r.q, at = r.def.attack;
+    const bx = ox + dx * at.range, bz = oz + dz * at.range;
+    const tCut = losCut(s.terrain, ox, oz, bx, bz);
+    let best = null, bt = tCut;
+    for (const e of living()) {
+      if (e.owner === q.owner) continue;
+      const tt = segCircle(ox, oz, bx, bz, e.x, e.z, radiusOf(e) + at.width / 2);
+      if (tt >= 0 && tt < bt) { bt = tt; best = e; }
+    }
+    const ex = ox + (bx - ox) * bt, ez = oz + (bz - oz) * bt;
+    const cover = best ? inCover(s.terrain, ox, oz, best.x, best.z) : false;
+    if (best) hits.push({ src: q.id, dst: best, dmg: atkDmg(r, at.dmg), kind: 'volley', cover });
+    ev({ type: 'release', id: q.id, kind: 'volley', hit: best ? [best.id] : [], ex: r3(ex), ez: r3(ez), blocked: !best && tCut < 1, cover, overwatch });
+  }
+  // a lobbed circle (or bone blast) at (cx,cz): everyone inside, walls don't matter
+  function circleHit(r, kind, cx, cz, R, dmg, overwatch = false) {
+    const q = r.q, struck = [];
+    for (const e of living()) {
+      if (e.owner === q.owner) continue;
+      if (dist(cx, cz, e.x, e.z) <= R + radiusOf(e) * 0.6) { hits.push({ src: q.id, dst: e, dmg, kind }); struck.push(e.id); }
+    }
+    ev({ type: 'release', id: q.id, kind, hit: struck, ex: r3(cx), ez: r3(cz), overwatch });
+  }
+
   // ---- one AP of an action ---------------------------------------------------------
-  function step(r, moves) {
+  function step(r, moves, moved) {
     const q = r.q, a = r.actions[r.idx];
+    const def = r.def;
     if (r.el === 0) {
       r.st = { phase: 'go' };
-      if (a.kind === 'move') { r.st.pts = a.pts.map(p => ({ ...p })); }
-      if (a.kind === 'swing' || a.kind === 'volley') {
+      if (a.kind === 'move') r.st.pts = a.pts.map(p => ({ ...p }));
+      if (a.kind === 'swing' || a.kind === 'volley' || a.kind === 'charge') {
         const d = norm(a.x - q.x, a.z - q.z);
         if (d.l > 0.01) { q.fx = d.x; q.fz = d.z; }
         r.st.dx = q.fx; r.st.dz = q.fz; r.st.ox = q.x; r.st.oz = q.z;
-        const at = r.def.attack;
-        const shape = a.kind === 'swing'
-          ? { shape: 'arc', R: r3(radiusOf(q) + at.reach), ch: at.cosHalf }
-          : { shape: 'line', len: at.range, w: at.width };
         rec(q, T);
-        ev({ type: 'tele', id: q.id, kind: a.kind, ox: r3(q.x), oz: r3(q.z), dx: r3(q.fx), dz: r3(q.fz), t1: r3(T + a.cost), ...shape });
+        const at = def.attack;
+        if (a.kind === 'swing') ev({ type: 'tele', id: q.id, kind: 'swing', ox: r3(q.x), oz: r3(q.z), dx: r3(q.fx), dz: r3(q.fz), t1: r3(T + a.cost), shape: 'arc', R: r3(radiusOf(q) + at.reach), ch: at.cosHalf });
+        else if (a.kind === 'volley') ev({ type: 'tele', id: q.id, kind: 'volley', ox: r3(q.x), oz: r3(q.z), dx: r3(q.fx), dz: r3(q.fz), t1: r3(T + a.cost), shape: 'line', len: at.range, w: at.width });
+        else {
+          const sk = def.skill;
+          q.cd = sk.cd + 1;
+          r.st.phase = 'wind'; r.st.travel = 0;
+          ev({ type: 'tele', id: q.id, kind: 'charge', ox: r3(q.x), oz: r3(q.z), dx: r3(q.fx), dz: r3(q.fz), t1: r3(T + sk.wind), shape: 'line', len: sk.len, w: r3(radiusOf(q) * 2) });
+        }
+      }
+      if (a.kind === 'lob' || a.kind === 'blast') {
+        const range = a.kind === 'lob' ? def.attack.range : def.skill.range;
+        const R = a.kind === 'lob' ? def.attack.radius : def.skill.radius;
+        const c = clampAim(q.x, q.z, a.x, a.z, range);
+        const d = norm(c.x - q.x, c.z - q.z);
+        if (d.l > 0.01) { q.fx = d.x; q.fz = d.z; rec(q, T); }
+        if (a.kind === 'blast') q.cd = def.skill.cd + 1;
+        r.st.cx = c.x; r.st.cz = c.z;
+        ev({ type: 'tele', id: q.id, kind: a.kind, ox: r3(c.x), oz: r3(c.z), dx: r3(q.fx), dz: r3(q.fz), t1: r3(T + a.cost), shape: 'circle', R });
+      }
+      if (a.kind === 'rally') {
+        q.cd = def.skill.cd + 1;
+        ev({ type: 'tele', id: q.id, kind: 'rally', ox: r3(q.x), oz: r3(q.z), dx: r3(q.fx), dz: r3(q.fz), t1: r3(T + a.cost), shape: 'circle', R: def.skill.radius });
       }
       ev({ type: 'act', id: q.id, kind: a.kind, cost: a.cost });
     }
     r.el += 1;
     const st = r.st;
     if (a.kind === 'move' && st.phase === 'go') {
-      const f = terrainFactor(s.terrain, q.x, q.z);
-      moves.push({ r, st, d: speedOf(q) * f });
-    } else if ((a.kind === 'swing' || a.kind === 'volley') && r.el >= a.cost && st.phase === 'go') {
+      // stepping away from an engaged enemy: stand and disengage first, taking parting blows
+      if (!st.checked) {
+        st.checked = true;
+        const wp = st.pts[0];
+        if (wp) {
+          const dir = norm(wp.x - q.x, wp.z - q.z);
+          const away = engagedWith(q, living()).filter(e => (e.x - q.x) * dir.x + (e.z - q.z) * dir.z < 0);
+          if (away.length) {
+            st.hold = RULES.disengageAP;
+            ev({ type: 'disengage', id: q.id });
+            for (const e of away) {
+              if (r.parted.has(e.id)) continue;
+              r.parted.add(e.id);
+              const er = rtById.get(e.id);
+              hits.push({ src: e.id, dst: q, dmg: defOf(e).attack.dmg * e.models * (er ? er.mult : 1) * RULES.partingMult, kind: 'parting' });
+            }
+          }
+        }
+      }
+      if (st.hold > 0) st.hold--;
+      else moves.push({ r, st, d: speedOf(q) * terrainFactor(s.terrain, q.x, q.z) });
+    } else if (a.kind === 'charge') {
+      if (st.phase === 'wind' && r.el >= def.skill.wind) st.phase = 'rush';
+      else if (st.phase === 'rush') {
+        const sk = def.skill, rq = radiusOf(q);
+        const step = Math.min(speedOf(q) * 4.6 * terrainFactor(s.terrain, q.x, q.z), sk.len - st.travel);
+        const nx = q.x + st.dx * step, nz = q.z + st.dz * step;
+        // first enemy squad in the way takes the impact
+        let hit = null, ht = 2;
+        for (const e of living()) {
+          if (e.owner === q.owner) continue;
+          const tt = segCircle(q.x, q.z, nx, nz, e.x, e.z, rq + radiusOf(e));
+          if (tt >= 0 && tt < ht) { ht = tt; hit = e; }
+        }
+        // riders and wraiths weave through their own lines; only walls, rocks and the edge stop them
+        const bump = (x, z) => pointBlocked(s.terrain, x, z, rq * 0.85);
+        // when the charge ends on top of a friend, step aside to the nearest free spot
+        const settle = () => {
+          for (const o of living()) {
+            if (o === q || o.owner !== q.owner) continue;
+            const need = rq + radiusOf(o), d = dist(q.x, q.z, o.x, o.z);
+            if (d >= need - 0.02) continue;
+            const v = d > 1e-4 ? norm(q.x - o.x, q.z - o.z) : { x: -st.dz, z: st.dx };
+            const tx = o.x + v.x * need, tz = o.z + v.z * need;
+            if (!pointBlocked(s.terrain, tx, tz, rq * 0.85)) { q.x = tx; q.z = tz; }
+          }
+        };
+        rec(q, T);
+        if (hit) {
+          const t = Math.max(0, ht - 0.01);
+          q.x += (nx - q.x) * t; q.z += (nz - q.z) * t;
+          hits.push({ src: q.id, dst: hit, dmg: atkDmg(r, sk.dmg), kind: 'charge' });
+          settle();
+          ev({ type: 'release', id: q.id, kind: 'charge', hit: [hit.id], ex: r3(q.x), ez: r3(q.z) });
+          st.phase = 'done';
+        } else if (bump(nx, nz)) {
+          ev({ type: 'release', id: q.id, kind: 'charge', hit: [], ex: r3(q.x), ez: r3(q.z), blocked: true });
+          st.phase = 'done';
+        } else {
+          q.x = nx; q.z = nz; st.travel += step;
+          if (st.travel >= sk.len - 1e-6) { settle(); ev({ type: 'release', id: q.id, kind: 'charge', hit: [], ex: r3(q.x), ez: r3(q.z) }); st.phase = 'done'; }
+        }
+        moved.add(q.id);
+        rec(q, T + 1);
+        if (st.phase === 'rush' && r.el >= a.cost) { settle(); ev({ type: 'release', id: q.id, kind: 'charge', hit: [], ex: r3(q.x), ez: r3(q.z) }); st.phase = 'done'; }
+      }
+    } else if (r.el >= a.cost && st.phase === 'go') {
       st.phase = 'done';
-      const at = r.def.attack;
-      const dmg = at.dmg * q.models; // damage scales with models still standing
+      const at = def.attack;
       if (a.kind === 'swing') {
         const R = radiusOf(q) + at.reach;
         const struck = [];
         for (const e of living()) {
           if (e.owner === q.owner) continue;
-          if (arcHits(st.ox, st.oz, st.dx, st.dz, R, at.cosHalf, e.x, e.z, radiusOf(e))) { hits.push({ src: q.id, dst: e, dmg, kind: 'swing' }); struck.push(e.id); }
+          if (arcHits(st.ox, st.oz, st.dx, st.dz, R, at.cosHalf, e.x, e.z, radiusOf(e))) { hits.push({ src: q.id, dst: e, dmg: atkDmg(r, at.dmg), kind: 'swing' }); struck.push(e.id); }
         }
         ev({ type: 'release', id: q.id, kind: 'swing', hit: struck });
-      } else {
-        const bx = st.ox + st.dx * at.range, bz = st.oz + st.dz * at.range;
-        let tCut = 1;
-        for (const t of s.terrain) {
-          if (!blocks(t)) continue;
-          const tt = t.r !== undefined ? segCircle(st.ox, st.oz, bx, bz, t.x, t.z, t.r) : segRect(st.ox, st.oz, bx, bz, t, 0);
-          if (tt >= 0 && tt < tCut) tCut = tt;
+      } else if (a.kind === 'volley') volley(r, st.ox, st.oz, st.dx, st.dz);
+      else if (a.kind === 'lob') circleHit(r, 'lob', st.cx, st.cz, at.radius, atkDmg(r, at.dmg));
+      else if (a.kind === 'blast') circleHit(r, 'blast', st.cx, st.cz, def.skill.radius, atkDmg(r, def.skill.dmg));
+      else if (a.kind === 'rally') {
+        const sk = def.skill, ids = [];
+        for (const o of rts) {
+          if (o.q.owner !== q.owner || o.q.hp <= 0) continue;
+          if (dist(q.x, q.z, o.q.x, o.q.z) <= sk.radius + radiusOf(o.q)) { o.defends += sk.defends; o.mult = Math.max(o.mult, sk.dmgMult); ids.push(o.q.id); }
         }
-        let best = null, bt = tCut;
-        for (const e of living()) {
-          if (e.owner === q.owner) continue;
-          const tt = segCircle(st.ox, st.oz, bx, bz, e.x, e.z, radiusOf(e) + at.width / 2);
-          if (tt >= 0 && tt < bt) { bt = tt; best = e; }
-        }
-        if (best) hits.push({ src: q.id, dst: best, dmg, kind: 'volley' });
-        ev({ type: 'release', id: q.id, kind: 'volley', hit: best ? [best.id] : [], ex: r3(st.ox + (bx - st.ox) * bt), ez: r3(st.oz + (bz - st.oz) * bt), blocked: !best && tCut < 1 });
+        ev({ type: 'buff', id: q.id, kind: 'rally', ids });
       }
     }
     if (r.el >= a.cost) { r.idx++; r.el = 0; r.st = null; }
   }
 
-  function resolveMoves(moves) {
+  function resolveMoves(moves, moved) {
     const all = living();
     for (const m of moves) {
       const q = m.r.q, st = m.st;
@@ -177,7 +344,7 @@ export function resolveRound(state0, ordersIn) {
       let nx = cx, nz = cz;
       if (!clear(nx, nz)) {
         // slide sideways around whatever is in the way
-        const vx = cx - q.x, vz = cz - q.z, vl = Math.sqrt(vx * vx + vz * vz) || 1;
+        const vx = cx - q.x, vz = cz - q.z;
         const opts = [[0.819152, 0.573576], [0.819152, -0.573576], [0.34202, 0.939693], [0.34202, -0.939693]];
         let ok = false;
         for (const [c, sn] of opts) {
@@ -185,14 +352,37 @@ export function resolveRound(state0, ordersIn) {
           if (clear(tx, tz)) { nx = tx; nz = tz; ok = true; break; }
         }
         if (!ok) { if (st.pts.length <= 1 && st.pts[0] && dist(q.x, q.z, st.pts[0].x, st.pts[0].z) < rq * 3) st.phase = 'arrived'; continue; }
-        void vl;
       }
       rec(q, T);
       const d = norm(nx - q.x, nz - q.z);
-      if (d.l > 1e-4) { q.fx = d.x; q.fz = d.z; }
+      if (d.l > 1e-4) { q.fx = d.x; q.fz = d.z; moved.add(q.id); }
       q.x = nx; q.z = nz;
       rec(q, T + 1);
       if (!st.pts.length) st.phase = 'arrived';
+    }
+  }
+
+  // overwatch: any watcher fires once at the first enemy that moved inside its front cone
+  function overwatch(moved) {
+    if (!moved.size) return;
+    for (const r of rts) {
+      if (!r.watch || !r.watch.active || r.q.hp <= 0) continue;
+      const q = r.q, at = r.def.attack;
+      let best = null, bd = 1e9;
+      for (const id of moved) {
+        const e = rtById.get(id)?.q;
+        if (!e || e.owner === q.owner || e.hp <= 0) continue;
+        const d = dist(q.x, q.z, e.x, e.z);
+        if (d - radiusOf(e) > at.range || d < 1e-6) continue;
+        if (((e.x - q.x) * q.fx + (e.z - q.z) * q.fz) / d < RULES.overwatchCos) continue;
+        if (at.kind === 'volley' && losCut(s.terrain, q.x, q.z, e.x, e.z) < 1) continue;
+        if (d < bd) { bd = d; best = e; }
+      }
+      if (!best) continue;
+      r.watch.active = false;
+      ev({ type: 'watchEnd', id: q.id });
+      if (at.kind === 'volley') { const d = norm(best.x - q.x, best.z - q.z); volley(r, q.x, q.z, d.x, d.z, true); }
+      else circleHit(r, 'lob', best.x, best.z, at.radius, atkDmg(r, at.dmg), true);
     }
   }
 
@@ -209,9 +399,10 @@ export function resolveRound(state0, ordersIn) {
       const act = group.filter(r => r.q.hp > 0 && r.idx < r.actions.length);
       if (!act.length) break;
       hits = [];
-      const moves = [];
-      for (const r of act) step(r, moves);
-      resolveMoves(moves);
+      const moves = [], moved = new Set();
+      for (const r of act) step(r, moves, moved);
+      resolveMoves(moves, moved);
+      overwatch(moved);
       const batch = hits; hits = [];
       applyHits(batch);
       checkDeaths();
@@ -224,7 +415,7 @@ export function resolveRound(state0, ordersIn) {
   // ---- end of round ----------------------------------------------------------------
   seg = { kind: 'end', len: 0, tracks: {}, events: [] };
   s.squads = s.squads.filter(q => q.hp > 0);
-  for (const q of s.squads) delete q.dead;
+  for (const q of s.squads) { delete q.dead; if (q.cd > 0) q.cd--; }
   const aliveBy = [0, 1].map(p => s.squads.some(q => q.owner === p));
   if (!aliveBy[0] && !aliveBy[1]) s.winner = -1;
   else if (!aliveBy[0]) s.winner = 1;
@@ -237,3 +428,4 @@ export function resolveRound(state0, ordersIn) {
   s.round++;
   return { state: s, log };
 }
+export { isShooter };
