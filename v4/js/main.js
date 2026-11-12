@@ -48,7 +48,7 @@ class Game {
     this.state = createGame(1);
     buildTable(this.view, this.state.terrain);
     this.syncViews(this.state.squads.map(q => ({ ...q })), true);
-    this.view.cam = { x: 24, z: 16, dist: 44, yaw: 0.25, pitch: 0.82 };
+    this.view.cam = { x: 24, z: 16, dist: 72, yaw: 0.6, pitch: 0.62 };
     this.last = performance.now();
     this.loop();
   }

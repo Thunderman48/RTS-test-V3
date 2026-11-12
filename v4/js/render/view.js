@@ -20,8 +20,8 @@ export class View {
     bgc.fillStyle = gr; bgc.fillRect(0, 0, 4, 256);
     const bgt = new THREE.CanvasTexture(bg); bgt.colorSpace = THREE.SRGBColorSpace;
     this.scene.background = bgt;
-    this.scene.fog = new THREE.Fog(0x1d1915, 70, 140);
-    this.camera = new THREE.PerspectiveCamera(36, 1, 0.5, 400);
+    this.scene.fog = new THREE.Fog(0x1a1612, 120, 330);
+    this.camera = new THREE.PerspectiveCamera(36, 1, 0.5, 600);
     const W = RULES.board.w, H = RULES.board.h;
     this.W = W; this.H = H;
     this.cam = { x: W / 2, z: H / 2, dist: 46, yaw: 0, pitch: 0.95 };
@@ -60,10 +60,10 @@ export class View {
 
   updateCamera() {
     const c = this.cam;
-    c.x = Math.max(-4, Math.min(this.W + 4, c.x));
-    c.z = Math.max(-4, Math.min(this.H + 4, c.z));
-    c.dist = Math.max(10, Math.min(80, c.dist));
-    c.pitch = Math.max(0.55, Math.min(1.35, c.pitch));
+    c.x = Math.max(-10, Math.min(this.W + 10, c.x));
+    c.z = Math.max(-10, Math.min(this.H + 10, c.z));
+    c.dist = Math.max(10, Math.min(95, c.dist));
+    c.pitch = Math.max(0.45, Math.min(1.35, c.pitch));
     const horiz = Math.cos(c.pitch) * c.dist;
     this.camera.position.set(c.x - Math.sin(c.yaw) * horiz, Math.sin(c.pitch) * c.dist, c.z + Math.cos(c.yaw) * horiz);
     this.camera.lookAt(c.x, 0, c.z);

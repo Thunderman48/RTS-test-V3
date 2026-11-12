@@ -4,6 +4,7 @@ import { RULES } from '../data/units.js';
 import { DEPLOY } from '../data/map.js';
 import { rng } from '../sim/rng.js';
 import { Kit, paintMat } from './kit.js';
+import { buildRoom } from './props.js';
 
 const flat = c => new THREE.MeshStandardMaterial({ color: c, flatShading: true, roughness: 0.9, metalness: 0 });
 
@@ -171,16 +172,8 @@ function rockPile(k, R, x, z, r, cols = [0x8a8072, 0x9c9282, 0x7a7266]) {
 export function buildTable(view, terrain) {
   const W = RULES.board.w, H = RULES.board.h;
   const L = view.layers.table;
-  // wooden table under the diorama board (table top at y = -1)
-  const wood = new THREE.MeshStandardMaterial({ color: 0x6b4428, roughness: 0.7, metalness: 0.05 });
-  const top = new THREE.Mesh(new THREE.BoxGeometry(W + 14, 1.4, H + 14), wood);
-  top.position.set(W / 2, -1.7, H / 2); top.receiveShadow = true; L.add(top);
-  const edge = new THREE.Mesh(new THREE.BoxGeometry(W + 14.6, 0.5, H + 14.6), new THREE.MeshStandardMaterial({ color: 0x4e301b, roughness: 0.6 }));
-  edge.position.set(W / 2, -2.2, H / 2); L.add(edge);
-  // decor: a tape measure on the table
-  const tape = new THREE.Mesh(new THREE.CylinderGeometry(1.1, 1.1, 0.7, 16), new THREE.MeshStandardMaterial({ color: 0xe0b84f, flatShading: true }));
-  tape.position.set(-3.4, -0.65, H - 3); tape.castShadow = true; L.add(tape);
-  const tape2 = new THREE.Mesh(new THREE.BoxGeometry(5, 0.04, 0.5), new THREE.MeshStandardMaterial({ color: 0xf2d27a })); tape2.position.set(-0.6, -0.98, H - 3); L.add(tape2);
+  // the games table, props and the room around it
+  buildRoom(view);
   // the board: faceted ground on top, layered sides
   const ground = makeGround(terrain);
   const kg = new Kit(17);
