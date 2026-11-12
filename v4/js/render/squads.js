@@ -129,6 +129,7 @@ export class SquadView {
 
   destroy() {
     this.layer.remove(this.group);
-    this.group.traverse(o => { if (o.geometry) o.geometry.dispose(); if (o.material) o.material.dispose(); });
+    // geometries are shared (cached per mini type); only materials belong to this squad
+    this.group.traverse(o => { if (o.material) o.material.dispose(); });
   }
 }

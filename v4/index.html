@@ -7,7 +7,7 @@
 <title>Tiers V4: Tabletop</title>
 <link rel="stylesheet" href="css/style.css">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ccircle cx='8' cy='8' r='7' fill='%233a78d8'/%3E%3Ccircle cx='8' cy='8' r='3' fill='%23fff'/%3E%3C/svg%3E">
-<script type="importmap">{ "imports": { "three": "../vendor/three.module.min.js" } }</script>
+<script type="importmap">{ "imports": { "three": "../vendor/three.module.min.js", "three/addons/": "../vendor/three-addons/" } }</script>
 </head>
 <body>
 <canvas id="c"></canvas>
@@ -63,6 +63,7 @@
       <button class="fac kingdom" id="m-kingdom"><b>Kingdom</b><small>Knights, shieldwalls and crossbows</small></button>
       <button class="fac undead" id="m-undead"><b>Undead Legion</b><small>Skeletons, wraiths and necromancy</small></button>
     </div>
+    <button class="opt" id="m-anim"><span><b>Mini animation: <em class="anim-v">Posable arms</em></b><small>Posable arms swing their weapons; solid statues lunge like minis moved by hand</small></span></button>
     <button class="opt" id="m-lens"><span><b>Miniature lens</b><small>Tilt-shift blur, like a macro photo</small></span><i class="sw"></i></button>
     <p class="fine">Pick your army to play against the AI. Online play arrives in a later milestone.<br><a href="../">Back to V3</a></p>
   </div>
@@ -79,6 +80,7 @@
   <div class="card opts-card">
     <div class="help-head"><h2>Menu</h2><button class="ib" id="o-close">✕</button></div>
     <button class="opt" id="o-lens"><span><b>Miniature lens</b><small>Soft tilt-shift blur at the top and bottom of the view, like a macro photo of a tabletop</small></span><i class="sw"></i></button>
+    <button class="opt" id="o-anim"><span><b>Mini animation: <em class="anim-v">Posable arms</em></b><small>Posable arms swing their weapons; solid statues are one casting and lunge like minis moved by hand</small></span></button>
     <button class="opt" id="o-quit"><span><b>Quit to main menu</b><small>Ends this battle</small></span></button>
   </div>
 </div>

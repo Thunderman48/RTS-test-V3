@@ -9,7 +9,7 @@ import { aiOrders, aiMemory } from './ai/ai.js';
 import { View } from './render/view.js';
 import { buildTable } from './render/table.js';
 import { SquadView, LEAD } from './render/squads.js';
-import { makeMini, poseMini, attackPose, POSES } from './render/minis.js';
+import { makeMini, poseMini, attackPose, POSES, setMiniMode, MINI_MODE } from './render/minis.js';
 import { Timeline, SEC_PER_AP } from './render/timeline.js';
 import { ribbon, chevrons, ring, disc, arcShape, lineShape, Telegraphs, FloatTexts, Projectiles, COL } from './render/fx.js';
 import { Input } from './ui/input.js';
@@ -87,6 +87,10 @@ class Game {
     $('o-close').onclick = () => $('opts').classList.add('hidden');
     $('o-quit').onclick = () => location.reload();
     $('o-lens').onclick = $('m-lens').onclick = () => this.setLens(!this.lensOn);
+    $('o-anim').onclick = $('m-anim').onclick = () => this.setAnim(MINI_MODE === 'statue' ? 'posable' : 'statue');
+    let am = null; try { am = localStorage.getItem('tiers-v4-anim'); } catch {}
+    if (/statue/.test(location.search)) am = 'statue';
+    this.setAnim(am || 'posable', false);
     let saved = null; try { saved = localStorage.getItem('tiers-v4-lens'); } catch {}
     this.setLens(saved !== '0', false);
     $('pb-play').onclick = () => { this.playing = !this.playing; if (this.playing && this.T >= this.tl.total) this.T = 0; };
@@ -97,6 +101,19 @@ class Game {
     scrub.addEventListener('pointerdown', e => { scrub.setPointerCapture(e.pointerId); this.scrubbing = true; this.playing = false; seek(e); });
     scrub.addEventListener('pointermove', e => { if (this.scrubbing) seek(e); });
     scrub.addEventListener('pointerup', () => { this.scrubbing = false; });
+  }
+
+  setAnim(mode, save = true) {
+    setMiniMode(mode);
+    document.querySelectorAll('.anim-v').forEach(e => { e.textContent = MINI_MODE === 'statue' ? 'Solid statues' : 'Posable arms'; });
+    if (save) try { localStorage.setItem('tiers-v4-anim', MINI_MODE); } catch {}
+    // rebuild every squad with the new minis
+    if (this.views && this.views.size) {
+      for (const v of this.views.values()) v.destroy();
+      this.views.clear();
+      const list = this.phase === 'playback' && this.tl ? this.tl.sample(this.T) : (this.state ? this.state.squads.map(q => ({ ...q })) : []);
+      this.syncViews(list, true);
+    }
   }
 
   setLens(on, save = true) {

@@ -236,3 +236,4 @@ button { font-family: inherit; color: inherit; cursor: pointer; touch-action: ma
 .opt .sw::after { content: ""; position: absolute; left: 3px; top: 3px; width: 18px; height: 18px; border-radius: 50%; background: #fff; transition: transform .2s; }
 .opt.on .sw { background: #34c759; } .opt.on .sw::after { transform: translateX(16px); }
 .menu-card .opt { margin-top: 10px; }
+.opt em { font-style: normal; color: #3ee6ff; }

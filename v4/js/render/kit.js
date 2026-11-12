@@ -4,6 +4,7 @@
 // variation, which gives the soft "faceted" shimmer of the reference style.
 import * as THREE from 'three';
 import { miniMaterial } from './minishader.js';
+import { ConvexGeometry } from 'three/addons/geometries/ConvexGeometry.js';
 
 const R2 = Math.SQRT1_2;
 // deterministic hash of a position -> [0,1)
@@ -16,9 +17,9 @@ export class Kit {
   constructor(seed = 1, aoH = null) { this.parts = []; this.seed = seed; this.aoH = aoH; }
   // o: position x,y,z, rotation rx,ry,rz (YXZ), scale sx,sy,sz, j = jitter, sh = shade variation
   add(geo, color, o = {}) {
-    const { x = 0, y = 0, z = 0, rx = 0, ry = 0, rz = 0, sx = 1, sy = 1, sz = 1, j = 0, sh = 0.05, cf = null, ao = 1 } = o;
+    const { x = 0, y = 0, z = 0, rx = 0, ry = 0, rz = 0, sx = 1, sy = 1, sz = 1, j = 0, sh = 0.05, cf = null, ao = 1, plane = false } = o;
     const m = new THREE.Matrix4().compose(new THREE.Vector3(x, y, z), new THREE.Quaternion().setFromEuler(new THREE.Euler(rx, ry, rz, 'YXZ')), new THREE.Vector3(sx, sy, sz));
-    this.parts.push({ geo, color, m, j, sh, cf, ao });
+    this.parts.push({ geo, color, m, j, sh, cf, ao, plane, id: this.parts.length });
     return this;
   }
   box(w, h, d, color, o) { return this.add(new THREE.BoxGeometry(w, h, d), color, o); }
@@ -33,6 +34,18 @@ export class Kit {
     const w = Math.max(wt, wb);
     g.scale(1, 1, d / w);
     return this.add(g, color, o);
+  }
+  // convex hull of a point cloud: big flat facet planes, like a hand-cut low-poly sculpt
+  // pts: [[x,y,z], ...]
+  hull(pts, color, o = {}) {
+    const g = new ConvexGeometry(pts.map(p => new THREE.Vector3(p[0], p[1], p[2])));
+    return this.add(g, color, { sh: 0.07, plane: true, ...o });
+  }
+  // merge another kit's parts, transformed by a matrix (e.g. an arm baked into a pose)
+  merge(other, matrix = null) {
+    for (const p of other.parts) { if (matrix) p.m.premultiply(matrix); this.parts.push(p); }
+    other.parts = [];
+    return this;
   }
   // raw geometry already rotated/prepared
   geo(g, color, o) { return this.add(g, color, o); }
@@ -69,7 +82,10 @@ export class Kit {
       for (let i = 0; i < P.length; i += 9) {
         // one brightness per triangle
         v.set(P[i] + P[i + 3] + P[i + 6], P[i + 1] + P[i + 4] + P[i + 7], P[i + 2] + P[i + 5] + P[i + 8]);
-        const f = 1 + (hash(Math.round(v.x * 300), Math.round(v.y * 300), Math.round(v.z * 300), this.seed + 11) - 0.5) * 2 * p.sh;
+        // one brightness per facet plane (hulls) or per triangle (other parts)
+        const f = 1 + (p.plane
+          ? hash(Math.round(N[i] * 12), Math.round(N[i + 1] * 12), Math.round(N[i + 2] * 12), this.seed + p.id * 7.3) - 0.5
+          : hash(Math.round(v.x * 300), Math.round(v.y * 300), Math.round(v.z * 300), this.seed + 11) - 0.5) * 2 * p.sh;
         if (p.cf) c.setHex(p.cf(v.x / 3, v.y / 3, v.z / 3));
         for (let k = 0; k < 9; k += 3) {
           aos.push(aoV[(i + k) / 3]);
