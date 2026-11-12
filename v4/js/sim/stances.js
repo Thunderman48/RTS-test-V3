@@ -103,7 +103,7 @@ export function buildStancePlan(s, q, enemies) {
   }
   const t = nearestEnemy(s, q, enemies, st === 'advance' ? 1e9 : GUARD_RANGE);
   // already in contact: prepare a parry before trading blows
-  if (t && isMelee(def) && nearestEnemy(s, q, enemies, RULES.engageGap)) { plan.parry = true; left -= RULES.parryCost; }
+  if (t && def.parry && nearestEnemy(s, q, enemies, RULES.engageGap)) { plan.parry = true; left -= RULES.parryCost; }
   if (t) left = meleePlan(s, q, t, plan, left);
   fillDefends(plan, left);
   return plan;

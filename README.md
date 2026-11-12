@@ -13,8 +13,8 @@ A playable prototype of the **Turn-Based RTS (Design Doc V3)**. It combines RTS 
 * Every attack is a drag-aimed skillshot (Swing arc, Volley line). It hits whatever stands in the shape when it lands, so faster tiers can dodge.
 * Damage removes models, and a squad hits for damage per model × models left.
 * The battle plays back on a scrubbable timeline with a combat log.
-* **Milestone 2 (tactics):** charges, lobbed volleys over walls, Bone Blast and Rally with cooldowns; engagement (stepping away costs 30 AP and gives a parting blow), parry and riposte, overwatch that fires in any tier, line of sight and forest cover.
-* **Controls:** drag knobs on the selected squad (white = move, orange = attack, purple = skill), live previews (blocked shots, cover, charge lanes), first-round tips, order confirmations, and **Rehearse** to preview your plan against a still enemy.
+* **Milestone 2 (tactics):** charges, Arrow Storm (lobbed over walls), Bone Blast and Rally with cooldowns, colour-coded by type (green movement, red attack, blue defence); engagement (stepping away costs 30 AP and gives a parting blow), parry and riposte (fighters), overwatch that fires in any tier, line of sight and forest cover.
+* **Controls:** drag knobs on the selected squad (green = move, red = attack, skill in its category colour), a see-through ghost at the planned end position, live previews (blocked shots, cover, charge lanes), first-round tips, order confirmations, and **Rehearse** to preview your plan against a still enemy.
 * Tests: `node v4/tests/sim.test.mjs`.
 
 **Versions:** this is **V3**. Earlier versions stay playable: [`v1/`](v1/) at `…/RTS-test-V3/v1/` and [`v2/`](v2/) at `…/RTS-test-V3/v2/`.

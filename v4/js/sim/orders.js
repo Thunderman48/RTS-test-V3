@@ -9,11 +9,11 @@ export function actionCost(q, a) {
   switch (a.kind) {
     case 'move': case 'wait': return a.ap;
     case 'swing': case 'volley': case 'lob': return def.attack.ap;
-    case 'charge': case 'blast': case 'rally': return def.skill ? def.skill.ap : 0;
+    case 'charge': case 'blast': case 'rally': case 'storm': return def.skill ? def.skill.ap : 0;
     default: return 0;
   }
 }
-export const SKILL_KINDS = ['charge', 'blast', 'rally'];
+export const SKILL_KINDS = ['charge', 'blast', 'rally', 'storm'];
 export function prepaidCost(plan) { return upgradeCost(plan.upgrades || 0) + (plan.defends || 0) * RULES.defendCost + (plan.parry ? RULES.parryCost : 0) + (plan.overwatch ? RULES.overwatchCost : 0); }
 export function planCost(q, plan) { return prepaidCost(plan) + plan.actions.reduce((n, a) => n + actionCost(q, a), 0); }
 
@@ -24,7 +24,7 @@ export function sanitizePlan(q, plan) {
   const p = emptyPlan();
   p.upgrades = Math.max(0, Math.min(RULES.maxUpgrades, plan.upgrades | 0));
   p.defends = Math.max(0, Math.min(RULES.maxDefends, plan.defends | 0));
-  if (plan.parry && isMelee(def)) p.parry = true;
+  if (plan.parry && def.parry) p.parry = true;
   if (plan.overwatch && isShooter(def)) p.overwatch = { x: num(plan.overwatch.x), z: num(plan.overwatch.z) };
   let used = prepaidCost(p);
   const budget = apFor(q);

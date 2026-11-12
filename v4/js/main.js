@@ -197,14 +197,15 @@ class Game {
     this.tl = new Timeline(pre, log);
     this.T = 0; this.playing = true; this.lastT = 0;
     this.shotList = [];
-    for (const e of this.tl.events) if (e.type === 'release' && (e.kind === 'volley' || e.kind === 'lob')) {
+    for (const e of this.tl.events) if (e.type === 'release' && (e.kind === 'volley' || e.kind === 'lob' || e.kind === 'storm')) {
       const v = this.views.get(e.id); if (!v) continue;
-      const lead = e.overwatch ? 2.5 : (LEAD[v.style] || 4), T0 = e.T - lead;
+      const lead = e.overwatch ? 2.5 : e.kind === 'storm' ? 7 : (LEAD[v.style] || 4), T0 = e.T - lead;
       const p = this.tl.pose(e.id, T0), h = this.tl.health(e.id, T0);
-      this.shotList.push({ key: e.id + ':' + e.T, T0, T1: e.T, from: v.muzzles(p.x, p.z, p.fx, p.fz, h.models), to: { x: e.ex, z: e.ez }, arc: e.kind === 'lob' ? 3.2 : 0.5 });
+      this.shotList.push({ key: e.id + ':' + e.T, T0, T1: e.T, from: v.muzzles(p.x, p.z, p.fx, p.fz, h.models), to: { x: e.ex, z: e.ez }, arc: e.kind === 'volley' ? 0.5 : 3.2 });
     }
     this.selected = null;
     if (this.knobs) for (const el of Object.values(this.knobs)) el.style.display = 'none';
+    this.ghostView?.destroy(); this.ghostView = null;
     this.knobPos = null;
     this.view.clear('plan'); this.view.clear('ghost');
     $('dock').classList.add('hidden'); $('info').classList.add('hidden');
@@ -274,8 +275,8 @@ class Game {
       const cut = losCut(this.state.terrain, leg.ox, leg.oz, leg.ox + leg.dx * leg.len, leg.oz + leg.dz * leg.len);
       L.add(lineShape(leg.ox, leg.oz, leg.dx, leg.dz, leg.len * cut, leg.w, COL.volley, a));
       if (cut < 1) L.add(lineShape(leg.ox + leg.dx * leg.len * cut, leg.oz + leg.dz * leg.len * cut, leg.dx, leg.dz, leg.len * (1 - cut), leg.w, 0x555555, a * 0.6));
-    } else if (leg.kind === 'lob' || leg.kind === 'blast' || leg.kind === 'rally') {
-      const col = leg.kind === 'lob' ? COL.volley : leg.kind === 'blast' ? COL.blast : COL.rally;
+    } else if (leg.kind === 'lob' || leg.kind === 'blast' || leg.kind === 'storm' || leg.kind === 'rally') {
+      const col = COL[leg.kind];
       const d = disc(leg.R, col, a * 0.8); d.position.x = leg.cx; d.position.z = leg.cz; L.add(d);
       const r = ring(leg.R, 0.08, col, sel ? 0.9 : 0.5); r.position.x = leg.cx; r.position.z = leg.cz; L.add(r);
     } else if (leg.kind === 'charge') {
@@ -342,7 +343,7 @@ class Game {
     const content = {
       move: icon('move', 20),
       attack: icon(this.mode === 'overwatch' ? 'overwatch' : atkIc, 20),
-      skill: sk ? (this.planner.skillReady(q) ? icon(sk.kind === 'rally' ? 'rally' : sk.kind === 'blast' ? 'frag' : 'dash', 20) : `<b>${q.cd > 0 ? q.cd : '✓'}</b>`) : '',
+      skill: sk ? (this.planner.skillReady(q) ? icon(SKILL_IC[sk.kind], 20) : `<b>${q.cd > 0 ? q.cd : '✓'}</b>`) : '',
     };
     // place knobs in screen space around the squad's planned end point: always 64px apart
     const pr = this.planner.predict(q);
@@ -360,10 +361,30 @@ class Game {
       el.style.display = (this.drag && this.drag.kind !== k && !(k === 'attack' && this.drag.kind === 'overwatch')) ? 'none' : '';
       if (el._c !== content[k]) { el.innerHTML = content[k]; el._c = content[k]; }
       el.classList.toggle('off', k === 'skill' && !this.planner.skillReady(q));
+      if (k === 'skill') el.dataset.cat = sk.cat;
       el.classList.toggle('on', this.mode === k || (k === 'attack' && this.mode === 'overwatch'));
       el.style.transform = `translate(${p.x}px, ${p.y}px) translate(-50%, -50%)`;
     }
   }
+  // translucent copy of the selected squad where its orders leave it (live while dragging)
+  updateGhost(dt) {
+    const q = this.phase === 'planning' ? this.selectedSquad() : null;
+    const own = q && q.owner === this.me;
+    if (!own || (this.ghostView && this.ghostView.id !== q.id + '~' + MINI_MODE)) { this.ghostView?.destroy(); this.ghostView = null; }
+    if (!own) return;
+    let end = this.previewEnd;
+    if (!end) { const pr = this.planner.predict(q); end = { x: pr.x, z: pr.z, fx: pr.fx, fz: pr.fz }; }
+    const moved = Math.hypot(end.x - q.x, end.z - q.z) > 0.05;
+    if (!this.ghostView) {
+      this.ghostView = new SquadView({ ...q, ...end }, this.view.layers.units);
+      this.ghostView.id = q.id + '~' + MINI_MODE;
+      for (const r of [this.ghostView.teamRing, this.ghostView.selRing, this.ghostView.actRing]) r.visible = false;
+    }
+    this.ghostView.group.visible = moved;
+    if (moved) this.ghostView.update({ ...q, ...end, ghost: true }, dt, this.view.time || 0, false);
+    this.ghostView.teamRing.visible = false;
+  }
+
   knobAt(cx, cy) {
     if (!this.knobPos) return null;
     let best = null, bd = 30;
@@ -444,6 +465,7 @@ class Game {
   // live preview while dragging; returns tape label html
   preview(kind, q, p) {
     const V = this.view; V.clear('ghost');
+    this.previewEnd = null;
     const L = V.layers.ghost;
     const def = defOf(q), pr = this.planner.predict(q);
     const dx = p.x - pr.x, dz = p.z - pr.z, l = Math.hypot(dx, dz) || 1;
@@ -452,6 +474,8 @@ class Game {
     const enemies = this.state.squads.filter(e => e.owner !== this.me);
     if (kind === 'move') {
       const pv = this.planner.previewMove(q, p.x, p.z);
+      const a = pv.line[pv.line.length - 2] || pv.from, bpt = pv.line[pv.line.length - 1] || pv.end, fl = Math.hypot(bpt.x - a.x, bpt.z - a.z);
+      this.previewEnd = { x: pv.end.x, z: pv.end.z, fx: fl > 1e-3 ? (bpt.x - a.x) / fl : pr.fx, fz: fl > 1e-3 ? (bpt.z - a.z) / fl : pr.fz };
       L.add(ribbon(pv.line, 0.18, pv.short ? COL.bad : pv.disengage ? 0xffb020 : 0xffffff, 0.95));
       L.add(chevrons(pv.line, 0x111111, 0.8));
       const end = ring(radiusOf(q), 0.1, pv.short ? COL.bad : 0xffffff, 0.95, 0.07); end.position.x = pv.end.x; end.position.z = pv.end.z; L.add(end);
@@ -466,17 +490,18 @@ class Game {
       const sk = def.skill;
       if (sk.kind === 'charge') {
         const ln = this.planner.chargeLane(q, pr.x, pr.z, p.x, p.z);
+        this.previewEnd = { x: ln.x, z: ln.z, fx: ln.dx, fz: ln.dz };
         const cut = losCut(this.state.terrain, pr.x, pr.z, pr.x + ln.dx * sk.len, pr.z + ln.dz * sk.len);
         L.add(lineShape(pr.x, pr.z, ln.dx, ln.dz, sk.len, ln.w, COL.charge, 0.5));
         if (ln.hit) mark(ln.hit);
         return { html: `Charge ${sk.dmg * q.models}<small>${ln.hit ? 'hits the first squad in the lane' : 'nobody in the lane now'}${cut < 1 ? ' · a wall stops it' : ''}</small>`, bad: cut < 1 && !ln.hit };
       }
-      if (sk.kind === 'blast') {
-        const c = clampAim(pr.x, pr.z, p.x, p.z, sk.range);
-        const rr = ring(sk.range, 0.05, COL.blast, 0.4, 0.05, 72); rr.position.x = pr.x; rr.position.z = pr.z; L.add(rr);
-        const d = disc(sk.radius, COL.blast, 0.45); d.position.x = c.x; d.position.z = c.z; L.add(d);
+      if (sk.kind === 'blast' || sk.kind === 'storm') {
+        const c = clampAim(pr.x, pr.z, p.x, p.z, sk.range), col = COL[sk.kind];
+        const rr = ring(sk.range, 0.05, col, 0.4, 0.05, 72); rr.position.x = pr.x; rr.position.z = pr.z; L.add(rr);
+        const d = disc(sk.radius, col, 0.45); d.position.x = c.x; d.position.z = c.z; L.add(d);
         let n = 0; for (const e of enemies) if (Math.hypot(e.x - c.x, e.z - c.z) <= sk.radius + radiusOf(e) * 0.6) { n++; mark(e); }
-        return { html: `Bone Blast ${sk.dmg}<small>${n ? `hits ${n} if they stay` : 'nobody there now'}</small>` };
+        return { html: `${sk.name} ${sk.dmg * q.models}<small>${sk.kind === 'storm' ? 'arcs over walls · ' : ''}${n ? `hits ${n} if they stay` : 'nobody there now'}</small>` };
       }
       if (sk.kind === 'rally') {
         const d = disc(sk.radius, COL.rally, 0.3); d.position.x = pr.x; d.position.z = pr.z; L.add(d);
@@ -527,6 +552,7 @@ class Game {
 
   dragEnd(cx, cy, moved) {
     const d = this.drag; this.drag = null;
+    this.previewEnd = null;
     this.view.clear('ghost'); $('tape').classList.add('hidden');
     if (!d) return;
     const q = this.selectedSquad();
@@ -535,7 +561,7 @@ class Game {
         // tapping a knob: pick that order type (rally casts at once)
         const sk = defOf(q).skill;
         if (d.kind === 'skill' && sk && sk.kind === 'rally') { if (this.planner.addSkill(q.id, q.x, q.z)) this.hint(2); }
-        else { this.mode = d.kind; this.changed(); this.toast(d.kind === 'move' ? 'Move: drag the white knob, or tap the table' : d.kind === 'skill' ? `${sk.name}: drag the purple knob to aim, or tap a spot` : 'Attack: drag the orange knob to aim, or tap a spot'); }
+        else { this.mode = d.kind; this.changed(); this.toast(d.kind === 'move' ? 'Move: drag the green knob, or tap the table' : d.kind === 'skill' ? `${sk.name}: drag the skill knob to aim, or tap a spot` : 'Attack: drag the red knob to aim, or tap a spot'); }
         return;
       }
       this.onTap(cx, cy); return;
@@ -600,30 +626,31 @@ class Game {
     const st = this.planner.stanceOf(q);
     const engaged = engagedWith(q, this.state.squads).length > 0;
     const ctl = plan ? 'Your orders' : (q.role === 'hero' ? 'Hero: free to command' : 'Giving an order uses 1 command point');
-    const b = (act, ic, label, sub, on = false, dis = false, cls = '') => `<button class="act ${cls}${on ? ' on' : ''}" data-act="${act}" ${dis ? 'disabled' : ''}>${icon(ic, 20)}${label}<small>${sub}</small></button>`;
-    const skBtn = sk ? b('mode:skill', sk.kind === 'rally' ? 'rally' : sk.kind === 'blast' ? 'frag' : 'dash', sk.name, q.cd > 0 ? `recharging ${q.cd}` : this.planner.skillUsed(q.id) ? 'used' : `${sk.ap} AP`, this.mode === 'skill', !this.planner.skillReady(q) || left < sk.ap, 'sk') : '';
+    // every button is coloured by category: green = move/speed, red = attack, blue = defence/buffs
+    const b = (act, ic, label, sub, on = false, dis = false, cat = 'move') => `<button class="act cat-${cat}${on ? ' on' : ''}" data-act="${act}" ${dis ? 'disabled' : ''}>${icon(ic, 20)}${label}<small>${sub}</small></button>`;
+    const skBtn = sk ? b('mode:skill', SKILL_IC[sk.kind], sk.name, q.cd > 0 ? `recharging ${q.cd}` : this.planner.skillUsed(q.id) ? 'used' : `${sk.ap} AP`, this.mode === 'skill', !this.planner.skillReady(q) || left < sk.ap, sk.cat) : '';
     const melee = at.kind === 'swing';
     const prepBtn = melee
-      ? b('parry', 'parry', 'Parry', plan?.parry ? 'ready' : `${RULES.parryCost} AP`, !!plan?.parry, !plan?.parry && left < RULES.parryCost)
-      : b('mode:overwatch', 'overwatch', 'Overwatch', plan?.overwatch ? 'set · aim again' : `${RULES.overwatchCost} AP`, this.mode === 'overwatch' || !!plan?.overwatch, !plan?.overwatch && left < RULES.overwatchCost);
+      ? (def.parry ? b('parry', 'parry', 'Parry', plan?.parry ? 'ready' : `${RULES.parryCost} AP`, !!plan?.parry, !plan?.parry && left < RULES.parryCost, 'defense') : '')
+      : b('mode:overwatch', 'overwatch', 'Overwatch', plan?.overwatch ? 'set · aim again' : `${RULES.overwatchCost} AP`, this.mode === 'overwatch' || !!plan?.overwatch, !plan?.overwatch && left < RULES.overwatchCost, 'defense');
     const hints = {
-      move: '<b>Drag the white knob</b> to draw a path (or tap the table). The ring shows how far it can still go.' + (engaged ? ' <b>Engaged:</b> stepping away costs 30 AP and gives the enemy a free hit.' : ''),
-      attack: `<b>Drag the orange knob</b> to aim the ${atkName.toLowerCase()}. It hits whatever is in the shape when it lands, so aim where enemies <b>will be</b>.` + (at.kind === 'volley' ? ' Walls block volleys; forests give cover.' : at.kind === 'lob' ? ' Lobs arc over walls.' : ''),
-      skill: sk ? (sk.kind === 'charge' ? '<b>Drag the purple knob</b> to aim the charge: the squad rushes down the lane and slams into the first enemy squad.' : sk.kind === 'blast' ? '<b>Drag the purple knob</b> to place the Bone Blast circle (within 9″).' : '<b>Tap the purple knob</b> to Rally: allies in the circle get +1 defend and hit 25% harder this round.') + ` Then it recharges for ${sk.cd} round${sk.cd > 1 ? 's' : ''}.` : '',
-      overwatch: '<b>Drag the orange knob</b> to point the overwatch cone. The squad fires once at the first enemy that moves inside it, at any speed tier.',
+      move: '<b>Drag the green knob</b> to draw a path (or tap the table). The ring shows how far it can still go.' + (engaged ? ' <b>Engaged:</b> stepping away costs 30 AP and gives the enemy a free hit.' : ''),
+      attack: `<b>Drag the red knob</b> to aim the ${atkName.toLowerCase()}. It hits whatever is in the shape when it lands, so aim where enemies <b>will be</b>.` + (at.kind === 'volley' ? ' Walls block volleys; forests give cover.' : at.kind === 'lob' ? ' Lobs arc over walls.' : ''),
+      skill: sk ? (sk.kind === 'charge' ? '<b>Drag the green skill knob</b> to aim the charge: the squad rushes down the lane and slams into the first enemy squad.' : sk.kind === 'blast' ? '<b>Drag the red skill knob</b> to place the Bone Blast circle (within 9″).' : sk.kind === 'storm' ? '<b>Drag the red skill knob</b> to place the Arrow Storm: arrows arc over walls onto the circle (within 15″).' : '<b>Tap the blue skill knob</b> to Rally: allies in the circle get +1 defend and hit 25% harder this round.') + ` Then it recharges for ${sk.cd} round${sk.cd > 1 ? 's' : ''}.` : '',
+      overwatch: '<b>Drag the red knob</b> to point the overwatch cone. The squad fires once at the first enemy that moves inside it, at any speed tier.',
     };
     dock.innerHTML = `<div class="dk-head"><div><div class="nm">${esc(def.name)}${engaged ? ' <span class="eng">Engaged</span>' : ''}</div><div class="sub">Tier ${def.tier + (plan?.upgrades || 0)} · ${q.models}/${def.models} models · ${q.hp} HP · ${ctl}</div></div>
         <button class="ib x" data-act="close">✕</button></div>
       <div class="dk-ap">${apBlocks(q, plan, false)}</div>
       <div class="dk-btns">
-        ${b('mode:move', 'move', 'Move', `${(left * def.tier * RULES.moveFactor).toFixed(1)}″ left`, this.mode === 'move', left < 1, 'mv')}
-        ${b('mode:attack', melee ? 'attack' : 'shoot', atkName, `${at.ap} AP`, this.mode === 'attack', left < at.ap, 'at')}
+        ${b('mode:move', 'move', 'Move', `${(left * def.tier * RULES.moveFactor).toFixed(1)}″ left`, this.mode === 'move', left < 1, 'move')}
+        ${b('mode:attack', melee ? 'attack' : 'shoot', atkName, `${at.ap} AP`, this.mode === 'attack', left < at.ap, 'attack')}
         ${skBtn}
         ${prepBtn}
-        ${b('defend', 'defend', 'Defend', `${RULES.defendCost} AP · ${plan?.defends || 0}`, false, left < RULES.defendCost)}
+        ${b('defend', 'defend', 'Defend', `${RULES.defendCost} AP · ${plan?.defends || 0}`, false, left < RULES.defendCost, 'defense')}
         ${b('tier', 'tierup', 'Act earlier', plan?.upgrades >= RULES.maxUpgrades ? 'max' : `${RULES.tierCost[plan?.upgrades || 0]} AP`, false, (plan?.upgrades || 0) >= RULES.maxUpgrades || left < RULES.tierCost[plan?.upgrades || 0])}
-        ${b('undo', 'undo', 'Undo', '', false, !plan)}
-        ${b('clear', 'release', 'Clear', 'back to stance', false, !plan)}
+        ${b('undo', 'undo', 'Undo', '', false, !plan, 'none')}
+        ${b('clear', 'release', 'Clear', 'back to stance', false, !plan, 'none')}
       </div>
       <div class="dk-stance">Stance (free): ${['guard', 'hold', 'advance'].map(s => `<button class="chip${st === s ? ' on' : ''}" data-act="stance:${s}">${s[0].toUpperCase() + s.slice(1)}</button>`).join('')}</div>
       <div class="hint">${hints[this.mode] || hints.move}</div>`;
@@ -658,7 +685,7 @@ class Game {
     if (this.phase !== 'planning' || this.state.round > 3) { el.classList.add('hidden'); return; }
     const msgs = [
       '<b>1.</b> Tap one of your squads (blue rings) or its card below.',
-      '<b>2.</b> Drag the <span class="k mv">white</span> knob to move, the <span class="k at">orange</span> knob to attack, the <span class="k sk">purple</span> knob for its skill.',
+      '<b>2.</b> Drag the <span class="k mv">green</span> knob to move, the <span class="k at">red</span> knob to attack, and the skill knob (coloured by type: <span class="k mv">move</span> <span class="k at">attack</span> <span class="k df">defence</span>).',
       '<b>3.</b> Order more squads (3 per round + your hero), then press <b>Ready</b>, or <b>Rehearse</b> to preview your plan.',
     ];
     el.innerHTML = `<span>${msgs[this.hintStep || 0]}</span><button class="ib sm" id="hint-x" title="Hide tips">✕</button>`;
@@ -753,7 +780,7 @@ class Game {
     const name = id => { const q = tl.pre.squads.find(x => x.id === id); return q ? `<b class="t${q.owner}">${q.owner === this.me ? 'Your' : 'Enemy'} ${esc(defOf(q).name)}</b>` : '?'; };
     const lines = [];
     for (const e of tl.events) {
-      const verb = { swing: 'cuts into', volley: 'shoots', lob: 'rains arrows on', charge: 'charges into', blast: 'blasts', parting: 'lands a parting blow on', riposte: 'ripostes' };
+      const verb = { swing: 'cuts into', volley: 'shoots', lob: 'rains arrows on', storm: 'brings an Arrow Storm down on', charge: 'charges into', blast: 'blasts', parting: 'lands a parting blow on', riposte: 'ripostes' };
       if (e.type === 'hit') lines.push({ T: e.T, html: `${name(e.src)} ${verb[e.kind] || 'hits'} ${name(e.dst)} <span class="dmg">−${e.dmg}</span>${e.cover ? ' (cover)' : ''}${e.defended ? ' (defended)' : ''}${e.lost ? ` · ${e.lost} model${e.lost > 1 ? 's' : ''} fall` : ''}` });
       else if (e.type === 'down') lines.push({ T: e.T, html: `${name(e.id)} is destroyed` });
       else if (e.type === 'parry') lines.push({ T: e.T, html: `${name(e.id)} parries ${name(e.src)}` });
@@ -781,7 +808,7 @@ class Game {
           const q = at(e.dst);
           if (q) {
             this.texts.add(q.x, q.z, `−${e.dmg}`, 'dmg');
-            const tag = { charge: 'Charge!', parting: 'Parting blow', riposte: 'Riposte', blast: 'Bone Blast' }[e.kind];
+            const tag = { charge: 'Charge!', parting: 'Parting blow', riposte: 'Riposte', blast: 'Bone Blast', storm: 'Arrow Storm' }[e.kind];
             if (tag) this.texts.add(q.x, q.z, tag, 'tag', 2.9);
             if (e.cover) this.texts.add(q.x, q.z, 'Cover', 'def', 1.9);
             if (e.defended) this.texts.add(q.x, q.z, 'Defended', 'def', 1.6);
@@ -792,7 +819,7 @@ class Game {
         else if (e.type === 'disengage') { const q = at(e.id); if (q) this.texts.add(q.x, q.z, 'Disengage', 'def', 2.4); }
         else if (e.type === 'watchEnd') { const q = at(e.id); if (q) this.texts.add(q.x, q.z, 'Overwatch!', 'tag', 2.6); }
         else if (e.type === 'buff') { for (const id of e.ids) { const q = at(id); if (q) { this.texts.add(q.x, q.z, 'Rallied', 'ok', 2.4); this.pulse(q.x, q.z, radiusOf(q) + 0.4, COL.rally); } } }
-        else if (e.type === 'release' && e.kind === 'blast') this.pulse(e.ex, e.ez, defOf(this.tl.pre.squads.find(x => x.id === e.id)).skill.radius, COL.blast, true);
+        else if (e.type === 'release' && (e.kind === 'blast' || e.kind === 'storm')) this.pulse(e.ex, e.ez, defOf(this.tl.pre.squads.find(x => x.id === e.id)).skill.radius, COL[e.kind], true);
         else if (e.type === 'release' && e.blocked) { const q = at(e.id); if (q) this.texts.add(e.ex, e.ez, 'Blocked', 'def', 1.2); }
       }
     }
@@ -879,13 +906,15 @@ class Game {
       if (this.phase === 'planning' || this.knobPos) {
         this.updateKnobs();
       }
+      this.updateGhost(dt);
     }
     this.texts.update(dt);
     this.view.render(dt);
   }
 }
 
-const ACT_COL = { swing: 'var(--swing)', volley: 'var(--volley)', lob: 'var(--volley)', charge: '#ffb020', blast: '#b06bff', rally: '#f5c542', wait: '#8a857c' };
+const ACT_COL = { swing: 'var(--swing)', volley: 'var(--volley)', lob: 'var(--volley)', charge: '#34c759', blast: '#ff3b30', storm: '#ff3b30', rally: '#3fa9ff', wait: '#8a857c' };
+const SKILL_IC = { charge: 'dash', blast: 'frag', storm: 'shoot', rally: 'rally' };
 // AP bar blocks for a squad's plan
 function apBlocks(q, plan, mini) {
   if (!plan) return mini ? '' : `<div class="free" style="width:100%">No orders: follows its stance</div>`;
@@ -910,11 +939,11 @@ function helpHTML() {
 <p>Both sides give orders at the same time, then press <b>Ready</b>. Squads act in <b>speed tiers</b>: fast squads (tier 6) first, then normal (5), then slow (4). Squads in the same tier act <b>at the same time</b>. Every squad has <b>100 AP</b> per round, and an action's AP cost is also how long it takes. <b>Rehearse</b> plays your plan first with the enemy standing still, so you can check it.</p>
 <h3>Giving orders</h3>
 <ul>
-<li>Tap a squad (or its card) to select it. Three knobs appear: <b>white</b> = move, <b>orange</b> = attack, <b>purple</b> = its special skill. Drag a knob to aim, or tap it and then tap the table.</li>
+<li>Tap a squad (or its card) to select it. Knobs appear: <b style="color:#34c759">green</b> = move, <b style="color:#ff3b30">red</b> = attack, and its skill knob in the skill's colour. A see-through copy of the squad shows where it will end up. Drag a knob to aim, or tap it and then tap the table.</li>
 <li>Every attack is a <b>skillshot</b>: it hits whatever is inside the shape when it lands. The shape charges up during its wind-up, so enemies can walk out of it, and yours can dodge.</li>
-<li><b>Swing</b> (melee arc), <b>Volley</b> (a line that walls stop; forests give <b>cover</b> = half damage), <b>Lob</b> (Bone Archers: arcs over walls onto a circle).</li>
-<li><b>Skills</b> recharge for a round or two after use: <b>Charge</b> (Outriders, Wraiths: rush down a lane into the first enemy squad), <b>Bone Blast</b> (Necromancer: a circle of force), <b>Rally</b> (Lord: allies nearby get +1 defend and hit 25% harder).</li>
-<li><b>Defend</b>: each defend halves one hit. <b>Parry</b> (melee): blocks the next melee hit and strikes back. <b>Overwatch</b> (shooters): fires once at the first enemy that moves inside the cone, even in another tier. <b>Act earlier</b>: moves the squad up a tier.</li>
+<li><b>Swing</b> (melee arc) and <b>Volley</b> (a line that walls stop; forests give <b>cover</b> = half damage).</li>
+<li><b>Skills</b> are coloured by type (<b style="color:#34c759">green</b> = movement, <b style="color:#ff3b30">red</b> = attack, <b style="color:#3fa9ff">blue</b> = defence and buffs) and recharge for a round or two: <b>Charge</b> (Outriders, Wraiths), <b>Arrow Storm</b> (Bone Archers: arrows arc over walls onto a circle), <b>Bone Blast</b> (Necromancer), <b>Rally</b> (Lord: allies nearby get +1 defend and hit 25% harder).</li>
+<li><b>Defend</b>: each defend halves one hit. <b>Parry</b> (fighters only): blocks the next melee hit and strikes back. <b>Overwatch</b> (shooters): fires once at the first enemy that moves inside the cone, even in another tier. <b>Act earlier</b>: moves the squad up a tier.</li>
 <li>You can command <b>${RULES.cp} squads</b> per round (the hero is free). The others follow their stance: <b>Guard</b> fights what comes close (shooters set overwatch), <b>Hold</b> stays and defends, <b>Advance</b> marches on the nearest enemy.</li>
 </ul>
 <h3>Engagement</h3>

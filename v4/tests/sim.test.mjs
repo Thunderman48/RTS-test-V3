@@ -257,13 +257,24 @@ test('overwatch fires once at an enemy moving into the front cone, even in anoth
   eq(shots[0].seg.tier, 6, 'fired during the wraiths\' tier');
 });
 
-test('lobbed shots arc over walls that stop volleys', () => {
+test('Arrow Storm arcs over walls that stop the archers\' volleys, then recharges', () => {
   const s = arena([[1, 'ranged', 22, 8], [0, 'fighter', 22, 19]]);
   const o = holdAll(s);
-  o[1].squads.q1 = plan([{ kind: 'lob', x: 22, z: 19 }]);
+  o[1].squads.q1 = plan([{ kind: 'volley', x: 22, z: 19 }, { kind: 'storm', x: 22, z: 19 }]);
+  const { state, log } = resolveRound(s, o);
+  const rel = events(log).filter(e => e.type === 'release' && e.id === 'q1');
+  eq(rel[0].kind, 'volley'); ok(rel[0].blocked, 'volley blocked by the wall');
+  eq(rel[1].kind, 'storm'); eq(rel[1].hit.join(), 'q2');
+  ok(state.squads.find(q => q.id === 'q1').cd > 0, 'storm goes on cooldown');
+});
+
+test('only fighters can parry', () => {
+  const s = arena([[0, 'tank', 20, 16], [1, 'fighter', 22.2, 16]]);
+  const o = holdAll(s);
+  o[0].squads.q1 = { ...plan([]), parry: true };
+  o[1].squads.q2 = plan([{ kind: 'swing', x: 20, z: 16 }]);
   const { log } = resolveRound(s, o);
-  const rel = events(log).find(e => e.type === 'release' && e.id === 'q1');
-  eq(rel.kind, 'lob'); eq(rel.hit.join(), 'q2');
+  ok(!events(log).some(e => e.type === 'parry'), 'a tank parry order is dropped');
 });
 
 test('volleys into a forest deal reduced damage (cover)', () => {

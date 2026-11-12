@@ -4,7 +4,10 @@ import * as THREE from 'three';
 export const COL = {
   swing: 0xff7a1a, volley: 0xff2d55, move: 0xffffff, moveEnemy: 0x222222, ghost: 0xffffff,
   hit: 0xff4a1c, defend: 0x3fa9ff, ok: 0x34c759, bad: 0xff3b30, tier: 0x9be15d,
-  lob: 0xff2d55, charge: 0xffb020, blast: 0xb06bff, rally: 0xf5c542, watch: 0x3ee6ff,
+  lob: 0xff2d55, watch: 0x3ee6ff,
+  // skill categories: green = movement/speed, red = attack, blue = defence/buffs
+  catMove: 0x34c759, catAttack: 0xff3b30, catDefense: 0x3fa9ff,
+  charge: 0x34c759, blast: 0xff3b30, storm: 0xff3b30, rally: 0x3fa9ff,
 };
 const LIFT = 0.06; // ground is gently bumpy: keep overlays above it
 const basic = (color, opacity) => new THREE.MeshBasicMaterial({ color, transparent: true, opacity, depthWrite: false, side: THREE.DoubleSide });

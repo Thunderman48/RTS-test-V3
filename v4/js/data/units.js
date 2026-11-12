@@ -44,9 +44,12 @@ const LOB = (ap, dmg, range, radius = 1.5) => ({ kind: 'lob', ap, dmg, range, ra
 //           squad met takes the impact and the squad stops in contact (engaged)
 //  blast  : a circle of necromantic force at the aim point (within `range`)
 //  rally  : a circle around the hero; allies inside gain a defend and hit harder this round
-const CHARGE = (ap, dmg, len, cd = 1) => ({ kind: 'charge', name: 'Charge', ap, wind: 8, dmg, len, cd });
-const BLAST = (ap, dmg, range, radius, cd = 2) => ({ kind: 'blast', name: 'Bone Blast', ap, dmg, range, radius, cd });
-const RALLY = (ap, radius, cd = 2) => ({ kind: 'rally', name: 'Rally', ap, radius, defends: 1, dmgMult: 1.25, cd });
+// cat: skill category -> colour (move = green, attack = red, defense = blue)
+const CHARGE = (ap, dmg, len, cd = 1) => ({ kind: 'charge', name: 'Charge', cat: 'move', ap, wind: 8, dmg, len, cd });
+const BLAST = (ap, dmg, range, radius, cd = 2) => ({ kind: 'blast', name: 'Bone Blast', cat: 'attack', ap, dmg, range, radius, cd });
+//  storm  : a big lobbed volley onto a circle at the aim point; arcs over walls
+const STORM = (ap, dmg, range, radius, cd = 2) => ({ kind: 'storm', name: 'Arrow Storm', cat: 'attack', ap, dmg, range, radius, cd });
+const RALLY = (ap, radius, cd = 2) => ({ kind: 'rally', name: 'Rally', cat: 'defense', ap, radius, defends: 1, dmgMult: 1.25, cd });
 
 // Unit roles are the same for both sides; looks and numbers differ a little.
 //  models: miniatures in the squad, hpPer: HP of each model, dmg is PER MODEL alive
@@ -56,7 +59,7 @@ export const FACTIONS = {
     units: {
       hero:    { name: 'Lord Commander', role: 'hero', models: 1, hpPer: 120, armor: 9, tier: 5, look: 'lord', vision: 12, defends: 2, attack: SWING(25, 18, 1.6), skill: RALLY(20, 5) },
       tank:    { name: 'Shieldwall', role: 'tank', models: 3, hpPer: 34, armor: 12, tier: 4, look: 'shield', vision: 9, defends: 2, attack: SWING(30, 4, 1.3) },
-      fighter: { name: 'Men-at-arms', role: 'fighter', models: 4, hpPer: 20, armor: 7, tier: 5, look: 'sword', vision: 9, defends: 1, attack: SWING(25, 5, 1.5) },
+      fighter: { name: 'Men-at-arms', role: 'fighter', parry: true, models: 4, hpPer: 20, armor: 7, tier: 5, look: 'sword', vision: 9, defends: 1, attack: SWING(25, 5, 1.5) },
       ranged:  { name: 'Crossbows', role: 'ranged', models: 4, hpPer: 15, armor: 3, tier: 5, look: 'crossbow', vision: 11, defends: 1, attack: VOLLEY(30, 4, 14) },
       fast:    { name: 'Outriders', role: 'fast', models: 3, hpPer: 24, armor: 5, tier: 6, look: 'rider', vision: 11, defends: 1, attack: SWING(20, 7, 1.7), skill: CHARGE(35, 9, 9) },
     },
@@ -64,11 +67,11 @@ export const FACTIONS = {
   undead: {
     name: 'Undead Legion', short: 'UND', colorCss: '#9b59d0',
     units: {
-      hero:    { name: 'Necromancer', role: 'hero', models: 1, hpPer: 110, armor: 7, tier: 5, look: 'necro', vision: 12, defends: 2, attack: SWING(25, 16, 1.6), skill: BLAST(30, 16, 9, 2.2) },
+      hero:    { name: 'Necromancer', role: 'hero', models: 1, hpPer: 118, armor: 7, tier: 5, look: 'necro', vision: 12, defends: 2, attack: SWING(25, 16, 1.6), skill: BLAST(30, 16, 9, 2.2) },
       tank:    { name: 'Grave Guard', role: 'tank', models: 3, hpPer: 34, armor: 11, tier: 4, look: 'graveguard', vision: 9, defends: 2, attack: SWING(30, 5, 1.3) },
-      fighter: { name: 'Skeleton Warband', role: 'fighter', models: 5, hpPer: 15, armor: 5, tier: 5, look: 'skeleton', vision: 9, defends: 1, attack: SWING(25, 4, 1.5) },
-      ranged:  { name: 'Bone Archers', role: 'ranged', models: 4, hpPer: 14, armor: 2, tier: 5, look: 'archer', vision: 11, defends: 1, attack: LOB(32, 3, 13, 1.5) },
-      fast:    { name: 'Wraiths', role: 'fast', models: 3, hpPer: 22, armor: 4, tier: 6, look: 'wraith', vision: 11, defends: 1, ghost: true, attack: SWING(20, 7, 1.7), skill: CHARGE(35, 8, 9) },
+      fighter: { name: 'Skeleton Warband', role: 'fighter', parry: true, models: 5, hpPer: 15, armor: 5, tier: 5, look: 'skeleton', vision: 9, defends: 1, attack: SWING(25, 4, 1.5) },
+      ranged:  { name: 'Bone Archers', role: 'ranged', models: 4, hpPer: 16, armor: 2, tier: 5, look: 'archer', vision: 11, defends: 1, attack: VOLLEY(30, 4, 14, 0.9), skill: STORM(35, 6, 15, 2.2) },
+      fast:    { name: 'Wraiths', role: 'fast', models: 3, hpPer: 24, armor: 4, tier: 6, look: 'wraith', vision: 11, defends: 1, ghost: true, attack: SWING(20, 7, 1.7), skill: CHARGE(35, 8, 9) },
     },
   },
 };
@@ -84,4 +87,5 @@ export function squadRadius(def, models) {
 
 export function unitDef(faction, role) { return FACTIONS[faction].units[role]; }
 export const isMelee = def => def.attack.kind === 'swing';
+export const CAT_COLOR = { move: '#34c759', attack: '#ff3b30', defense: '#3fa9ff' };
 export const isShooter = def => def.attack.kind === 'volley' || def.attack.kind === 'lob';

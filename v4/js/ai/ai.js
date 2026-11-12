@@ -37,9 +37,14 @@ export function aiOrders(s, p, memory = {}) {
     const gap = dist(q.x, q.z, t.x, t.z) - radiusOf(t) - radiusOf(q);
     const sk = def.skill, ready = sk && (q.cd | 0) === 0;
     // already locked in melee: prepare a parry
-    if (isMelee(def) && engagedWith(q, enemies).length) { plan.parry = true; left -= RULES.parryCost; }
+    if (def.parry && engagedWith(q, enemies).length) { plan.parry = true; left -= RULES.parryCost; }
     // hero rally when friends are close
     if (ready && sk.kind === 'rally' && mine.filter(o => o !== q && dist(o.x, o.z, q.x, q.z) <= sk.radius + radiusOf(o)).length >= 2) { plan.actions.push({ kind: 'rally', x: q.x, z: q.z }); left -= sk.ap; }
+    // archers: Arrow Storm when two squads fit under it, or the target hides behind a wall
+    if (ready && sk.kind === 'storm' && dist(q.x, q.z, tx, tz) <= sk.range + 1) {
+      const packed = enemies.filter(e => dist(e.x, e.z, tx, tz) <= sk.radius + radiusOf(e) * 0.6).length;
+      if (packed >= 2 || losCut(s.terrain, q.x, q.z, t.x, t.z) < 1) { plan.actions.push({ kind: 'storm', x: tx, z: tz }); left -= sk.ap; }
+    }
     // necromancer: blast the nearest enemy when it is in range
     if (ready && sk.kind === 'blast' && dist(q.x, q.z, tx, tz) <= sk.range + 1) { plan.actions.push({ kind: 'blast', x: tx, z: tz }); left -= sk.ap; }
     // cavalry / wraiths: charge down a clear lane

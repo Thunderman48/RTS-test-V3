@@ -64,7 +64,7 @@ export class Planner {
         const d = norm(a.x - x, a.z - z);
         if (d.l > 0.01) { fx = d.x; fz = d.z; }
         legs.push({ kind: a.kind, ox: x, oz: z, dx: fx, dz: fz, t0: t, t1: t + c, R: radiusOf(q) + (def.attack.reach || 0), ch: def.attack.cosHalf, len: def.attack.range, w: def.attack.width });
-      } else if (a.kind === 'lob' || a.kind === 'blast') {
+      } else if (a.kind === 'lob' || a.kind === 'blast' || a.kind === 'storm') {
         const range = a.kind === 'lob' ? def.attack.range : def.skill.range;
         const c2 = clampAim(x, z, a.x, a.z, range);
         const d = norm(c2.x - x, c2.z - z);
@@ -163,7 +163,7 @@ export class Planner {
     const q = this.squad(id), def = defOf(q);
     const plan = this.ensure(id); if (!plan) return false;
     if (field === 'parry') {
-      if (!isMelee(def)) return false;
+      if (!def.parry) return false;
       if (plan.parry) { this.g.toast('Parry is already prepared', true); return false; }
       if (this.apLeft(q) < RULES.parryCost) { this.g.toast(`Not enough AP (${RULES.parryCost} needed)`, true); return false; }
       plan.parry = true; plan.hist.push('parry');

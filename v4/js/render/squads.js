@@ -111,13 +111,14 @@ export class SquadView {
     this.selRing.visible = !!d.selected;
     this.actRing.visible = !!d.acting;
     if (d.acting) this.actRing.scale.setScalar(1 + 0.06 * Math.sin(time * 8));
-    const op = d.ghost ? 0.4 : 1;
+    const op = d.ghost ? 0.38 : 1;
     if (this.op !== op) {
       this.op = op;
       for (const m of this.minis) { m.mat.transparent = op < 1; m.mat.opacity = op; m.mat.depthWrite = op === 1; m.g.traverse(o => { if (o.isMesh) o.castShadow = op === 1; }); }
     }
     if (d.dying !== undefined) this.teamRing.material.opacity = 0.5 * (1 - Math.min(1, d.dying));
     else this.teamRing.material.opacity = 0.5;
+    if (op < 1) for (const m of this.minis) m.g.userData.shadow.visible = false;
   }
 
   // world position of the squad label anchor

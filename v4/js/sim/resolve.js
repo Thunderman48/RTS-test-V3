@@ -213,13 +213,13 @@ export function resolveRound(state0, ordersIn) {
           ev({ type: 'tele', id: q.id, kind: 'charge', ox: r3(q.x), oz: r3(q.z), dx: r3(q.fx), dz: r3(q.fz), t1: r3(T + sk.wind), shape: 'line', len: sk.len, w: r3(radiusOf(q) * 2) });
         }
       }
-      if (a.kind === 'lob' || a.kind === 'blast') {
+      if (a.kind === 'lob' || a.kind === 'blast' || a.kind === 'storm') {
         const range = a.kind === 'lob' ? def.attack.range : def.skill.range;
         const R = a.kind === 'lob' ? def.attack.radius : def.skill.radius;
         const c = clampAim(q.x, q.z, a.x, a.z, range);
         const d = norm(c.x - q.x, c.z - q.z);
         if (d.l > 0.01) { q.fx = d.x; q.fz = d.z; rec(q, T); }
-        if (a.kind === 'blast') q.cd = def.skill.cd + 1;
+        if (a.kind !== 'lob') q.cd = def.skill.cd + 1;
         r.st.cx = c.x; r.st.cz = c.z;
         ev({ type: 'tele', id: q.id, kind: a.kind, ox: r3(c.x), oz: r3(c.z), dx: r3(q.fx), dz: r3(q.fz), t1: r3(T + a.cost), shape: 'circle', R });
       }
@@ -311,7 +311,7 @@ export function resolveRound(state0, ordersIn) {
         ev({ type: 'release', id: q.id, kind: 'swing', hit: struck });
       } else if (a.kind === 'volley') volley(r, st.ox, st.oz, st.dx, st.dz);
       else if (a.kind === 'lob') circleHit(r, 'lob', st.cx, st.cz, at.radius, atkDmg(r, at.dmg));
-      else if (a.kind === 'blast') circleHit(r, 'blast', st.cx, st.cz, def.skill.radius, atkDmg(r, def.skill.dmg));
+      else if (a.kind === 'blast' || a.kind === 'storm') circleHit(r, a.kind, st.cx, st.cz, def.skill.radius, atkDmg(r, def.skill.dmg));
       else if (a.kind === 'rally') {
         const sk = def.skill, ids = [];
         for (const o of rts) {
