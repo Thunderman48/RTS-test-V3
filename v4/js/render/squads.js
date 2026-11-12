@@ -31,15 +31,16 @@ export class SquadView {
       return { g, rig: g.userData.rig, mat: g.userData.mat, alive: i < sq.models, fall: i < sq.models ? -1 : 2, side: i % 2 ? 1 : -1, stagger: ((i * 0.83) % 1.6) - 0.5 };
     });
     for (const m of this.minis) if (!m.alive) m.g.visible = false;
+    this.teamRingY = 0.09;
     this.style = this.minis[0].rig.style;
     this.rimColor = PAINT[sq.faction].rim;
     const R = squadRadius(def, def.models);
     this.teamRing = ringMesh(R + 0.12, 0.07, this.rimColor, 0.5);
-    this.teamRing.position.y = 0.03;
+    this.teamRing.position.y = 0.09;
     this.selRing = ringMesh(R + 0.32, 0.12, 0xffffff, 0.95);
-    this.selRing.position.y = 0.04; this.selRing.visible = false;
+    this.selRing.position.y = 0.1; this.selRing.visible = false;
     this.actRing = ringMesh(R + 0.47, 0.1, 0xffc400, 1);
-    this.actRing.position.y = 0.05; this.actRing.visible = false;
+    this.actRing.position.y = 0.11; this.actRing.visible = false;
     this.group.add(this.teamRing, this.selRing, this.actRing);
     this.pos = new THREE.Vector3(sq.x, 0, sq.z);
     this.yaw = Math.atan2(sq.fx, sq.fz);
@@ -79,7 +80,7 @@ export class SquadView {
     for (let i = 0; i < this.minis.length; i++) {
       const m = this.minis[i], g = m.g, sl = this.slots[i];
       const shouldLive = i < d.models;
-      if (shouldLive && !m.alive) { m.alive = true; m.fall = -1; g.visible = true; g.rotation.set(0, g.rotation.y, 0); m.mat.opacity = 1; m.mat.transparent = false; }
+      if (shouldLive && !m.alive) { m.alive = true; m.fall = -1; g.visible = true; g.userData.shadow.visible = true; g.rotation.set(0, g.rotation.y, 0); m.mat.opacity = 1; m.mat.transparent = false; }
       if (!shouldLive && m.alive) { m.alive = false; m.fall = snap ? 2 : 0; }
       if (!m.alive) {
         // topple sideways, bounce once, lie for a moment, then fade away
@@ -91,6 +92,7 @@ export class SquadView {
         const fade = Math.max(0, (m.fall - 1.3) / 0.7);
         if (fade > 0) { m.mat.transparent = true; m.mat.opacity = 1 - fade; }
         g.visible = m.fall < 2 || !!d.showFallen;
+        g.userData.shadow.visible = m.fall < 0.3;
         continue;
       }
       // attack pose (staggered per model), else rest

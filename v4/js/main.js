@@ -56,6 +56,7 @@ class Game {
   // debug view: every miniature lined up (?gallery), animating attacks (?gallery=anim)
   gallery() {
     $('menu').classList.add('hidden');
+    if (this.view.lens) this.view.lens.enabled = /lens/.test(location.search);
     this.state = createGame(1);
     buildTable(this.view, this.state.terrain);
     const looks = [['kingdom', 'lord'], ['kingdom', 'shield'], ['kingdom', 'sword'], ['kingdom', 'crossbow'], ['kingdom', 'rider'], ['undead', 'necro'], ['undead', 'graveguard'], ['undead', 'skeleton'], ['undead', 'archer'], ['undead', 'wraith']];
@@ -82,7 +83,12 @@ class Game {
     $('b-ready').onclick = () => this.ready();
     $('b-help').onclick = () => { $('help-body').innerHTML = helpHTML(); $('help').classList.remove('hidden'); };
     $('help-close').onclick = () => $('help').classList.add('hidden');
-    $('b-menu').onclick = () => { if (confirm('Quit to the main menu?')) location.reload(); };
+    $('b-menu').onclick = () => $('opts').classList.remove('hidden');
+    $('o-close').onclick = () => $('opts').classList.add('hidden');
+    $('o-quit').onclick = () => location.reload();
+    $('o-lens').onclick = $('m-lens').onclick = () => this.setLens(!this.lensOn);
+    let saved = null; try { saved = localStorage.getItem('tiers-v4-lens'); } catch {}
+    this.setLens(saved !== '0', false);
     $('pb-play').onclick = () => { this.playing = !this.playing; if (this.playing && this.T >= this.tl.total) this.T = 0; };
     $('pb-speed').onclick = () => { this.speed = this.speed === 1 ? 2 : this.speed === 2 ? 4 : this.speed === 4 ? 0.5 : 1; $('pb-speed').textContent = this.speed + '×'; };
     $('pb-next').onclick = () => this.finishPlayback();
@@ -91,6 +97,13 @@ class Game {
     scrub.addEventListener('pointerdown', e => { scrub.setPointerCapture(e.pointerId); this.scrubbing = true; this.playing = false; seek(e); });
     scrub.addEventListener('pointermove', e => { if (this.scrubbing) seek(e); });
     scrub.addEventListener('pointerup', () => { this.scrubbing = false; });
+  }
+
+  setLens(on, save = true) {
+    this.lensOn = on;
+    if (this.view.lens) this.view.lens.enabled = on;
+    for (const id of ['o-lens', 'm-lens']) $(id)?.classList.toggle('on', on);
+    if (save) try { localStorage.setItem('tiers-v4-lens', on ? '1' : '0'); } catch {}
   }
 
   toast(msg, warn = false) {
@@ -564,6 +577,16 @@ class Game {
     const dt = Math.min(0.1, (now - this.last) / 1000);
     this.last = now;
     this.input.tick?.(dt);
+    if (this.view.lens) this.view.lens.target = this.drag ? 0 : 1;
+    // if the device struggles, switch the lens off once (the player can turn it back on)
+    if (this.phase === 'planning' && this.lensOn && !this.perfChecked) {
+      this.perf = this.perf || { t: 0, n: 0 };
+      this.perf.t += dt; this.perf.n++;
+      if (this.perf.t > 4) {
+        this.perfChecked = true;
+        if (this.perf.t / this.perf.n > 0.05) { this.setLens(false, false); this.toast('Miniature lens switched off to keep things smooth. You can turn it on in the menu.'); }
+      }
+    }
     if (this.phase === 'menu') this.view.cam.yaw += dt * 0.04;
     if (this.phase === 'playback') this.tickPlayback(dt);
     else {

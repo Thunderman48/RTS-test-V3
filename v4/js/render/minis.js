@@ -14,6 +14,20 @@ export const Y0 = 0.16;        // top of the base
 export const BASE_R = 0.5;     // base radius (infantry)
 const DARK = 0x18161a;
 
+// soft contact shadow under each base
+let shadowTex = null;
+const SHADOW_GEO = new THREE.PlaneGeometry(2, 2).rotateX(-Math.PI / 2);
+function shadowMat() {
+  if (!shadowTex) {
+    const c = document.createElement('canvas'); c.width = c.height = 64;
+    const g = c.getContext('2d'), gr = g.createRadialGradient(32, 32, 0, 32, 32, 32);
+    gr.addColorStop(0, 'rgba(0,0,0,0.55)'); gr.addColorStop(0.55, 'rgba(0,0,0,0.38)'); gr.addColorStop(1, 'rgba(0,0,0,0)');
+    g.fillStyle = gr; g.fillRect(0, 0, 64, 64);
+    shadowTex = new THREE.CanvasTexture(c);
+  }
+  return new THREE.MeshBasicMaterial({ map: shadowTex, transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2 });
+}
+
 // ---------------------------------------------------------------- shared parts
 function baseKit(k, P, r = BASE_R, oval = 1) {
   k.cyl(r, r + 0.03, 0.12, P.base, { y: 0.06, sz: oval, sh: 0.025 }, 22);
@@ -191,7 +205,7 @@ const STYLE = {
 export function makeMini(look, faction, seed = 1) {
   const P = PAINT[faction];
   const style = STYLE[look] || 'slash';
-  const kb = new Kit(seed), kbase = new Kit(seed + 1);
+  const kb = new Kit(seed, [Y0, Y0 + 0.95, 0.62]), kbase = new Kit(seed + 1);
   let arm = null, weapon = null, off = null, glow = null;
   let shoulder = new THREE.Vector3(0.27, Y0 + 0.84, 0), offShoulder = new THREE.Vector3(-0.27, Y0 + 0.84, 0);
   const fig = new THREE.Vector3(0, Y0, 0);   // fig pivot
@@ -345,6 +359,11 @@ export function makeMini(look, faction, seed = 1) {
   const root = new THREE.Group();
   const baseMesh = kbase.mesh(mat); baseMesh.castShadow = false;
   root.add(baseMesh);
+  const br = look === 'rider' ? 0.46 : look === 'lord' || look === 'necro' ? 0.56 : BASE_R;
+  const shadow = new THREE.Mesh(SHADOW_GEO, shadowMat());
+  shadow.scale.set(br * 1.55, 1, br * (look === 'rider' ? 2.5 : 1.55));
+  shadow.position.y = 0.075; shadow.renderOrder = 1;
+  root.add(shadow);
   const figG = new THREE.Group(); figG.position.copy(fig); figG.scale.setScalar(scale);
   root.add(figG);
   const body = kb.mesh(mat, fig); figG.add(body);
@@ -360,7 +379,7 @@ export function makeMini(look, faction, seed = 1) {
   const offG = new THREE.Group(); offG.rotation.order = 'YXZ';
   offG.position.copy(offShoulder).sub(fig); figG.add(offG);
   offG.add(off.mesh(mat));
-  root.userData = { height: h * scale, mat, rig: { style, fig: figG, figBase: fig.clone(), arm: armG, weapon: weapG, off: offG, glow, look } };
+  root.userData = { height: h * scale, mat, shadow, rig: { style, fig: figG, figBase: fig.clone(), arm: armG, weapon: weapG, off: offG, glow, look } };
   poseMini(root, POSES[style].rest, 0, 0);
   return root;
 }

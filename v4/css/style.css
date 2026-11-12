@@ -225,3 +225,14 @@ button { font-family: inherit; color: inherit; cursor: pointer; touch-action: ma
   .ready { height: 48px; }
   #log { display: none !important; }
 }
+
+/* ---------- options ---------- */
+.opts-card { width: min(420px, calc(100vw - 24px)); display: flex; flex-direction: column; gap: 8px; }
+.opt { display: flex; align-items: center; gap: 12px; width: 100%; text-align: left; padding: 12px 14px; border-radius: 12px; background: rgba(255,255,255,.06); color: var(--text); }
+.opt:hover { background: rgba(255,255,255,.12); }
+.opt span { flex: 1; display: flex; flex-direction: column; gap: 2px; }
+.opt small { color: var(--muted); font-size: 12px; font-weight: 500; }
+.opt .sw { width: 40px; height: 24px; border-radius: 12px; background: rgba(255,255,255,.18); position: relative; flex: none; transition: background .2s; }
+.opt .sw::after { content: ""; position: absolute; left: 3px; top: 3px; width: 18px; height: 18px; border-radius: 50%; background: #fff; transition: transform .2s; }
+.opt.on .sw { background: #34c759; } .opt.on .sw::after { transform: translateX(16px); }
+.menu-card .opt { margin-top: 10px; }

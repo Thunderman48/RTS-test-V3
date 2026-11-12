@@ -1,38 +1,143 @@
 // The diorama: a wooden table, a painted battle mat and terrain pieces.
 import * as THREE from 'three';
 import { RULES } from '../data/units.js';
+import { DEPLOY } from '../data/map.js';
 import { rng } from '../sim/rng.js';
 import { Kit, paintMat } from './kit.js';
 
 const flat = c => new THREE.MeshStandardMaterial({ color: c, flatShading: true, roughness: 0.9, metalness: 0 });
 
-function matTexture(terrain) {
-  const W = RULES.board.w, H = RULES.board.h, S = 40; // px per inch
-  const c = document.createElement('canvas'); c.width = W * S; c.height = H * S;
-  const g = c.getContext('2d');
-  const R = rng(7);
-  g.fillStyle = '#6f9150'; g.fillRect(0, 0, c.width, c.height);
-  // soft patches of lighter/darker grass and dirt
-  const blob = (x, y, r, col, a) => { const gr = g.createRadialGradient(x, y, 0, x, y, r); gr.addColorStop(0, col.replace('A', a)); gr.addColorStop(1, col.replace('A', 0)); g.fillStyle = gr; g.beginPath(); g.arc(x, y, r, 0, Math.PI * 2); g.fill(); };
-  for (let i = 0; i < 70; i++) blob(R() * c.width, R() * c.height, (2 + R() * 6) * S, R() < 0.5 ? 'rgba(124,158,86,A)' : 'rgba(92,124,66,A)', 0.55);
-  for (let i = 0; i < 22; i++) blob(R() * c.width, R() * c.height, (1 + R() * 3) * S, 'rgba(140,116,78,A)', 0.45);
-  // a worn dirt road across the board
-  g.strokeStyle = 'rgba(146,120,82,0.55)'; g.lineWidth = 2.2 * S; g.lineCap = 'round';
-  g.beginPath(); g.moveTo(0, 16 * S); g.bezierCurveTo(14 * S, 12 * S, 34 * S, 20 * S, 48 * S, 16 * S); g.stroke();
-  // grass tufts
-  for (let i = 0; i < 2600; i++) { g.fillStyle = R() < 0.5 ? 'rgba(60,88,44,0.5)' : 'rgba(150,180,100,0.35)'; g.fillRect(R() * c.width, R() * c.height, 3, 6); }
-  // deployment edges (subtle)
-  g.fillStyle = 'rgba(58,120,216,0.10)'; g.fillRect(0, 0, 11 * S, c.height);
-  g.fillStyle = 'rgba(155,89,208,0.10)'; g.fillRect(c.width - 11 * S, 0, 11 * S, c.height);
-  // inch ticks along the edges, like a mat with a ruler
-  g.fillStyle = 'rgba(255,255,255,0.35)';
-  for (let x = 0; x <= W; x++) { const L = x % 6 === 0 ? 14 : 6; g.fillRect(x * S - 1, 0, 2, L); g.fillRect(x * S - 1, c.height - L, 2, L); }
-  for (let z = 0; z <= H; z++) { const L = z % 6 === 0 ? 14 : 6; g.fillRect(0, z * S - 1, L, 2); g.fillRect(c.width - L, z * S - 1, L, 2); }
-  // river bed painted under the water mesh
-  for (const t of terrain) if (t.kind === 'river') { g.fillStyle = '#5e5440'; g.fillRect((t.x - t.w / 2 - 0.35) * S, 0, (t.w + 0.7) * S, c.height); }
-  const tex = new THREE.CanvasTexture(c);
-  tex.colorSpace = THREE.SRGBColorSpace; tex.anisotropy = 8;
-  return tex;
+// ---------------------------------------------------------------- low-poly ground
+// smooth value noise in [0,1)
+function vnoise(seed) {
+  const h = (i, j) => { const v = Math.sin(i * 127.1 + j * 311.7 + seed * 74.7) * 43758.5453; return v - Math.floor(v); };
+  return (x, z) => {
+    const i = Math.floor(x), j = Math.floor(z), fx = x - i, fz = z - j;
+    const sx = fx * fx * (3 - 2 * fx), sz = fz * fz * (3 - 2 * fz);
+    const a = h(i, j), b = h(i + 1, j), c = h(i, j + 1), d = h(i + 1, j + 1);
+    return a + (b - a) * sx + (c - a) * sz + (a - b - c + d) * sx * sz;
+  };
+}
+const N1 = vnoise(1), N2 = vnoise(2), N3 = vnoise(3);
+// the worn dirt road: a cubic bezier across the board, sampled as a polyline
+const ROAD = (() => {
+  const P = [[0, 16], [14, 12], [34, 20], [48, 16]], pts = [];
+  for (let i = 0; i <= 48; i++) {
+    const t = i / 48, u = 1 - t;
+    pts.push([u * u * u * P[0][0] + 3 * u * u * t * P[1][0] + 3 * u * t * t * P[2][0] + t * t * t * P[3][0], u * u * u * P[0][1] + 3 * u * u * t * P[1][1] + 3 * u * t * t * P[2][1] + t * t * t * P[3][1]]);
+  }
+  return pts;
+})();
+function roadDist(x, z) {
+  let best = 1e9;
+  for (let i = 0; i < ROAD.length - 1; i++) {
+    const [ax, az] = ROAD[i], [bx, bz] = ROAD[i + 1];
+    const dx = bx - ax, dz = bz - az, t = Math.max(0, Math.min(1, ((x - ax) * dx + (z - az) * dz) / (dx * dx + dz * dz)));
+    const ex = ax + dx * t - x, ez = az + dz * t - z;
+    best = Math.min(best, ex * ex + ez * ez);
+  }
+  return Math.sqrt(best);
+}
+const lerpHex = (a, b, t) => {
+  const r = ((a >> 16) & 255) + (((b >> 16) & 255) - ((a >> 16) & 255)) * t;
+  const g = ((a >> 8) & 255) + (((b >> 8) & 255) - ((a >> 8) & 255)) * t;
+  const c = (a & 255) + ((b & 255) - (a & 255)) * t;
+  return (Math.round(r) << 16) | (Math.round(g) << 8) | Math.round(c);
+};
+function makeGround(terrain) {
+  const river = terrain.find(t => t.kind === 'river');
+  const ruins = terrain.filter(t => t.kind === 'ruin');
+  const W = RULES.board.w, H = RULES.board.h;
+  const inRiver = (x, z) => river && Math.abs(x - river.x) < river.w / 2 + 0.05 && !(river.fords || []).some(f => Math.abs(z - f.z) < f.d / 2 - 0.2);
+  const height = (x, z) => {
+    if (x <= 0.01 || z <= 0.01 || x >= W - 0.01 || z >= H - 0.01) return 0;
+    let y = (N1(x / 4, z / 4) - 0.5) * 0.07 + (N2(x * 0.9, z * 0.9) - 0.5) * 0.03;
+    if (river) {
+      const dx = Math.abs(x - river.x) - river.w / 2;
+      const ford = (river.fords || []).some(f => Math.abs(z - f.z) < f.d / 2);
+      if (dx < 0.5) y = Math.min(y, ford ? -0.05 : -0.05 + Math.max(-0.14, dx * 0.2));
+    }
+    return y;
+  };
+  const color = (x, y, z) => {
+    let c = lerpHex(0x6d9150, 0x86a65c, N1(x / 5 + 10, z / 5));
+    c = lerpHex(c, 0x58783f, Math.max(0, N2(x / 3, z / 3 + 7) - 0.45) * 1.4);
+    if (N3(x / 3.5, z / 3.5) > 0.74) c = lerpHex(c, 0x9a8458, 0.6);
+    const rd = roadDist(x, z);
+    if (rd < 1.6) c = lerpHex(c, 0x9c8258, rd < 1.0 ? 0.85 : (1.6 - rd) / 0.6 * 0.6);
+    for (const t of ruins) if (Math.abs(x - t.x) < t.w / 2 + 1.1 && Math.abs(z - t.z) < t.d / 2 + 1.1) c = lerpHex(c, 0x9a9566, 0.35);
+    if (x < 11) c = lerpHex(c, 0x5d86c8, 0.07); else if (x > W - 11) c = lerpHex(c, 0x9b6fc4, 0.07);
+    if (river) {
+      const dx = Math.abs(x - river.x) - river.w / 2;
+      if (dx < 0.7) c = lerpHex(c, y < -0.03 ? 0x5c513d : 0x6e5a3e, dx < 0.1 ? 0.95 : 0.6);
+    }
+    return c;
+  };
+  // jittered triangle grid, alternating diagonals
+  const cell = 0.9, nx = Math.round(W / cell), nz = Math.round(H / cell);
+  const R = rng(5);
+  const vx = [], vz = [];
+  for (let j = 0; j <= nz; j++) for (let i = 0; i <= nx; i++) {
+    let x = i * W / nx, z = j * H / nz;
+    if (i > 0 && i < nx) x += (R() - 0.5) * cell * 0.55;
+    if (j > 0 && j < nz) z += (R() - 0.5) * cell * 0.55;
+    vx.push(x); vz.push(z);
+  }
+  const pos = [];
+  const V = (i, j) => { const k = j * (nx + 1) + i; const x = vx[k], z = vz[k]; return [x, height(x, z), z]; };
+  for (let j = 0; j < nz; j++) for (let i = 0; i < nx; i++) {
+    const a = V(i, j), b = V(i + 1, j), c = V(i, j + 1), d = V(i + 1, j + 1);
+    if ((i + j) % 2) pos.push(...a, ...c, ...b, ...b, ...c, ...d);
+    else pos.push(...a, ...c, ...d, ...a, ...d, ...b);
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  return { g, color, height, inRiver };
+}
+
+// layered earth/rock sides of the diorama board (top at y = 0, bottom at y = -1)
+function boardSides(k, R) {
+  const W = RULES.board.w, H = RULES.board.h;
+  const bands = [[0, -0.22, 0x5b4630], [-0.22, -0.55, 0x8a8174], [-0.55, -0.68, 0xc9bfa8], [-0.68, -1.0, 0x6b5238]];
+  const edge = (len, place) => {
+    const n = Math.round(len / 1.1);
+    for (let i = 0; i < n; i++) for (const [y0, y1, col] of bands) {
+      const out = (R() - 0.3) * 0.08;
+      place(i * len / n + len / n / 2, len / n + 0.04, y0, y1, col, out);
+    }
+  };
+  edge(W, (u, w, y0, y1, col, o) => { k.box(w, y0 - y1, 0.3, col, { x: u, y: (y0 + y1) / 2, z: -0.15 - o, j: 0.035, sh: 0.08 }); k.box(w, y0 - y1, 0.3, col, { x: u, y: (y0 + y1) / 2, z: H + 0.15 + o, j: 0.035, sh: 0.08 }); });
+  edge(H, (u, w, y0, y1, col, o) => { k.box(0.3, y0 - y1, w, col, { x: -0.15 - o, y: (y0 + y1) / 2, z: u, j: 0.035, sh: 0.08 }); k.box(0.3, y0 - y1, w, col, { x: W + 0.15 + o, y: (y0 + y1) / 2, z: u, j: 0.035, sh: 0.08 }); });
+  // inch ruler ticks along the top edges, like a measured gaming board
+  for (let x = 1; x < W; x++) { const L = x % 6 === 0 ? 0.45 : 0.2; k.box(0.06, 0.03, L, 0xefe6cf, { x, y: 0.02, z: L / 2 + 0.02, sh: 0 }); k.box(0.06, 0.03, L, 0xefe6cf, { x, y: 0.02, z: H - L / 2 - 0.02, sh: 0 }); }
+  for (let z = 1; z < H; z++) { const L = z % 6 === 0 ? 0.45 : 0.2; k.box(L, 0.03, 0.06, 0xefe6cf, { x: L / 2 + 0.02, y: 0.02, z, sh: 0 }); k.box(L, 0.03, 0.06, 0xefe6cf, { x: W - L / 2 - 0.02, y: 0.02, z, sh: 0 }); }
+}
+
+// grass tufts, pebbles and flowers, kept away from where squads deploy
+function scatter(k, R, terrain, ground) {
+  const W = RULES.board.w, H = RULES.board.h;
+  const deploy = [];
+  for (const d of DEPLOY) { deploy.push(d); deploy.push({ x: W - d.x, z: H - d.z }); }
+  const busy = (x, z) => deploy.some(d => (d.x - x) ** 2 + (d.z - z) ** 2 < 9) || ground.inRiver(x, z) || roadDist(x, z) < 1.2
+    || terrain.some(t => t.kind !== 'river' && (t.r ? (t.x - x) ** 2 + (t.z - z) ** 2 < (t.r + 0.4) ** 2 : Math.abs(t.x - x) < t.w / 2 + 0.6 && Math.abs(t.z - z) < t.d / 2 + 0.6));
+  const greens = [0x5f8a43, 0x739e4c, 0x4f7a39];
+  let tufts = 0;
+  for (let n = 0; n < 900 && tufts < 260; n++) {
+    const x = 0.6 + R() * (W - 1.2), z = 0.6 + R() * (H - 1.2);
+    if (busy(x, z)) continue;
+    tufts++;
+    const y = ground.height(x, z), col = greens[n % 3];
+    for (let b = 0; b < 3; b++) {
+      const a = b * 2.1 + R(), h = 0.18 + R() * 0.16;
+      k.cone(0.04, h, col, { x: x + Math.cos(a) * 0.06, y: y + h / 2, z: z + Math.sin(a) * 0.06, rx: Math.sin(a) * 0.35, rz: Math.cos(a) * 0.35, sh: 0.1 }, 3);
+    }
+    if (R() < 0.12) k.ball(0.045, [0xf5f0e0, 0xf2cf4a, 0xe98bb0][n % 3], { x: x + 0.08, y: y + 0.2, z, sh: 0 });
+  }
+  for (let n = 0; n < 160; n++) {
+    const x = 0.5 + R() * (W - 1), z = 0.5 + R() * (H - 1);
+    if (busy(x, z) && !(roadDist(x, z) < 1.2 && !ground.inRiver(x, z))) continue;
+    k.ball(0.05 + R() * 0.07, [0x9c9282, 0xb4ab98, 0x857c70][n % 3], { x, y: ground.height(x, z) + 0.02, z, sy: 0.6, j: 0.02 });
+  }
 }
 
 function tree(k, R, x, z, s) {
@@ -66,20 +171,26 @@ function rockPile(k, R, x, z, r, cols = [0x8a8072, 0x9c9282, 0x7a7266]) {
 export function buildTable(view, terrain) {
   const W = RULES.board.w, H = RULES.board.h;
   const L = view.layers.table;
-  // table top and legs-ish skirt
+  // wooden table under the diorama board (table top at y = -1)
   const wood = new THREE.MeshStandardMaterial({ color: 0x6b4428, roughness: 0.7, metalness: 0.05 });
-  const top = new THREE.Mesh(new THREE.BoxGeometry(W + 10, 1.4, H + 10), wood);
-  top.position.set(W / 2, -0.75, H / 2); top.receiveShadow = true; L.add(top);
-  const edge = new THREE.Mesh(new THREE.BoxGeometry(W + 10.6, 0.5, H + 10.6), new THREE.MeshStandardMaterial({ color: 0x4e301b, roughness: 0.6 }));
-  edge.position.set(W / 2, -1.2, H / 2); L.add(edge);
-  // the mat
-  const mat = new THREE.Mesh(new THREE.BoxGeometry(W, 0.08, H), [flat(0x55703f), flat(0x55703f), new THREE.MeshStandardMaterial({ map: matTexture(terrain), roughness: 0.95 }), flat(0x55703f), flat(0x55703f), flat(0x55703f)]);
-  mat.position.set(W / 2, -0.04, H / 2); mat.receiveShadow = true; L.add(mat);
-  // a few props on the table edge: dice tray-ish box, tape measure (decor)
-  const tape = new THREE.Mesh(new THREE.CylinderGeometry(1.1, 1.1, 0.7, 16), flat(0xe0b84f));
-  tape.position.set(-2.6, 0.35, H - 3); tape.castShadow = true; L.add(tape);
-  const tape2 = new THREE.Mesh(new THREE.BoxGeometry(5, 0.04, 0.5), flat(0xf2d27a)); tape2.position.set(0.2, 0.02, H - 3); L.add(tape2);
-
+  const top = new THREE.Mesh(new THREE.BoxGeometry(W + 14, 1.4, H + 14), wood);
+  top.position.set(W / 2, -1.7, H / 2); top.receiveShadow = true; L.add(top);
+  const edge = new THREE.Mesh(new THREE.BoxGeometry(W + 14.6, 0.5, H + 14.6), new THREE.MeshStandardMaterial({ color: 0x4e301b, roughness: 0.6 }));
+  edge.position.set(W / 2, -2.2, H / 2); L.add(edge);
+  // decor: a tape measure on the table
+  const tape = new THREE.Mesh(new THREE.CylinderGeometry(1.1, 1.1, 0.7, 16), new THREE.MeshStandardMaterial({ color: 0xe0b84f, flatShading: true }));
+  tape.position.set(-3.4, -0.65, H - 3); tape.castShadow = true; L.add(tape);
+  const tape2 = new THREE.Mesh(new THREE.BoxGeometry(5, 0.04, 0.5), new THREE.MeshStandardMaterial({ color: 0xf2d27a })); tape2.position.set(-0.6, -0.98, H - 3); L.add(tape2);
+  // the board: faceted ground on top, layered sides
+  const ground = makeGround(terrain);
+  const kg = new Kit(17);
+  kg.geo(ground.g, 0x6d9150, { cf: ground.color, sh: 0.06 });
+  const gm = kg.mesh(paintMat('board')); gm.castShadow = false; L.add(gm);
+  const ks = new Kit(19);
+  boardSides(ks, rng(23));
+  ks.box(W - 0.2, 0.96, H - 0.2, 0x4a3828, { x: W / 2, y: -0.52, z: H / 2, sh: 0 });   // board core
+  scatter(ks, rng(29), terrain, ground);
+  L.add(ks.mesh(paintMat('board')));
   const R = rng(11);
   const k = new Kit(3);
   const waters = [];
@@ -114,7 +225,7 @@ export function buildTable(view, terrain) {
     } else if (t.kind === 'river') {
       waters.push(t);
       for (const f of t.fords || []) {
-        for (let i = 0; i < 8; i++) k.ball(0.26 + R() * 0.12, [0xc2b8a3, 0xb4ab98, 0xa89f8c][i % 3], { x: t.x + (R() - 0.5) * (t.w - 0.2), y: 0.04, z: f.z + (R() - 0.5) * f.d, sy: 0.4, j: 0.05 });
+        for (let i = 0; i < 8; i++) k.ball(0.26 + R() * 0.12, [0xc2b8a3, 0xb4ab98, 0xa89f8c][i % 3], { x: t.x + (R() - 0.5) * (t.w - 0.2), y: -0.02, z: f.z + (R() - 0.5) * f.d, sy: 0.4, j: 0.05 });
       }
       // bank stones, reeds with cattails, lily pads
       for (let i = 0; i < 26; i++) {
@@ -129,16 +240,16 @@ export function buildTable(view, terrain) {
           if (j < 2) k.chunk(0.06, 0.06, 0.16, 0.06, 0x7a4e2c, { x: bx + ox - lean * h * 0.5, y: h * 0.88, z: zz + oz }, 5);
         }
       }
-      for (let i = 0; i < 10; i++) k.cyl(0.16, 0.16, 0.02, 0x5f9a4a, { x: t.x + (R() - 0.5) * (t.w - 0.4), y: 0.07, z: R() * t.d, sh: 0.1 }, 7);
+      for (let i = 0; i < 10; i++) k.cyl(0.16, 0.16, 0.02, 0x5f9a4a, { x: t.x + (R() - 0.5) * (t.w - 0.4), y: -0.01, z: R() * t.d, sh: 0.1 }, 7);
     }
   }
-  const terrainMesh = k.mesh(paintMat());
+  const terrainMesh = k.mesh(paintMat('terrain'));
   L.add(terrainMesh);
   for (const t of waters) {
     const kw = new Kit(21);
-    const g = new THREE.PlaneGeometry(t.w + 0.2, t.d, 4, Math.round(t.d * 1.5));
+    const g = new THREE.PlaneGeometry(t.w + 0.7, t.d - 0.02, 5, Math.round(t.d * 1.5));
     g.rotateX(-Math.PI / 2);
-    kw.geo(g, 0x4fa3c4, { x: t.x, y: 0.05, z: t.z, j: 0.05, sh: 0.14 });
+    kw.geo(g, 0x4fa3c4, { x: t.x, y: 0.012, z: t.z, j: 0.025, sh: 0.14 });
     const water = kw.mesh(new THREE.MeshStandardMaterial({ vertexColors: true, flatShading: true, transparent: true, opacity: 0.8, roughness: 0.12, metalness: 0.2 }));
     water.castShadow = false;
     L.add(water);

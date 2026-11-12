@@ -5,10 +5,12 @@ export const COL = {
   swing: 0xff7a1a, volley: 0xff2d55, move: 0xffffff, moveEnemy: 0x222222, ghost: 0xffffff,
   hit: 0xff4a1c, defend: 0x3fa9ff, ok: 0x34c759, bad: 0xff3b30, tier: 0x9be15d,
 };
+const LIFT = 0.06; // ground is gently bumpy: keep overlays above it
 const basic = (color, opacity) => new THREE.MeshBasicMaterial({ color, transparent: true, opacity, depthWrite: false, side: THREE.DoubleSide });
 
 // Flat ribbon along a polyline, lying on the mat
 export function ribbon(points, width, color, opacity = 1, dash = 0, y = 0.06) {
+  y += LIFT;
   const pos = [], hw = width / 2;
   const quad = (a, b) => {
     const dx = b.x - a.x, dz = b.z - a.z, l = Math.hypot(dx, dz) || 1, nx = -dz / l * hw, nz = dx / l * hw;
@@ -27,6 +29,7 @@ export function ribbon(points, width, color, opacity = 1, dash = 0, y = 0.06) {
 
 // Chevrons along a path (direction of travel)
 export function chevrons(points, color, opacity = 0.9, every = 1.2, y = 0.07) {
+  y += LIFT;
   const g = new THREE.Group();
   let carry = every / 2;
   for (let i = 0; i < points.length - 1; i++) {
@@ -47,12 +50,12 @@ export function chevrons(points, color, opacity = 0.9, every = 1.2, y = 0.07) {
 
 export function ring(r, w, color, opacity = 1, y = 0.05, seg = 48) {
   const m = new THREE.Mesh(new THREE.RingGeometry(Math.max(0.01, r - w / 2), r + w / 2, seg), basic(color, opacity));
-  m.rotation.x = -Math.PI / 2; m.position.y = y; m.renderOrder = 4;
+  m.rotation.x = -Math.PI / 2; m.position.y = y + LIFT; m.renderOrder = 4;
   return m;
 }
 export function disc(r, color, opacity = 1, y = 0.04) {
   const m = new THREE.Mesh(new THREE.CircleGeometry(r, 40), basic(color, opacity));
-  m.rotation.x = -Math.PI / 2; m.position.y = y; m.renderOrder = 3;
+  m.rotation.x = -Math.PI / 2; m.position.y = y + LIFT; m.renderOrder = 3;
   return m;
 }
 
@@ -61,7 +64,7 @@ export function arcShape(ox, oz, dx, dz, R, ch, color, opacity = 0.35, inner = 0
   const half = Math.acos(Math.max(-1, Math.min(1, ch)));
   const th = Math.atan2(-dz, dx);
   const m = new THREE.Mesh(new THREE.RingGeometry(inner, R, 28, 1, th - half, half * 2), basic(color, opacity));
-  m.rotation.x = -Math.PI / 2; m.position.set(ox, 0.07, oz); m.renderOrder = 5;
+  m.rotation.x = -Math.PI / 2; m.position.set(ox, 0.07 + LIFT, oz); m.renderOrder = 5;
   return m;
 }
 // Volley line (rectangle) from origin along dir
@@ -70,7 +73,7 @@ export function lineShape(ox, oz, dx, dz, len, w, color, opacity = 0.35) {
   const m = new THREE.Mesh(new THREE.PlaneGeometry(w, len), basic(color, opacity));
   m.rotation.x = -Math.PI / 2; m.position.z = len / 2; m.renderOrder = 5;
   g.add(m);
-  g.position.set(ox, 0.07, oz); g.rotation.y = Math.atan2(dx, dz);
+  g.position.set(ox, 0.07 + LIFT, oz); g.rotation.y = Math.atan2(dx, dz);
   return g;
 }
 

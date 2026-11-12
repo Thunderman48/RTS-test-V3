@@ -1,6 +1,7 @@
 // Renderer, camera rig and lights for the tabletop.
 import * as THREE from 'three';
 import { RULES } from '../data/units.js';
+import { MiniLens } from './post.js';
 
 export class View {
   constructor(canvas) {
@@ -13,7 +14,12 @@ export class View {
     r.toneMapping = THREE.ACESFilmicToneMapping;
     r.toneMappingExposure = 1.05;
     this.scene = new THREE.Scene();
-    this.scene.background = new THREE.Color(0x1d1915);
+    const bg = document.createElement('canvas'); bg.width = 4; bg.height = 256;
+    const bgc = bg.getContext('2d'), gr = bgc.createLinearGradient(0, 0, 0, 256);
+    gr.addColorStop(0, '#2a2620'); gr.addColorStop(1, '#14110e');
+    bgc.fillStyle = gr; bgc.fillRect(0, 0, 4, 256);
+    const bgt = new THREE.CanvasTexture(bg); bgt.colorSpace = THREE.SRGBColorSpace;
+    this.scene.background = bgt;
     this.scene.fog = new THREE.Fog(0x1d1915, 70, 140);
     this.camera = new THREE.PerspectiveCamera(36, 1, 0.5, 400);
     const W = RULES.board.w, H = RULES.board.h;
@@ -21,9 +27,9 @@ export class View {
     this.cam = { x: W / 2, z: H / 2, dist: 46, yaw: 0, pitch: 0.95 };
 
     // warm "games room" lighting
-    this.scene.add(new THREE.HemisphereLight(0xfff4e4, 0x4a3b2e, 1.15));
-    const key = new THREE.DirectionalLight(0xffe0b0, 2.35);
-    key.position.set(W / 2 - 18, 34, H / 2 + 22);
+    this.scene.add(new THREE.HemisphereLight(0xfff1de, 0x3a4058, 1.05));
+    const key = new THREE.DirectionalLight(0xffdcaa, 2.6);
+    key.position.set(W / 2 - 22, 28, H / 2 + 20);
     key.target.position.set(W / 2, 0, H / 2);
     key.castShadow = true;
     key.shadow.mapSize.set(2048, 2048);
@@ -38,6 +44,7 @@ export class View {
     for (const n of ['table', 'units', 'plan', 'fx', 'ghost']) { this.layers[n] = new THREE.Group(); this.scene.add(this.layers[n]); }
     this.fx = [];
     this.raycaster = new THREE.Raycaster();
+    this.lens = r.capabilities.isWebGL2 && !/nolens/.test(location.search) ? new MiniLens(r) : null;
     this.resize();
     window.addEventListener('resize', () => this.resize());
   }
@@ -48,6 +55,7 @@ export class View {
     this.camera.aspect = w / h;
     this.camera.fov = w < h ? 52 : 36;
     this.camera.updateProjectionMatrix();
+    this.lens?.setSize(w, h, this.renderer.getPixelRatio());
   }
 
   updateCamera() {
@@ -117,7 +125,7 @@ export class View {
       if (k >= 1) this.camAnim = null;
     }
     this.updateCamera();
-    this.renderer.render(this.scene, this.camera);
+    if (this.lens) this.lens.render(this.scene, this.camera, dt); else this.renderer.render(this.scene, this.camera);
   }
 }
 
