@@ -16,6 +16,12 @@ const CHEV2 = 'M12 2l9 8h-5l-4-3.5L8 10H3ZM12 11l9 8h-5l-4-3.5L8 19H3Z';
 const SLASHCIRCLE = 'M12 3a9 9 0 1 0 .01 0ZM5.6 5.6l12.8 12.8';
 
 export const ICONSET = {
+  // unit types
+  hero: { c: GOLD, d: 'M3 18 4.5 7l5 5L12 4l2.5 8 5-5L21 18Z', x: 'M3 21h18' },
+  tank: { c: STEEL, d: SHIELD, x: 'M12 5v14M7.5 10h9' },
+  fighter: { c: ORANGE, d: 'M18.5 2H22v3.5L10.5 17 7 13.5ZM4.5 12.5l7 7-1.6 1.6-2.2-2.2L5 21.6 2.4 19l2.7-2.7-2.2-2.2Z' },
+  ranged: { c: RED, d: 'M6 2.5c8 2.5 11 10.5 8.5 19M6 2.5l8.5 19M2 12h18M17 8.5 20.5 12 17 15.5', s: true, w: 2.2 },
+  fast: { c: CYAN, d: 'M6 21V11a6 6 0 0 1 12 0v10', s: true, w: 3.4 },
   // resources & state
   supply: { c: GOLD, d: HEX, x: 'M12 7 16.5 9.5v5L12 17l-4.5-2.5v-5Z' },
   income: { c: GOLD, d: HEX, x: 'M12 7.5v9M7.5 12h9' },

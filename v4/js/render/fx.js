@@ -131,3 +131,47 @@ export class FloatTexts {
   }
   clear() { for (const it of this.items) it.el.remove(); this.items = []; }
 }
+
+// Bolts and arrows in flight, driven by timeline time so scrubbing works.
+// list: [{ key, T0, T1, from: [{x,y,z}], to: {x,z}, arc }]
+const shaftMat = new THREE.MeshStandardMaterial({ color: 0x6b4a2b, flatShading: true, roughness: 0.8 });
+const headMat = new THREE.MeshStandardMaterial({ color: 0xc4cad3, flatShading: true, roughness: 0.5, metalness: 0.3 });
+const fletchMat = new THREE.MeshStandardMaterial({ color: 0xf2efe6, flatShading: true, roughness: 0.9, side: THREE.DoubleSide });
+function missile(scale = 1) {
+  const g = new THREE.Group();
+  const s = new THREE.Mesh(new THREE.BoxGeometry(0.035, 0.035, 0.5), shaftMat);
+  const h = new THREE.Mesh(new THREE.ConeGeometry(0.045, 0.12, 4), headMat); h.rotation.x = Math.PI / 2; h.position.z = 0.3;
+  const f = new THREE.Mesh(new THREE.PlaneGeometry(0.1, 0.12), fletchMat); f.position.z = -0.2; f.rotation.y = Math.PI / 2;
+  g.add(s, h, f); g.scale.setScalar(scale);
+  return g;
+}
+const jit = (i, k) => { const v = Math.sin(i * 12.9898 + k * 78.233) * 43758.5453; return (v - Math.floor(v)) - 0.5; };
+export class Projectiles {
+  constructor(view) { this.view = view; this.map = new Map(); }
+  update(list, T) {
+    const L = this.view.layers.fx;
+    const seen = new Set();
+    const a = new THREE.Vector3(), b = new THREE.Vector3();
+    for (const v of list) {
+      if (T < v.T0 || T > v.T1 + 5) continue;
+      seen.add(v.key);
+      let e = this.map.get(v.key);
+      if (!e) { e = v.from.map(() => { const m = missile(1.4); L.add(m); return m; }); this.map.set(v.key, e); }
+      const f = Math.min(1, (T - v.T0) / Math.max(1, v.T1 - v.T0));
+      const pt = (i, t) => {
+        const s = v.from[i], ex = v.to.x + jit(i, 1) * 0.9, ez = v.to.z + jit(i, 2) * 0.9;
+        a.set(s.x + (ex - s.x) * t, s.y * (1 - t) + 0.25 * t + v.arc * 4 * t * (1 - t), s.z + (ez - s.z) * t);
+        return a;
+      };
+      e.forEach((m, i) => {
+        const fi = Math.max(0, Math.min(1, f + jit(i, 3) * 0.08));
+        pt(i, fi); m.position.copy(a);
+        pt(i, Math.min(1, fi + 0.02)); b.copy(a);
+        if (fi < 0.999) m.lookAt(b);
+        m.visible = T >= v.T0;
+      });
+    }
+    for (const [key, e] of this.map) if (!seen.has(key)) { for (const m of e) { L.remove(m); m.traverse(o => o.geometry && o.geometry.dispose()); } this.map.delete(key); }
+  }
+  clear() { this.update([], -1e9); }
+}

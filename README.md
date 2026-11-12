@@ -8,7 +8,7 @@ A playable prototype of the **Turn-Based RTS (Design Doc V3)**. It combines RTS 
 * **Static site** with no build step and no server, so it runs on GitHub Pages.
 
 **V4 preview (in progress):** a full remake as a tabletop miniatures wargame lives at [`v4/`](v4/) (`…/RTS-test-V3/v4/`). Milestone 1 is playable vs the AI:
-* Painted low-poly miniatures in squads of 3–5 on a diorama table: Kingdom vs Undead Legion.
+* Faceted, painted low-poly miniatures on thick team-coloured bases, in squads of 3–5 on a diorama table: Kingdom vs Undead Legion. They wind up, swing, thrust, shoot and topple over when they fall. `v4/?gallery` shows every mini (`?gallery=anim` animates them).
 * Free movement in inches: drag a path from a squad; the tape shows inches and AP, and a ring shows the reach left.
 * Every attack is a drag-aimed skillshot (Swing arc, Volley line). It hits whatever stands in the shape when it lands, so faster tiers can dodge.
 * Damage removes models, and a squad hits for damage per model × models left.

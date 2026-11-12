@@ -8,9 +8,10 @@ import { segCircle } from './sim/geom.js';
 import { aiOrders, aiMemory } from './ai/ai.js';
 import { View } from './render/view.js';
 import { buildTable } from './render/table.js';
-import { SquadView } from './render/squads.js';
+import { SquadView, LEAD } from './render/squads.js';
+import { makeMini, poseMini, attackPose, POSES } from './render/minis.js';
 import { Timeline, SEC_PER_AP } from './render/timeline.js';
-import { ribbon, chevrons, ring, disc, arcShape, lineShape, Telegraphs, FloatTexts, COL } from './render/fx.js';
+import { ribbon, chevrons, ring, disc, arcShape, lineShape, Telegraphs, FloatTexts, Projectiles, COL } from './render/fx.js';
 import { Input } from './ui/input.js';
 import { Planner } from './ui/planner.js';
 import { icon } from './ui/iconset.js';
@@ -25,6 +26,7 @@ class Game {
     this.view = new View(this.canvas);
     this.texts = new FloatTexts($('fx-layer'), this.view);
     this.tele = new Telegraphs(this.view);
+    this.shots = new Projectiles(this.view);
     this.planner = new Planner(this);
     this.views = new Map();
     this.labels = new Map();
@@ -40,6 +42,8 @@ class Game {
       key: e => this.onKey(e),
     });
     this.bindDOM();
+    try { new ResizeObserver(() => document.documentElement.style.setProperty('--pb-h', $('playbar').offsetHeight + 'px')).observe($('playbar')); } catch {}
+    if (/gallery/.test(location.search)) { this.gallery(); return; }
     // menu backdrop: the board with both armies
     this.state = createGame(1);
     buildTable(this.view, this.state.terrain);
@@ -47,6 +51,29 @@ class Game {
     this.view.cam = { x: 24, z: 16, dist: 44, yaw: 0.25, pitch: 0.82 };
     this.last = performance.now();
     this.loop();
+  }
+
+  // debug view: every miniature lined up (?gallery), animating attacks (?gallery=anim)
+  gallery() {
+    $('menu').classList.add('hidden');
+    this.state = createGame(1);
+    buildTable(this.view, this.state.terrain);
+    const looks = [['kingdom', 'lord'], ['kingdom', 'shield'], ['kingdom', 'sword'], ['kingdom', 'crossbow'], ['kingdom', 'rider'], ['undead', 'necro'], ['undead', 'graveguard'], ['undead', 'skeleton'], ['undead', 'archer'], ['undead', 'wraith']];
+    const minis = looks.map(([f, l], i) => { const m = makeMini(l, f, i + 1); m.position.set(5 + (i % 5) * 1.6, 0, 28 + Math.floor(i / 5) * 2.2); this.view.layers.units.add(m); return m; });
+    const anim = /anim/.test(location.search);
+    this.view.cam = { x: 8.2, z: 29.6, dist: 9, yaw: 0, pitch: 0.42 };
+    const tick = () => {
+      requestAnimationFrame(tick);
+      const t = this.view.time || 0;
+      for (const m of minis) {
+        const st = m.userData.rig.style;
+        const now = window.galleryT ?? (t * 20) % 45;
+        poseMini(m, anim || window.galleryT !== undefined ? attackPose(st, 5, 30, now, LEAD[st] || 1.5) : POSES[st].rest, 0, t);
+      }
+      this.view.render(1 / 60);
+    };
+    window.galleryMinis = minis;
+    tick();
   }
 
   bindDOM() {
@@ -98,7 +125,7 @@ class Game {
   beginPlanning() {
     this.phase = 'planning';
     this.planner.reset();
-    this.tele.clear(); this.texts.clear();
+    this.tele.clear(); this.texts.clear(); this.shots.clear();
     if (this.selected && !this.state.squads.some(q => q.id === this.selected)) this.selected = null;
     $('playbar').classList.add('hidden'); $('log').classList.add('hidden');
     $('bottom').classList.remove('hidden');
@@ -121,6 +148,13 @@ class Game {
     this.pre = pre; this.post = post; this.log = log;
     this.tl = new Timeline(pre, log);
     this.T = 0; this.playing = true; this.lastT = 0;
+    this.shotList = [];
+    for (const e of this.tl.events) if (e.type === 'release' && e.kind === 'volley') {
+      const v = this.views.get(e.id); if (!v) continue;
+      const lead = LEAD[v.style] || 4, T0 = e.T - lead;
+      const p = this.tl.pose(e.id, T0), h = this.tl.health(e.id, T0);
+      this.shotList.push({ key: e.id + ':' + e.T, T0, T1: e.T, from: v.muzzles(p.x, p.z, p.fx, p.fz, h.models), to: { x: e.ex, z: e.ez }, arc: v.style === 'bow' ? 2.6 : 0.5 });
+    }
     this.selected = null;
     this.view.clear('plan'); this.view.clear('ghost');
     $('dock').classList.add('hidden'); $('info').classList.add('hidden');
@@ -332,7 +366,7 @@ class Game {
       const pips = Array.from({ length: def.models }, (_, i) => `<i class="${i < q.models ? '' : 'off'}"></i>`).join('');
       const st = plan ? 'Your orders' : 'Stance: ' + this.planner.stanceOf(q);
       return `<button class="sq${q.id === this.selected ? ' sel' : ''}" data-id="${q.id}">
-        <span class="n"><span class="tr">${tier}</span>${esc(def.name)}</span>
+        <span class="n"><span class="tr">${tier}</span>${esc(def.name)}${icon(def.role, 14, 'role')}</span>
         <span class="m"><span class="pips">${pips}</span><span>${q.hp} HP</span></span>
         <span class="ap">${apBlocks(q, plan, true)}</span>
         <span class="st${plan ? ' ord' : ''}">${esc(st)}${plan ? ` · ${apFor(q) - used} AP left` : ''}</span></button>`;
@@ -392,25 +426,58 @@ class Game {
   updateLabels(list) {
     const layer = $('labels');
     const seen = new Set();
+    const placed = [];
+    const zoomedOut = this.view.cam.dist > (innerWidth < 700 || innerHeight < 520 ? 30 : 52);
+    const items = [];
     for (const d of list) {
       const v = this.views.get(d.id); if (!v) continue;
       seen.add(d.id);
       let el = this.labels.get(d.id);
       if (!el) { el = document.createElement('div'); el.className = 'sl'; layer.appendChild(el); this.labels.set(d.id, el); }
       const def = defOf(d);
-      const tier = d.tierShown || def.tier;
-      const key = `${tier}|${d.models}|${d.hp}|${d.id === this.selected}|${!!this.planner.plan(d.id)}|${d.dying !== undefined}`;
+      const plan = this.phase === 'planning' ? this.planner.plan(d.id) : null;
+      const planning = this.phase === 'planning';
+      const tier = planning ? def.tier + (plan?.upgrades || 0) : (d.tierShown || def.tier);
+      const defs = planning ? def.defends + (plan?.defends || 0) : (d.defLeft ?? def.defends);
+      const ups = planning ? (plan?.upgrades || 0) : (d.upgrades || 0);
+      const stance = planning ? (plan ? null : this.planner.stanceOf(d)) : d.stanceShown;
+      const sel = d.id === this.selected;
+      const key = `${tier}|${d.models}|${d.hp}|${sel}|${!!plan}|${d.dying !== undefined}|${defs}|${ups}|${stance}|${zoomedOut}`;
       if (el.dataset.key !== key) {
         el.dataset.key = key;
         el.style.setProperty('--team', TEAM[d.owner]);
-        const pips = def.models > 1 ? `<span class="pips">${Array.from({ length: def.models }, (_, i) => `<i class="${i < d.models ? '' : 'off'}"></i>`).join('')}</span>` : `<span class="hp"><b style="width:${(100 * d.hp / def.hpPer).toFixed(0)}%"></b></span>`;
-        el.innerHTML = `<span class="tr">${tier}</span>${pips}`;
-        el.className = 'sl' + (d.id === this.selected ? ' sel' : '') + (this.phase === 'planning' && d.owner === this.me && this.planner.plan(d.id) ? ' ord' : '') + (d.dying !== undefined ? ' dim' : '');
+        const maxHp = def.models * def.hpPer;
+        const st = [];
+        if (def.models > 1) st.push(`<span class="st">${icon('army', 12)}×${d.models}</span>`);
+        if (defs > 0) st.push(`<span class="st" title="Defends: each halves one hit">${icon('defend', 12)}${defs}</span>`);
+        if (ups > 0) st.push(`<span class="st">${icon('tierup', 12)}${ups > 1 ? ups : ''}</span>`);
+        if (plan) st.push(`<span class="st">${icon('control', 12)}</span>`);
+        else if (stance) st.push(`<span class="st">${icon(stance, 12)}</span>`);
+        el.innerHTML = `<div class="sl-h"><span class="tr">${tier}</span><span class="nm">${esc(def.name)}</span>${icon(def.role, 14)}</div>
+          <div class="sl-hp"><b style="width:${(100 * d.hp / maxHp).toFixed(0)}%"></b><span>${d.hp}</span></div>
+          <div class="sl-s">${st.join('')}</div>`;
+        el.className = 'sl' + (sel ? ' sel' : '') + (plan && d.owner === this.me ? ' ord' : '') + (d.dying !== undefined ? ' dim' : '') + (zoomedOut && !sel ? ' compact' : '');
+        el._w = el.offsetWidth; el._h = el.offsetHeight;
       }
       const t = v.top();
       const p = this.view.project(t.x, t.y, t.z);
-      el.style.display = p.behind || (d.dying !== undefined && d.dying > 0.6) ? 'none' : '';
-      el.style.transform = `translate(${p.x}px, ${p.y}px) translate(-50%, -100%)`;
+      const hide = p.behind || (d.dying !== undefined && d.dying > 0.6);
+      el.style.display = hide ? 'none' : '';
+      if (!hide) items.push({ el, x: p.x, y: p.y, sel });
+    }
+    // simple de-overlap: place from the bottom of the screen up, nudging labels upward
+    items.sort((a, b) => b.y - a.y);
+    for (const it of items) {
+      const w = it.el._w || 90, h = it.el._h || 40;
+      let y = it.y;
+      for (let pass = 0; pass < 4; pass++) {
+        const hit = placed.find(r => Math.abs(r.x - it.x) < (r.w + w) / 2 + 2 && y > r.y - r.h - 2 && y - h < r.y + 2);
+        if (!hit) break;
+        y = hit.y - hit.h - 3;
+      }
+      placed.push({ x: it.x, y, w, h });
+      it.el.style.transform = `translate(${it.x}px, ${y}px) translate(-50%, -100%)`;
+      it.el.style.zIndex = it.sel ? 2 : 1;
     }
     for (const [id, el] of this.labels) if (!seen.has(id)) { el.remove(); this.labels.delete(id); }
   }
@@ -440,7 +507,8 @@ class Game {
       else if (e.type === 'release' && !e.hit.length) lines.push({ T: e.T, html: `${name(e.id)}: ${e.kind} ${e.blocked ? 'blocked by cover' : 'misses (nobody in the area)'}` });
     }
     this.logLines = lines;
-    $('log').innerHTML = lines.length ? lines.map((l, i) => `<div class="lg" data-i="${i}">${l.html}</div>`).join('') : '<div class="lg">No blows landed this round.</div>';
+    $('log').innerHTML = `<button class="lg-head" id="lg-toggle">Battle log · ${lines.length}<span>▾</span></button><div class="lg-list">` + (lines.length ? lines.map((l, i) => `<div class="lg" data-i="${i}">${l.html}</div>`).join('') : '<div class="lg">No blows landed this round.</div>') + '</div>';
+    $('lg-toggle').onclick = () => $('log').classList.toggle('collapsed');
     $('log').querySelectorAll('.lg[data-i]').forEach(el => el.onclick = () => { this.playing = false; this.seek(this.logLines[+el.dataset.i].T - 4); });
   }
 
@@ -464,10 +532,10 @@ class Game {
     this.lastT = T;
     const list = tl.sample(T);
     this.sampleCache = list;
-    for (const d of list) { const sec = tl.sectionAt(T); d.tierShown = this.tierOf(d.id); void sec; }
     this.syncViews(list, false, dt);
     this.updateLabels(list);
     this.tele.update(tl.activeTeles(T), T);
+    this.shots.update(this.shotList, T);
     // timeline UI
     $('scrub-head').style.left = (100 * T / tl.total) + '%';
     $('pb-play').textContent = this.playing ? '❚❚' : '▶';

@@ -78,17 +78,28 @@ export class Timeline {
       const h = this.health(q.id, T);
       const dT = this.down.get(q.id);
       const dying = dT !== undefined && T >= dT ? (T - dT) / 20 : undefined;
-      // lunge while a strike resolves (short window after release)
-      let lunge = 0;
-      for (const tl of this.teles) if (tl.id === q.id && T >= tl.T0) {
-        if (T <= tl.T1) lunge = Math.max(lunge, ((T - tl.T0) / Math.max(1, tl.T1 - tl.T0)) * 0.25);
-        else if (T <= tl.T1 + 6) lunge = Math.max(lunge, 1 - (T - tl.T1) / 6);
-      }
-      let flash = 0;
-      for (const e of this.events) { if (e.T > T) break; if (e.type === 'hit' && e.dst === q.id && T - e.T < 5) flash = Math.max(flash, 1 - (T - e.T) / 5); }
-      out.push({ ...q, ...p, hp: h.hp, models: h.models, dying, lunge, flash, acting: !!acting && acting.has(q.id) && h.hp > 0 && (dying === undefined) });
+      // the attack being animated: the latest wind-up that has started (kept a while after release)
+      let atk = null;
+      for (const tl of this.teles) if (tl.id === q.id && T >= tl.T0 - 0.5 && T <= tl.T1 + 9) atk = { T0: tl.T0, T1: tl.T1, now: T, kind: tl.kind };
+      let struck;
+      for (const e of this.events) { if (e.T > T) break; if (e.type === 'hit' && e.dst === q.id) struck = T - e.T; }
+      const info = this.info(q.id, T);
+      out.push({ ...q, ...p, hp: h.hp, models: h.models, dying, atk, struck, flash: struck !== undefined && struck < 5 ? 1 - struck / 5 : 0,
+        defLeft: info.defLeft, tierShown: info.tier, upgrades: info.upgrades, stanceShown: info.stance,
+        acting: !!acting && acting.has(q.id) && h.hp > 0 && (dying === undefined) });
     }
     return out;
+  }
+
+  // tier, prepared defends left, upgrades and stance of a squad at time T
+  info(id, T) {
+    let tier = null, defLeft = 0, upgrades = 0, stance = null;
+    for (const e of this.events) {
+      if (e.T > T && e.type !== 'prep') break;
+      if (e.type === 'prep' && e.id === id) { tier = e.tier; defLeft = e.defends; upgrades = e.upgrades; stance = e.stance; }
+      else if (e.type === 'hit' && e.dst === id) defLeft = e.defLeft;
+    }
+    return { tier, defLeft, upgrades, stance };
   }
 
   activeTeles(T) { return this.teles.filter(t => T >= t.T0 && T <= t.T1 + 4); }

@@ -21,8 +21,8 @@ export class View {
     this.cam = { x: W / 2, z: H / 2, dist: 46, yaw: 0, pitch: 0.95 };
 
     // warm "games room" lighting
-    this.scene.add(new THREE.HemisphereLight(0xfff1dc, 0x3b2f24, 1.0));
-    const key = new THREE.DirectionalLight(0xffe2b8, 2.3);
+    this.scene.add(new THREE.HemisphereLight(0xfff4e4, 0x4a3b2e, 1.15));
+    const key = new THREE.DirectionalLight(0xffe0b0, 2.35);
     key.position.set(W / 2 - 18, 34, H / 2 + 22);
     key.target.position.set(W / 2, 0, H / 2);
     key.castShadow = true;
@@ -30,7 +30,7 @@ export class View {
     const sc = key.shadow.camera; sc.left = -34; sc.right = 34; sc.top = 26; sc.bottom = -26; sc.near = 1; sc.far = 100;
     key.shadow.bias = -0.0006; key.shadow.normalBias = 0.02;
     this.scene.add(key, key.target);
-    const fill = new THREE.DirectionalLight(0xbfd4ff, 0.45);
+    const fill = new THREE.DirectionalLight(0xb8d0ff, 0.6);
     fill.position.set(W / 2 + 20, 18, H / 2 - 20);
     this.scene.add(fill);
 
