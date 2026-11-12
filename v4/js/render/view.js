@@ -16,11 +16,11 @@ export class View {
     this.scene = new THREE.Scene();
     const bg = document.createElement('canvas'); bg.width = 4; bg.height = 256;
     const bgc = bg.getContext('2d'), gr = bgc.createLinearGradient(0, 0, 0, 256);
-    gr.addColorStop(0, '#3a1f2b'); gr.addColorStop(1, '#170c13');
+    gr.addColorStop(0, '#2a2620'); gr.addColorStop(1, '#14110e');
     bgc.fillStyle = gr; bgc.fillRect(0, 0, 4, 256);
     const bgt = new THREE.CanvasTexture(bg); bgt.colorSpace = THREE.SRGBColorSpace;
     this.scene.background = bgt;
-    this.scene.fog = new THREE.Fog(0x24121b, 100, 260);
+    this.scene.fog = new THREE.Fog(0x1a1612, 120, 330);
     this.camera = new THREE.PerspectiveCamera(36, 1, 0.5, 600);
     const W = RULES.board.w, H = RULES.board.h;
     this.W = W; this.H = H;
