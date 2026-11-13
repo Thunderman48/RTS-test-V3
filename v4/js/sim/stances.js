@@ -82,6 +82,15 @@ export function buildStancePlan(s, q, enemies) {
   const plan = emptyPlan();
   let left = apFor(q);
   const st = q.stance;
+  if (!enemies.length && st === 'advance') {
+    // nobody in sight: march on the enemy HQ
+    const hq = (s.buildings || []).find(b => b.owner !== q.owner && b.type === 'hq');
+    if (hq) {
+      const nav = Nav.for(obstacles(s), radiusOf(q), navKey(s));
+      const pts = trimPath(q.x, q.z, nav.path(q.x, q.z, hq.x, hq.z), 3.2);
+      if (pts.length) { plan.actions.push({ kind: 'move', pts, ap: left }); return plan; }
+    }
+  }
   if (st === 'hold' || !enemies.length) { fillDefends(plan, left); return plan; }
   if (isShooter(def)) {
     const range = def.attack.range;

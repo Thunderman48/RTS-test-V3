@@ -167,7 +167,7 @@ export function resolveRound(state0, ordersIn) {
     const q = h.dst, r = rtById.get(q.id);
     if (q.hp <= 0) return;
     if (q.type) {          // a building
-      const dmg = damageAfter(h.dmg, bdef(q).armor, false);
+      const dmg = damageAfter(h.dmg * RULES.siegeMult, bdef(q).armor, false);
       q.hp = Math.max(0, q.hp - dmg);
       ev({ type: 'hit', src: h.src, dst: q.id, dmg, raw: Math.round(h.dmg), kind: h.kind, hp: q.hp, building: true });
       if (q.hp <= 0) ev({ type: 'bdown', id: q.id, btype: q.type, owner: q.owner });

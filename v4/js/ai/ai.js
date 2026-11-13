@@ -4,7 +4,7 @@ import { RULES, isMelee, isShooter, skillOf, cdOf } from '../data/units.js';
 import { losCut, engagedWith } from '../sim/resolve.js';
 import { emptyOrders, emptyPlan, defOf, radiusOf, apFor } from '../sim/state.js';
 import { nearestEnemy, meleePlan, trimPath } from '../sim/stances.js';
-import { obstacles, navKey } from '../sim/base.js';
+import { obstacles, navKey, placeError, bonusCp, armySize, armyValue, BUILDINGS, TRAIN_COST } from '../sim/base.js';
 import { Nav } from '../sim/nav.js';
 import { dist } from '../sim/geom.js';
 import { visibleTo } from '../sim/vision.js';
@@ -21,12 +21,18 @@ export function aiOrders(s, p, memory = aiMemory()) {
   for (const e of s.squads) if (vis.has(e.id)) memory.seen[e.id] = { ...e, round: s.round };
   for (const id of Object.keys(memory.seen)) if (!alive.has(id) || s.round - memory.seen[id].round > 3) delete memory.seen[id];
   let enemies = Object.values(memory.seen).map(e => vis.has(e.id) ? s.squads.find(q => q.id === e.id) : e);
+  // the enemy HQ is always known: march on it when no enemy squad is known, or when close to it
+  const hqE = (s.buildings || []).find(b => b.owner !== p && b.type === 'hq');
+  const hqTarget = hqE ? { id: hqE.id, owner: 1 - p, faction: s.players[1 - p].faction, role: 'fighter', x: hqE.x, z: hqE.z, fx: 1, fz: 0, models: 4, hp: hqE.hp, cd: {}, isHq: true } : null;
   if (!enemies.length) {
-    // nothing known: scout toward where the enemy deployed
-    const c = DEPLOY.reduce((a, d) => ({ x: a.x + d.x / DEPLOY.length, z: a.z + d.z / DEPLOY.length }), { x: 0, z: 0 });
-    const home = p === 0 ? { x: RULES.board.w - c.x, z: RULES.board.h - c.z } : c;
-    enemies = [{ id: '?', owner: 1 - p, faction: s.players[1 - p].faction, role: 'fighter', x: home.x, z: home.z, fx: 1, fz: 0, models: 4, hp: 80, cd: {} }];
-  }
+    if (hqTarget) enemies = [hqTarget];
+    else {
+      const c = DEPLOY.reduce((a, d) => ({ x: a.x + d.x / DEPLOY.length, z: a.z + d.z / DEPLOY.length }), { x: 0, z: 0 });
+      const home = p === 0 ? { x: RULES.board.w - c.x, z: RULES.board.h - c.z } : c;
+      enemies = [{ id: '?', owner: 1 - p, faction: s.players[1 - p].faction, role: 'fighter', x: home.x, z: home.z, fx: 1, fz: 0, models: 4, hp: 80, cd: {} }];
+    }
+  } else if (hqTarget) enemies.push(hqTarget);
+  if (s.buildings) Object.assign(o, economy(s, p, enemies.filter(e => !e.isHq)));
   for (const q of mine) if (q.stance !== 'advance') o.stances[q.id] = 'advance';
   // lead targets by their last movement (only for squads seen both rounds)
   const prev = memory.prev;
@@ -43,13 +49,29 @@ export function aiOrders(s, p, memory = aiMemory()) {
     const db = Math.min(...enemies.map(e => dist(b.x, b.z, e.x, e.z)));
     return (a.role === 'hero' ? -1e9 : da) - (b.role === 'hero' ? -1e9 : db);
   });
-  let cp = RULES.cp;
+  let cp = RULES.cp + bonusCp(s, p);
+  const myVal = mine.reduce((n, q) => n + q.hp, 0), theirVal = enemies.filter(e => !e.isHq).reduce((n, e) => n + (e.hp || 0), 0);
+  const assault = s.round >= 6 && (myVal >= theirVal * 1.15 || s.round >= 12);
   for (const q of ranked) {
     if (q.role !== 'hero') { if (cp <= 0) break; cp--; }
     const def = defOf(q);
     const plan = emptyPlan();
     let left = apFor(q);
-    const t = nearestEnemy(s, q, enemies);
+    // squads go for the HQ only when it is the closest thing (or nothing else is known)
+    const squadsOnly = enemies.filter(e => !e.isHq);
+    let t = nearestEnemy(s, q, enemies);
+    if (t.isHq && squadsOnly.length && dist(q.x, q.z, t.x, t.z) > 9) t = nearestEnemy(s, q, squadsOnly);
+    // assault: when clearly ahead (or the game drags on) ordered squads go for the HQ unless engaged
+    if (assault && hqTarget && !engagedWith(q, squadsOnly).length) t = hqTarget;
+    // fast squads without a fight nearby go and take shrines
+    if (q.role === 'fast' && s.shrines && !squadsOnly.some(e => dist(e.x, e.z, q.x, q.z) < 8)) {
+      const sh = s.shrines.filter(x => x.owner !== p).sort((a, b) => dist(q.x, q.z, a.x, a.z) - dist(q.x, q.z, b.x, b.z))[0];
+      if (sh && dist(q.x, q.z, sh.x, sh.z) > 1.5) {
+        const nav = Nav.for(obstacles(s), radiusOf(q), navKey(s));
+        const pts = nav.path(q.x, q.z, sh.x, sh.z);
+        if (pts.length) { const plan = emptyPlan(); plan.actions.push({ kind: 'move', pts, ap: apFor(q) }); o.squads[q.id] = plan; continue; }
+      }
+    }
     const L = lead(t);
     const tx = t.x + (L ? L.x : 0), tz = t.z + (L ? L.z : 0);
     const gap = dist(q.x, q.z, t.x, t.z) - radiusOf(t) - radiusOf(q);
@@ -116,3 +138,53 @@ export function aiOrders(s, p, memory = aiMemory()) {
 }
 
 export function aiMemory() { return { seen: {}, prev: {} }; }
+
+// ---- economy: a simple build order, keep training, wall up when threatened ------------
+function economy(s, p, known) {
+  const out = { builds: [], trains: [] };
+  let supply = s.supply[p];
+  const mine = s.buildings.filter(b => b.owner === p);
+  const hq = mine.find(b => b.type === 'hq');
+  if (!hq) return out;
+  const fwd = p === 0 ? 1 : -1;
+  const queued = [];
+  const count = t => mine.filter(b => b.type === t).length + queued.filter(b => b.type === t).length;
+  const place = (type, prefer) => {
+    // try spots around the HQ and our other buildings, preferring `prefer` (forward/side) offsets
+    const cand = [];
+    for (const b of mine) for (let r = 4; r <= 8; r += 1.5) for (let k = 0; k < 12; k++) {
+      const a = k / 12 * Math.PI * 2;
+      const x = b.x + Math.cos(a) * r, z = b.z + Math.sin(a) * r;
+      cand.push({ x, z, score: prefer(x, z) });
+    }
+    cand.sort((a, b) => b.score - a.score);
+    for (const c of cand) for (const rot of [0, 1]) {
+      if (!placeError(s, p, type, c.x, c.z, rot, queued)) {
+        queued.push({ type, x: c.x, z: c.z, rot, owner: p, ...(BUILDINGS[type].shape === 'circle' ? { r: BUILDINGS[type].r } : rot ? { w: BUILDINGS[type].d, d: BUILDINGS[type].w } : { w: BUILDINGS[type].w, d: BUILDINGS[type].d }) });
+        out.builds.push({ type, x: c.x, z: c.z, rot });
+        supply -= BUILDINGS[type].cost;
+        return true;
+      }
+    }
+    return false;
+  };
+  const forward = (x, z) => fwd * (x - hq.x) - Math.abs(z - hq.z) * 0.3;
+  const threat = known.filter(e => dist(e.x, e.z, hq.x, hq.z) < 14);
+  if (!count('barracks') && supply >= BUILDINGS.barracks.cost) place('barracks', (x, z) => -Math.abs(z - hq.z - 3) - Math.abs(fwd * (x - hq.x) - 2));
+  else if (count('barracks') && !count('tower') && supply >= BUILDINGS.tower.cost && s.round >= 2) place('tower', forward);
+  else if (threat.length && supply >= BUILDINGS.wall.cost && count('wall') < 3) place('wall', (x, z) => forward(x, z) - Math.min(...threat.map(e => dist(e.x, e.z, x, z))) * 0.5);
+  else if (count('barracks') && count('banner') < RULES.maxBannerCp && supply >= BUILDINGS.banner.cost + 20) place('banner', (x, z) => -dist(x, z, hq.x, hq.z));
+  else if (count('tower') < 2 && supply >= BUILDINGS.tower.cost + 30 && s.round >= 5) place('tower', forward);
+  // keep the barracks busy
+  const shooters = known.filter(e => isShooter(defOf(e))).length;
+  let army = armySize(s, p);
+  for (const b of mine.filter(b => b.type === 'barracks' && !b.build && !b.train)) {
+    if (army >= RULES.armyCap) break;
+    const myRoles = s.squads.filter(q => q.owner === p).map(q => q.role);
+    const n = r => myRoles.filter(x => x === r).length;
+    const role = shooters >= 2 && n('fast') < 2 ? 'fast' : n('tank') < 1 ? 'tank' : n('ranged') < n('fighter') ? 'ranged' : 'fighter';
+    if (supply < TRAIN_COST[role]) continue;
+    out.trains.push({ bid: b.id, role }); supply -= TRAIN_COST[role]; army++;
+  }
+  return out;
+}
