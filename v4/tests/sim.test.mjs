@@ -1,5 +1,5 @@
 // Headless tests for the V4 simulation. Run: node v4/tests/sim.test.mjs
-import { RULES } from '../js/data/units.js';
+import { RULES, TRAIN_COST } from '../js/data/units.js';
 import { createGame, addSquad, defOf, radiusOf, emptyOrders, emptyPlan } from '../js/sim/state.js';
 import { resolveRound, damageAfter, engagedWith } from '../js/sim/resolve.js';
 import { cpUsage, validateOrders } from '../js/sim/orders.js';
@@ -484,7 +484,7 @@ test('a barracks trains a squad that appears at the end of the round', () => {
   const r = resolveRound(s, [ob([], [{ bid: b.id, role: 'fighter' }]), ob()]);
   eq(r.state.squads.filter(q => q.owner === 0).length, n0 + 1);
   ok(events(r.log).some(e => e.type === 'spawn' && e.role === 'fighter'));
-  eq(r.state.supply[0], RULES.startSupply - 20 + RULES.hqIncome + r.state.shrines.filter(x => x.owner === 0).length * RULES.shrineIncome);
+  eq(r.state.supply[0], RULES.startSupply - TRAIN_COST.fighter + RULES.hqIncome + r.state.shrines.filter(x => x.owner === 0).length * RULES.shrineIncome);
 });
 
 test('shrines: held when only your squads are near; contested shrines stay', () => {
