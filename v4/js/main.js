@@ -16,10 +16,15 @@ import { ribbon, chevrons, ring, disc, arcShape, lineShape, Telegraphs, FloatTex
 import { Input } from './ui/input.js';
 import { Planner } from './ui/planner.js';
 import { icon } from './ui/iconset.js';
+import { BaseUI } from './ui/baseui.js';
+import { BUILDINGS } from './data/units.js';
+import { hitRadius } from './sim/base.js';
+import { BuildingView } from './render/buildings.js';
 
 const $ = id => document.getElementById(id);
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const TEAM = ['#3a78d8', '#9b59d0'];
+const TEAM_HEX = [0x3a78d8, 0x9b59d0];
 
 class Game {
   constructor() {
@@ -49,6 +54,7 @@ class Game {
     this.state = createGame(1);
     buildTable(this.view, this.state.terrain);
     this.syncViews(this.state.squads.map(q => ({ ...q })), true);
+    this.makeShrines(); this.syncBuildings(this.state.buildings.map(b => ({ ...b })));
     this.view.cam = { x: 24, z: 16, dist: 62, yaw: 0.6, pitch: 0.62 };
     this.last = performance.now();
     this.loop();
@@ -64,6 +70,15 @@ class Game {
     const minis = looks.map(([f, l], i) => { const m = makeMini(l, f, i + 1); m.position.set(5 + (i % 5) * 1.6, 0, 28 + Math.floor(i / 5) * 2.2); this.view.layers.units.add(m); return m; });
     const anim = /anim/.test(location.search);
     this.view.cam = { x: 8.2, z: 29.6, dist: 9, yaw: 0, pitch: 0.42 };
+    if (/build/.test(location.search)) {
+      // ?gallery&build: every building of both factions
+      ['kingdom', 'undead'].forEach((f, fi) => ['hq', 'barracks', 'tower', 'banner', 'wall'].forEach((t, i) => {
+        const d = BUILDINGS[t];
+        const v = new BuildingView({ id: f + t, type: t, rot: 0, x: 4 + i * 5.5, z: 6 + fi * 7, w: d.w, d: d.d, r: d.r }, f, this.view.layers.units);
+        v.update({ build: /site/.test(location.search) && t !== 'hq' ? 1 : 0 });
+      }));
+      this.view.cam = { x: 15, z: 9.5, dist: 26, yaw: 0, pitch: 0.55 };
+    }
     const tick = () => {
       requestAnimationFrame(tick);
       const t = this.view.time || 0;
@@ -83,6 +98,8 @@ class Game {
     $('m-undead').onclick = () => this.start('undead');
     $('b-ready').onclick = () => this.ready();
     $('b-rehearse').onclick = () => this.rehearse();
+    $('b-build').onclick = () => this.openBuild();
+    $('b-build').innerHTML = icon('build', 20) + '<span>Build</span>';
     try { this.hintsDone = localStorage.getItem('tiers-v4-hints') === '1'; } catch {}
     $('b-help').onclick = () => { $('help-body').innerHTML = helpHTML(); $('help').classList.remove('hidden'); };
     $('help-close').onclick = () => $('help').classList.add('hidden');
@@ -148,6 +165,8 @@ class Game {
     for (const v of this.views.values()) v.destroy();
     this.views.clear();
     this.syncViews(this.state.squads.map(q => ({ ...q })), true);
+    this.knownB = new Map(); this.selB = null; this.buildOpen = false; this.buildMode = null;
+    this.makeShrines(); this.syncBuildings([]);
     const portrait = innerHeight > innerWidth;
     const homeX = this.me === 0 ? 14 : 34;
     this.view.cam = { x: homeX, z: 16, dist: portrait ? 40 : 36, yaw: portrait ? (this.me === 0 ? Math.PI / 2 : -Math.PI / 2) : (this.me === 0 ? 0 : Math.PI), pitch: 0.92 };
@@ -162,6 +181,7 @@ class Game {
     const alive = new Set(this.state.squads.map(q => q.id));
     for (const q of this.state.squads) if (this.vis.has(q.id)) this.seen[q.id] = { ...q, round: this.state.round };
     for (const id of Object.keys(this.seen)) if (!alive.has(id)) delete this.seen[id];
+    this.updateBuildingFog();
   }
   canSeeEnemy(id) { return !this.vis || this.vis.has(id); }
 
@@ -171,6 +191,8 @@ class Game {
     this.planner.reset();
     this.tele.clear(); this.texts.clear(); this.shots.clear();
     if (this.selected && !this.state.squads.some(q => q.id === this.selected)) this.selected = null;
+    if (this.selB && !this.state.buildings.some(b => b.id === this.selB)) this.selB = null;
+    this.buildMode = null;
     $('playbar').classList.add('hidden'); $('log').classList.add('hidden');
     $('bottom').classList.remove('hidden');
     this.clearWatches?.();
@@ -209,13 +231,22 @@ class Game {
     this.T = 0; this.playing = true; this.lastT = 0;
     this.shotList = [];
     for (const e of this.tl.events) if (e.type === 'release' && (e.kind === 'volley' || e.kind === 'lob' || e.kind === 'storm' || e.kind === 'pierce')) {
+      if (e.building) {
+        // towers and keeps: a few bolts from the top
+        const b = pre.buildings.find(x => x.id === e.id); if (!b) continue;
+        if (b.owner !== this.me && !this.knownB.has(b.id) && !e.hit.some(id => pre.squads.find(q => q.id === id)?.owner === this.me)) continue;
+        const h = b.type === 'hq' ? 4.2 : 4.4, rr = hitRadius(b) * 0.6;
+        this.shotList.push({ key: e.id + ':' + e.T, T0: e.T - 3, T1: e.T, from: [0, 1, 2, 3].map(i => ({ x: b.x + Math.cos(i * 1.6) * rr, y: h, z: b.z + Math.sin(i * 1.6) * rr })), to: { x: e.ex, z: e.ez }, arc: 0.6 });
+        continue;
+      }
       const v = this.views.get(e.id); if (!v) continue;
       if (!this.tl.visibleAt(e.id, e.T) && !this.tl.visibleAt(e.id, e.T - 4)) continue;
       const lead = e.overwatch ? 2.5 : e.kind === 'storm' ? 7 : (LEAD[v.style] || 4), T0 = e.T - lead;
       const p = this.tl.pose(e.id, T0), h = this.tl.health(e.id, T0);
       this.shotList.push({ key: e.id + ':' + e.T, T0, T1: e.T, from: v.muzzles(p.x, p.z, p.fx, p.fz, h.models), to: { x: e.ex, z: e.ez }, arc: e.kind === 'volley' || e.kind === 'pierce' ? 0.4 : 3.2 });
     }
-    this.selected = null;
+    this.selected = null; this.selB = null; this.buildMode = null; this.buildOpen = false;
+    $('buildbar').classList.add('hidden'); this.updatePlaceMark();
     if (this.knobs) for (const el of Object.values(this.knobs)) el.style.display = 'none';
     this.ghostView?.destroy(); this.ghostView = null;
     this.knobPos = null;
@@ -254,7 +285,13 @@ class Game {
     if (this.state.winner !== null) {
       const w = this.state.winner;
       $('over-title').textContent = w === this.me ? 'Victory' : w === -1 ? 'Draw' : 'Defeat';
-      $('over-msg').textContent = w === this.me ? 'The enemy army has been destroyed.' : w === -1 ? 'Both armies fell.' : 'Your army has been destroyed.';
+      const hqGone = p => !this.state.buildings.some(b => b.owner === p && b.type === 'hq');
+      const loser = w === -1 ? -1 : 1 - w;
+      const enemyHq = BUILDINGS.hq.name[this.faction(this.ai)], myHq = BUILDINGS.hq.name[this.faction(this.me)];
+      $('over-msg').textContent = w === -1 ? 'Both sides are spent: the battle ends in a draw.'
+        : loser >= 0 && hqGone(loser) ? (w === this.me ? `The enemy ${enemyHq} has fallen.` : `Your ${myHq} has fallen.`)
+        : this.pre.round >= RULES.roundLimit ? `Round ${RULES.roundLimit} reached: ${w === this.me ? 'your' : 'the enemy'} army and base are stronger.`
+        : w === this.me ? 'The enemy army and its barracks are gone.' : 'Your army and your barracks are gone.';
       $('over').classList.remove('hidden');
     }
     this.beginPlanning();
@@ -314,6 +351,7 @@ class Game {
   drawPlan() {
     const V = this.view; V.clear('plan');
     const L = V.layers.plan;
+    this.drawBuildZone(L);
     for (const q of this.state.squads) {
       if (q.owner !== this.me) continue;
       const plan = this.planner.plan(q.id);
@@ -436,6 +474,7 @@ class Game {
 
   select(id, focus = false) {
     this.selected = id;
+    if (id) { this.selB = null; this.buildMode = null; this.buildOpen = false; }
     const q = this.selectedSquad();
     this.mode = 'move';
     if (q && focus) this.focusOn(q);
@@ -464,17 +503,20 @@ class Game {
 
   onTap(cx, cy) {
     if (this.phase !== 'planning') return;
+    if (this.buildMode) { const p = this.view.pick(cx, cy, 0); if (p) { this.movePlace(p.x, p.z); this.changed(); } return; }
     const { p, q } = this.pickSquad(cx, cy);
     if (!p) return;
     const sel = this.selectedSquad();
     const aiming = this.mode !== 'move';
     if (q && (!sel || sel.owner !== this.me || !aiming || q.owner === this.me)) { this.select(q.id); return; }
+    if (!q && (!sel || sel.owner !== this.me || !aiming)) { const b = this.pickBuilding(cx, cy); if (b) { this.selectBuilding(b.id); return; } }
     if (sel && sel.owner === this.me) { const t = aiming && q ? q : p; if (this.orderAt(this.mode, sel, t.x, t.z)) this.hint(2); return; }
-    this.select(null);
+    this.select(null); this.selB = null; this.changed();
   }
 
   dragStart(cx, cy) {
     if (this.phase !== 'planning') return false;
+    if (this.buildMode) { const p = this.view.pick(cx, cy, 0); if (!this.nearPlace(p)) return false; this.drag = { kind: 'place', sx: cx, sy: cy }; return true; }
     const q = this.selectedSquad();
     if (!q || q.owner !== this.me) return false;
     const knob = this.knobAt(cx, cy);
@@ -586,6 +628,7 @@ class Game {
   dragMove(cx, cy) {
     const d = this.drag; if (!d) return;
     const p = this.view.pick(cx, cy); if (!p) return;
+    if (d.kind === 'place') { d.pt = p; d.far = d.far || Math.hypot(cx - d.sx, cy - d.sy) > 9; this.movePlace(p.x, p.z); return; }
     const q = this.selectedSquad();
     if (d.knob) { const kp = this.knobPos?.[d.knobKey]; if (kp && Math.hypot(kp.x - cx, kp.y - cy) < 14 && !d.pt) return; }
     d.pt = p;
@@ -603,6 +646,7 @@ class Game {
     this.previewEnd = null;
     this.view.clear('ghost'); $('tape').classList.add('hidden');
     if (!d) return;
+    if (d.kind === 'place') { if (d.far && this.buildMode && !this.buildMode.err) this.confirmPlace(); else this.changed(); return; }
     const q = this.selectedSquad();
     if (!moved || !d.pt) {
       if (d.knob && q) {
@@ -620,7 +664,10 @@ class Game {
   onKey(e) {
     if (e.key === ' ' && this.phase === 'planning') { e.preventDefault(); this.ready(); }
     if (e.key === ' ' && this.phase === 'playback') { e.preventDefault(); this.playing = !this.playing; }
-    if (e.key === 'Escape') this.select(null);
+    if ((e.key === 'r' || e.key === 'R') && this.buildMode) this.rotatePlace();
+    if (e.key === 'Enter' && this.buildMode) this.confirmPlace();
+    if (e.key === 'Escape') { if (this.buildMode) { this.buildMode = null; this.changed(); } else if (this.buildOpen) this.openBuild(false); else { this.select(null); this.selB = null; this.changed(); } }
+    if (e.key === 'b' && this.phase === 'planning') this.openBuild();
     if (e.key === 'Backspace' && this.selected) { e.preventDefault(); this.planner.undo(this.selected); }
   }
 
@@ -631,6 +678,7 @@ class Game {
     ph.textContent = this.phase === 'playback' ? 'Battle' : 'Planning';
     ph.classList.toggle('play', this.phase === 'playback');
     const c = this.planner.cp();
+    $('t-sup').innerHTML = this.supplyHTML();
     $('t-cp').innerHTML = `${icon('cp', 16)}<span>${c.left}/${c.total}</span>` + Array.from({ length: c.total }, (_, i) => `<i class="${i < c.left ? 'on' : ''}"></i>`).join('');
   }
 
@@ -655,6 +703,8 @@ class Game {
   renderDock() {
     const dock = $('dock'), info = $('info');
     const q = this.selectedSquad();
+    const sb = this.phase === 'planning' && !q ? this.selectedBuilding() : null;
+    if (sb) { this.renderBuildingDock(sb); return; }
     if (this.phase !== 'planning' || !q) { dock.classList.add('hidden'); info.classList.add('hidden'); return; }
     const def = defOf(q), at = def.attack, sks = skillsOf(def);
     const atkName = { swing: 'Swing', volley: 'Volley', lob: 'Lob' }[at.kind];
@@ -801,6 +851,7 @@ class Game {
       el.style.display = hide ? 'none' : '';
       if (!hide) items.push({ el, x: p.x, y: p.y, sel });
     }
+    this.buildingLabelItems(items, seen, zoomedOut);
     // simple de-overlap: place from the bottom of the screen up, nudging labels upward
     items.sort((a, b) => b.y - a.y);
     for (const it of items) {
@@ -822,7 +873,7 @@ class Game {
   buildScrub() {
     const tl = this.tl;
     const pct = t => (100 * t / tl.total).toFixed(2) + '%';
-    $('scrub-sections').innerHTML = tl.sections.map(s => `<div style="left:${pct(s.t0 - 14)};width:${pct(s.t1 - s.t0 + 14)}">TIER ${s.tier}</div>`).join('');
+    $('scrub-sections').innerHTML = tl.sections.map(s => `<div style="left:${pct(s.t0 - 14)};width:${pct(s.t1 - s.t0 + 14)}">${s.tier === 0 ? 'BUILDINGS' : 'TIER ' + s.tier}</div>`).join('');
     const rows = new Map();
     let n = 0;
     $('scrub-blocks').innerHTML = tl.blocks.filter(b => b.kind !== 'wait' && tl.everSeen(b.id)).map(b => {
@@ -835,11 +886,19 @@ class Game {
 
   buildLog() {
     const tl = this.tl;
-    const name = id => { const q = tl.pre.squads.find(x => x.id === id); if (!q) return '?'; if (q.owner !== this.me && !tl.everSeen(id)) return `<b class="t${q.owner}">An unseen enemy</b>`; return `<b class="t${q.owner}">${q.owner === this.me ? 'Your' : 'Enemy'} ${esc(defOf(q).name)}</b>`; };
+    const bld = id => tl.blds.find(b => b.id === id);
+    const name = id => { const q = tl.pre.squads.find(x => x.id === id); if (!q) { const b = bld(id); return b ? `<b class="t${b.owner}">${b.owner === this.me ? 'Your' : 'Enemy'} ${esc(this.bname(b))}</b>` : '?'; } if (q.owner !== this.me && !tl.everSeen(id)) return `<b class="t${q.owner}">An unseen enemy</b>`; return `<b class="t${q.owner}">${q.owner === this.me ? 'Your' : 'Enemy'} ${esc(defOf(q).name)}</b>`; };
     const lines = [];
     for (const e of tl.events) {
       const verb = { swing: 'cuts into', volley: 'shoots', lob: 'rains arrows on', storm: 'brings an Arrow Storm down on', sweep: 'sweeps through', pierce: 'drives a piercing bolt through', charge: 'charges into', blast: 'blasts', parting: 'lands a parting blow on', riposte: 'ripostes' };
-      if (e.type === 'hit') lines.push({ T: e.T, html: `${name(e.src)} ${verb[e.kind] || 'hits'} ${name(e.dst)} <span class="dmg">−${e.dmg}</span>${e.walled ? ' (shield wall)' : ''}${e.cover ? ' (cover)' : ''}${e.defended ? ' (defended)' : ''}${e.lost ? ` · ${e.lost} model${e.lost > 1 ? 's' : ''} fall` : ''}` });
+      if (e.type === 'construct' && (e.owner === this.me || this.knownB.has(e.id))) lines.push({ T: e.T, html: `${name(e.id)} ${e.done ? 'goes up' : 'construction begins'}` });
+      else if (e.type === 'built' && (e.owner === this.me || this.knownB.has(e.id))) lines.push({ T: e.T, html: `${name(e.id)} is finished` });
+      else if (e.type === 'train' && e.owner === this.me) lines.push({ T: e.T, html: `${name(e.id)} starts training ${esc(FACTIONS[this.faction(e.owner)].units[e.role].name)}` });
+      else if (e.type === 'spawn' && e.owner === this.me) lines.push({ T: e.T, html: `<b class="t${e.owner}">New ${esc(FACTIONS[this.faction(e.owner)].units[e.role].name)}</b> join your army` });
+      else if (e.type === 'bdown') lines.push({ T: e.T, html: `${name(e.id)} is destroyed` });
+      else if (e.type === 'shrine') lines.push({ T: e.T, html: e.owner === this.me ? 'You take a shrine' : e.owner < 0 ? 'A shrine is freed' : 'The enemy takes a shrine' });
+      else if (e.type === 'income' && e.owner === this.me) lines.push({ T: e.T, html: `Income <span class="gain">+${e.amount}</span> supply (now ${e.supply})` });
+      else if (e.type === 'hit') lines.push({ T: e.T, html: `${name(e.src)} ${verb[e.kind] || 'hits'} ${name(e.dst)} <span class="dmg">−${e.dmg}</span>${e.walled ? ' (shield wall)' : ''}${e.cover ? ' (cover)' : ''}${e.defended ? ' (defended)' : ''}${e.lost ? ` · ${e.lost} model${e.lost > 1 ? 's' : ''} fall` : ''}` });
       else if (e.type === 'down') lines.push({ T: e.T, html: `${name(e.id)} is destroyed` });
       else if (e.type === 'parry') lines.push({ T: e.T, html: `${name(e.id)} parries ${name(e.src)}` });
       else if (e.type === 'disengage') lines.push({ T: e.T, html: `${name(e.id)} disengages from the fight` });
@@ -865,7 +924,16 @@ class Game {
     if (T > this.lastT) {
       for (const e of tl.eventsBetween(this.lastT, T)) {
         const at = id => { const d = this.sampleCache?.find(x => x.id === id); return d && d.visible !== false ? d : null; };
-        if (e.type === 'hit') {
+        const atB = id => (this.blist || []).find(b => b.id === id);
+        if (e.type === 'hit' && e.building) { const b = atB(e.dst); if (b) this.texts.add(b.x, b.z, `−${e.dmg}`, 'dmg', 4); }
+        else if (e.type === 'bdown') { const b = atB(e.id); if (b) { this.texts.add(b.x, b.z, 'Destroyed', 'down', 4.6, 2); this.pulse(b.x, b.z, hitRadius(b) + 0.8, 0xff3b30); } }
+        else if (e.type === 'construct') { const b = atB(e.id); if (b) this.texts.add(b.x, b.z, e.done ? 'Built' : 'Building…', 'ok', 3.2); }
+        else if (e.type === 'built') { const b = atB(e.id); if (b) { this.texts.add(b.x, b.z, 'Finished!', 'ok', 4.2, 1.8); this.pulse(b.x, b.z, hitRadius(b) + 0.6, 0x34c759); } }
+        else if (e.type === 'train' && e.owner === this.me) { const b = atB(e.id); if (b) this.texts.add(b.x, b.z, `Training ${FACTIONS[this.faction(e.owner)].units[e.role].name}`, 'ok', 3.6, 1.8); }
+        else if (e.type === 'spawn' && (e.owner === this.me || this.tl.pointSeen(e.x, e.z, e.T))) { this.texts.add(e.x, e.z, `+ ${FACTIONS[this.faction(e.owner)].units[e.role].name}`, 'ok', 2.4, 2); this.pulse(e.x, e.z, 1.2, TEAM_HEX[e.owner]); }
+        else if (e.type === 'shrine') { const was = this.tl.shrinesAt(e.T - 0.01).find(sh => sh.x === e.x && sh.z === e.z)?.owner; this.texts.add(e.x, e.z, e.owner === this.me ? 'Shrine taken' : was === this.me ? 'Shrine lost' : e.owner < 0 ? 'Shrine freed' : 'Enemy shrine', e.owner === this.me ? 'ok' : 'def', 2.6, 2); this.pulse(e.x, e.z, RULES.shrineRadius, e.owner < 0 ? 0xd8d2c0 : TEAM_HEX[e.owner]); }
+        else if (e.type === 'income' && e.owner === this.me) { const hq = (this.blist || []).find(b => b.owner === this.me && b.type === 'hq'); if (hq) this.texts.add(hq.x, hq.z, `+${e.amount} supply`, 'ok', 5.4, 2.2); }
+        else if (e.type === 'hit') {
           const q = at(e.dst);
           if (q) {
             this.texts.add(q.x, q.z, `−${e.dmg}`, 'dmg');
@@ -895,6 +963,8 @@ class Game {
     if (this.rehearsal) for (const d of list) if (d.owner === this.me) d.ghost = true;
     this.updateWatches(list, T);
     this.syncViews(list, false, dt);
+    this.syncBuildings(this.playbackBuildings(T));
+    this.syncShrines(tl.shrinesAt(T));
     this.updateLabels(list);
     this.tele.update(tl.activeTeles(T), T);
     this.shots.update(this.shotList, T);
@@ -907,7 +977,8 @@ class Game {
     else {
       const names = sec.squads.map(id => { const q = tl.pre.squads.find(x => x.id === id); return q && (q.owner === this.me || tl.everSeen(id)) ? `${q.owner === this.me ? '' : 'enemy '}${defOf(q).name}` : ''; }).filter(Boolean);
       if (sec.squads.some(id => { const q = tl.pre.squads.find(x => x.id === id); return q && q.owner !== this.me && !tl.everSeen(id); })) names.push('unseen enemies');
-      cap = `<b>Tier ${sec.tier}</b>${sec.tier >= 6 ? ' · fast' : sec.tier <= 4 ? ' · slow' : ''}: ${esc(names.join(', '))} act at the same time.`;
+      if (sec.tier === 0) cap = '<b>Buildings</b>: towers and keeps fire at the nearest enemy they can see.';
+      else cap = `<b>Tier ${sec.tier}</b>${sec.tier >= 6 ? ' · fast' : sec.tier <= 4 ? ' · slow' : ''}: ${esc(names.join(', '))} act at the same time.`;
     }
     $('pb-caption').innerHTML = (this.rehearsal ? '<span class="rh">Rehearsal: enemies stand still</span> ' : '') + cap;
     $('pb-next').style.boxShadow = T >= tl.total ? '0 0 0 3px #ffc400' : '';
@@ -967,8 +1038,10 @@ class Game {
     else {
       const list = this.planningDisplay();
       this.syncViews(list, false, dt);
+      if (this.state.buildings) { this.syncBuildings(this.planningBuildings()); this.syncShrines(this.state.shrines || []); }
+      this.updatePlaceMark();
       if (this.phase === 'planning') {
-        if (this.dirty) { this.dirty = false; this.drawPlan(); this.renderSquadBar(); this.renderDock(); this.updateTop(); }
+        if (this.dirty) { this.dirty = false; this.drawPlan(); this.renderSquadBar(); this.renderDock(); this.renderBuildBar(); this.updateTop(); }
         this.updateLabels(list);
       }
       if (this.phase === 'planning' || this.knobPos) {
@@ -980,6 +1053,8 @@ class Game {
     this.view.render(dt);
   }
 }
+
+Object.assign(Game.prototype, BaseUI);
 
 const CAT_HEX = { move: '#34c759', attack: '#ff3b30', defense: '#3fa9ff' };
 const ACT_COL = { swing: 'var(--swing)', volley: 'var(--volley)', lob: 'var(--volley)', charge: CAT_HEX.move, leap: CAT_HEX.move, step: CAT_HEX.move, blast: CAT_HEX.attack, storm: CAT_HEX.attack, sweep: CAT_HEX.attack, pierce: CAT_HEX.attack, rally: CAT_HEX.defense, raise: CAT_HEX.defense, wall: CAT_HEX.defense, wait: '#8a857c' };
@@ -1015,7 +1090,7 @@ function apBlocks(q, plan, mini) {
 
 function helpHTML() {
   return `
-<p><b>V4 preview (milestone 2).</b> Two armies of miniatures on a tabletop. Destroy every enemy squad to win.</p>
+<p><b>V4 preview (milestone 3).</b> Two armies of miniatures on a tabletop. <b>Destroy the enemy ${'Keep / Crypt'}</b> to win (or wipe out its army and barracks). After round ${RULES.roundLimit} the stronger side wins.</p>
 <h3>A round</h3>
 <p>Both sides give orders at the same time, then press <b>Ready</b>. Squads act in <b>speed tiers</b>: fast squads (tier 6) first, then normal (5), then slow (4). Squads in the same tier act <b>at the same time</b>. Every squad has <b>100 AP</b> per round, and an action's AP cost is also how long it takes. <b>Rehearse</b> plays your plan first with the enemy standing still, so you can check it.</p>
 <h3>Giving orders</h3>
@@ -1027,8 +1102,15 @@ function helpHTML() {
 <li><b>Defend</b>: each defend halves one hit. <b>Parry</b> (fighters only): blocks the next melee hit and strikes back. <b>Overwatch</b> (shooters): fires once at the first enemy that moves inside the cone, even in another tier. <b>Act earlier</b>: moves the squad up a tier.</li>
 <li>You can command <b>${RULES.cp} squads</b> per round (the hero is free). The others follow their stance: <b>Guard</b> fights what comes close (shooters set overwatch), <b>Hold</b> stays and defends, <b>Advance</b> marches on the nearest enemy.</li>
 </ul>
+<h3>Your base</h3>
+<ul>
+<li><b>Supply</b> (top bar) pays for buildings and new squads. Your HQ earns <b>${RULES.hqIncome}</b> a round; each <b>shrine</b> you hold adds <b>${RULES.shrineIncome}</b>. Hold a shrine by having a squad within its ring and no enemy squad there at the end of a round.</li>
+<li>Press <b>Build</b>, pick a building and drag it into place (green = it fits, red = it doesn't; the status line says why). Build in your third of the table, within ${RULES.buildRange}″ of one of your buildings. <b>R</b> or ⟳ rotates walls. Buildings go up when the round starts and most take a round to finish.</li>
+<li><b>Barracks</b> train a new squad each round (tap the barracks). <b>Watchtowers</b> see far and shoot the nearest enemy after every round, like your HQ. <b>Banners</b> give +1 command point. <b>Palisades</b> block paths and volleys. Army cap: ${RULES.armyCap} squads.</li>
+<li>Buildings can be attacked by any swing, volley or skill, and take extra damage from it.</li>
+</ul>
 <h3>Fog of war</h3>
-<p>You only see enemies your squads can see: within their vision range, not behind walls or rocks, and not deep in a forest (a squad inside a forest is only seen from close by). Hidden enemies show as faded <b>last seen</b> markers. The battle replay only shows what your squads saw.</p>
+<p>You only see enemies your squads and buildings can see: within their vision range, not behind walls or rocks, and not deep in a forest (a squad inside a forest is only seen from close by). Hidden enemies show as faded <b>last seen</b> markers. The battle replay only shows what your squads saw.</p>
 <h3>Engagement</h3>
 <p>Squads touching an enemy melee squad are <b>engaged</b> (red ring). Stepping away costs <b>30 AP</b> and gives that enemy a free <b>parting blow</b>. Wraiths ignore engagement.</p>
 <h3>Squads</h3>

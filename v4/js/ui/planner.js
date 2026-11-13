@@ -4,7 +4,7 @@ import { emptyOrders, emptyPlan, defOf, radiusOf, apFor } from '../sim/state.js'
 import { planCost, actionCost, cpUsage, SKILL_KINDS } from '../sim/orders.js';
 import { clampAim, engagedWith } from '../sim/resolve.js';
 import { Nav, pathAP, walkAP } from '../sim/nav.js';
-import { obstacles, navKey } from '../sim/base.js';
+import { obstacles, navKey, placeError, footprint, armySize, BUILDINGS, TRAIN_COST } from '../sim/base.js';
 import { norm, segCircle, dist } from '../sim/geom.js';
 
 export class Planner {
@@ -227,6 +227,48 @@ export class Planner {
     this.g.changed();
   }
   stanceOf(q) { return this.draft.stances[q.id] || q.stance; }
+
+  // ---- base: queued builds and training ----------------------------------------------
+  supplyLeft() {
+    let v = (this.s.supply || [0, 0])[this.g.me];
+    for (const b of this.draft.builds) v -= BUILDINGS[b.type].cost;
+    for (const t of this.draft.trains) v -= TRAIN_COST[t.role] || 0;
+    return v;
+  }
+  queued(except = -1) { return this.draft.builds.filter((_, i) => i !== except).map(b => ({ ...b, owner: this.g.me, ...footprint(b.type, b.x, b.z, b.rot) })); }
+  buildError(type, x, z, rot = 0) {
+    if (BUILDINGS[type].cost > this.supplyLeft()) return `Needs ${BUILDINGS[type].cost} supply (you have ${this.supplyLeft()})`;
+    if (this.draft.builds.length >= 6) return 'At most 6 builds per round';
+    return placeError(this.s, this.g.me, type, x, z, rot, this.queued());
+  }
+  addBuild(type, x, z, rot = 0) {
+    const err = this.buildError(type, x, z, rot);
+    if (err) { this.g.toast(err, true); return false; }
+    this.draft.builds.push({ type, x: Math.round(x * 100) / 100, z: Math.round(z * 100) / 100, rot: rot ? 1 : 0 });
+    this.g.changed();
+    return true;
+  }
+  removeBuild(i) { this.draft.builds.splice(i, 1); this.g.changed(); }
+  trainOf(bid) { return this.draft.trains.find(t => t.bid === bid) || null; }
+  trainError(b, role) {
+    const cur = this.trainOf(b.id);
+    if (b.build) return 'Still under construction';
+    if (b.train) return 'Already training';
+    const left = this.supplyLeft() + (cur ? TRAIN_COST[cur.role] : 0);
+    if (TRAIN_COST[role] > left) return `Needs ${TRAIN_COST[role]} supply`;
+    if (!cur && armySize(this.s, this.g.me) + this.draft.trains.length >= RULES.armyCap) return `Army cap reached (${RULES.armyCap} squads)`;
+    return '';
+  }
+  addTrain(b, role) {
+    const cur = this.trainOf(b.id);
+    if (cur && cur.role === role) { this.removeTrain(b.id); return true; }
+    const err = this.trainError(b, role);
+    if (err) { this.g.toast(err, true); return false; }
+    if (cur) cur.role = role; else this.draft.trains.push({ bid: b.id, role });
+    this.g.changed();
+    return true;
+  }
+  removeTrain(bid) { this.draft.trains = this.draft.trains.filter(t => t.bid !== bid); this.g.changed(); }
 
   final() {
     const o = JSON.parse(JSON.stringify(this.draft));

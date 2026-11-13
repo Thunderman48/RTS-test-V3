@@ -4,6 +4,7 @@ const GAP = 14;
 
 import { canSee } from '../sim/vision.js';
 import { defOf } from '../sim/state.js';
+import { footprint } from '../sim/base.js';
 
 export class Timeline {
   // fog: { me, terrain } -> enemies are only shown while one of my squads (or buildings) sees them
@@ -16,6 +17,10 @@ export class Timeline {
     this.down = new Map();   // id -> T
     this.teles = [];         // {id, T0, T1, ...shape}
     this.blocks = [];        // {id, T0, T1, kind}
+    // buildings: hp over time, construction sites placed this round, destruction
+    this.blds = (pre.buildings || []).map(b => ({ ...b, T0: 0 }));
+    this.bhp = new Map(this.blds.map(b => [b.id, [[0, b.hp]]]));
+    this.bdown = new Map(); this.bbuilt = new Map(); this.shrineAt = [];
     for (const q of pre.squads) {
       this.keys.set(q.id, [[0, q.x, q.z, q.fx, q.fz]]);
       this.hp.set(q.id, [[0, q.hp, q.models]]);
@@ -38,7 +43,11 @@ export class Timeline {
       for (const e of seg.events) {
         const ge = { ...e, T: t0 + e.t, tier: seg.tier };
         this.events.push(ge);
-        if (e.type === 'hit') this.hp.get(e.dst)?.push([ge.T, e.hp, e.models]);
+        if (e.type === 'hit') (e.building ? this.bhp : this.hp).get(e.dst)?.push(e.building ? [ge.T, e.hp] : [ge.T, e.hp, e.models]);
+        if (e.type === 'construct') { this.blds.push({ id: e.id, type: e.btype, owner: e.owner, rot: e.rot || 0, ...footprint(e.btype, e.x, e.z, e.rot || 0), hp: e.hp, build: e.build, T0: ge.T }); this.bhp.set(e.id, [[ge.T, e.hp]]); }
+        if (e.type === 'bdown') this.bdown.set(e.id, ge.T);
+        if (e.type === 'built') this.bbuilt.set(e.id, ge.T);
+        if (e.type === 'shrine') this.shrineAt.push(ge);
         if (e.type === 'raise') e.ids.forEach((id, i) => this.hp.get(id)?.push([ge.T, e.hp[i], e.models[i]]));
         if (e.type === 'down') this.down.set(e.id, ge.T);
         if (e.type === 'tele') this.teles.push({ ...e, T0: ge.T, T1: t0 + e.t1 });
@@ -100,6 +109,39 @@ export class Timeline {
         acting: !!acting && acting.has(q.id) && h.hp > 0 && (dying === undefined) });
     }
     return out;
+  }
+
+  // buildings at time T: [{...building, hp, build, dying}]
+  buildingsAt(T) {
+    const out = [];
+    for (const b of this.blds) {
+      if (T < b.T0) continue;
+      let hp = b.hp;
+      for (const row of this.bhp.get(b.id) || []) { if (row[0] <= T) hp = row[1]; else break; }
+      const dT = this.bdown.get(b.id), bT = this.bbuilt.get(b.id);
+      out.push({ ...b, hp, build: bT !== undefined && T >= bT ? 0 : b.build, dying: dT !== undefined && T >= dT ? (T - dT) / 16 : undefined });
+    }
+    return out;
+  }
+  // shrine owners at T (from the starting owners and this round's changes)
+  shrinesAt(T) {
+    return (this.pre.shrines || []).map(sh => { let o = sh.owner; for (const e of this.shrineAt) if (e.T <= T && e.x === sh.x && e.z === sh.z) o = e.owner; return { ...sh, owner: o }; });
+  }
+  // can my side see the point (x,z) at T? (used for enemy buildings)
+  pointSeen(x, z, T, r = 0) {
+    if (!this.fog) return true;
+    const key = 'p' + x + ',' + z + '|' + Math.floor(T / 4);
+    if (this.visCache.has(key)) return this.visCache.get(key);
+    let v = false;
+    for (const o of this.pre.squads) {
+      if (o.owner !== this.fog.me) continue;
+      const dT = this.down.get(o.id);
+      if (dT !== undefined && T >= dT) continue;
+      const op = this.pose(o.id, T);
+      if (canSee(this.fog.terrain, op.x, op.z, defOf(o).vision + r, x, z)) { v = true; break; }
+    }
+    this.visCache.set(key, v);
+    return v;
   }
 
   // tier, prepared defends left, upgrades and stance of a squad at time T

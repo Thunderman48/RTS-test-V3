@@ -7,6 +7,7 @@
 import { defOf } from './state.js';
 import { segRect, segCircle, dist } from './geom.js';
 import { blocks } from './nav.js';
+import { hitRadius } from './base.js';
 
 export const FOREST_DEPTH = 2;
 export const FOREST_CLOSE = 4;
@@ -58,6 +59,18 @@ export function visibleTo(s, p, obs = observers(s, p)) {
   for (const e of s.squads) {
     if (e.owner === p || e.hp <= 0) continue;
     for (const o of obs) if (canSee(s.terrain, o.x, o.z, o.range, e.x, e.z)) { seen.add(e.id); break; }
+  }
+  return seen;
+}
+
+// ids of enemy buildings side p sees right now (the enemy HQ is always known)
+export function buildingsSeenBy(s, p, obs = observers(s, p)) {
+  const seen = new Set();
+  for (const b of s.buildings || []) {
+    if (b.owner === p || b.hp <= 0) continue;
+    if (b.type === 'hq') { seen.add(b.id); continue; }
+    const r = hitRadius(b);
+    for (const o of obs) if (canSee(s.terrain, o.x, o.z, o.range + r, b.x, b.z)) { seen.add(b.id); break; }
   }
   return seen;
 }

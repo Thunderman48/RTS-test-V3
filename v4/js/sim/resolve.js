@@ -91,7 +91,7 @@ export function resolveRound(state0, ordersIn) {
       const d = BUILDINGS[b0.type];
       s.supply[p] -= d.cost;
       const b = addBuilding(s, p, b0.type, b0.x, b0.z, b0.rot, d.build === 0);
-      baseEvents.push({ type: 'construct', id: b.id, btype: b.type, owner: p, x: b.x, z: b.z, done: !b.build });
+      baseEvents.push({ type: 'construct', id: b.id, btype: b.type, owner: p, x: b.x, z: b.z, rot: b.rot, hp: b.hp, build: b.build, done: !b.build });
     }
     for (const t0 of orders[p].trains || []) {
       const b = s.buildings.find(x => x.id === t0.bid);

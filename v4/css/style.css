@@ -284,3 +284,53 @@ button { font-family: inherit; color: inherit; cursor: pointer; touch-action: ma
 .sl .st.cdc .ic { width: 11px; height: 11px; }
 .sl.lastseen { opacity: .7; border-style: dashed; background: rgba(20,18,16,.6); }
 .sl.lastseen .sl-s { font-style: italic; color: var(--muted); }
+
+/* ---------- base: economy, build menu, building nameplates ---------- */
+.eco { display: flex; align-items: center; gap: 10px; font-size: 13px; font-weight: 800; }
+.eco .ec { display: inline-flex; align-items: center; gap: 3px; }
+.eco small { color: #ffd34d; font-weight: 800; font-size: 11px; }
+.eco .ec + .ec small { color: var(--muted); }
+.rc-row { display: flex; gap: 6px; }
+.rc-row .rehearse { flex: 1; }
+.buildbtn { display: inline-flex; align-items: center; justify-content: center; gap: 5px; }
+.buildbtn .ic { width: 16px; height: 16px; }
+.buildbtn.on { background: #ffc400; color: #111; }
+#buildbar { position: absolute; left: 50%; transform: translateX(-50%); bottom: calc(150px + var(--sab)); width: min(560px, calc(100vw - 20px)); padding: 10px 12px 12px; z-index: 3; }
+.bb-head { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; font-size: 12px; color: var(--muted); }
+.bb-head b { font-size: 15px; color: var(--text); }
+.bb-head span { flex: 1; display: inline-flex; align-items: center; gap: 4px; }
+.bb-cards { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+.bcard { border-radius: 12px; background: rgba(255,255,255,.07); padding: 9px 6px; display: flex; flex-direction: column; align-items: center; gap: 3px; font-size: 13px; text-align: center; border-top: 3px solid #ffc400; }
+.bcard small { font-size: 10.5px; color: var(--muted); font-weight: 700; }
+.bcard small.fx { color: #e9e6df; font-weight: 600; }
+.bcard:hover:not(:disabled) { background: rgba(255,255,255,.14); }
+.bcard:disabled { opacity: .4; }
+.bb-q { margin-top: 8px; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 12px; color: var(--muted); }
+.bb-place { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.bb-t { display: flex; align-items: center; gap: 10px; flex: 1; min-width: 220px; font-size: 14px; }
+.bb-st { font-size: 12px; margin-top: 2px; }
+.bb-st.ok { color: #5be07a; } .bb-st.bad { color: #ff6b5e; }
+.bb-btns { display: flex; gap: 6px; align-items: center; }
+.bb-btns .ready:disabled { opacity: .4; }
+.sl.bl { border-style: solid; border-radius: 6px; }
+.sl.bl .tr.bi { background: rgba(255,255,255,.12); border: 1.5px solid var(--team); }
+.sl.bl .ic { width: 12px; height: 12px; }
+.sl.bl.ghost { opacity: .7; border-style: dashed; }
+.sl.bl .sl-s .st { color: #ffd34d; }
+.lg .gain { color: #ffd34d; font-weight: 800; }
+@media (max-width: 720px) {
+  .rc-row { flex: 0 0 auto; }
+  .rc-row .rehearse { height: 50px; }
+  .buildbtn span { display: none; }
+  #buildbar { bottom: calc(176px + var(--sab)); padding: 8px; }
+  .bb-cards { gap: 5px; }
+  .bcard { padding: 7px 3px; font-size: 11px; }
+  .bcard small.fx { display: none; }
+  .bb-head span { display: none; }
+  .eco { gap: 6px; font-size: 12px; }
+  .eco .ec + .ec { display: none; }
+}
+@media (max-height: 520px) and (orientation: landscape) {
+  #buildbar { bottom: calc(110px + var(--sab)); }
+  .rc-row .rehearse { height: 30px; }
+}
