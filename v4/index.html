@@ -7,6 +7,7 @@
 <title>Tiers V4: Tabletop</title>
 <link rel="stylesheet" href="css/style.css">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ccircle cx='8' cy='8' r='7' fill='%233a78d8'/%3E%3Ccircle cx='8' cy='8' r='3' fill='%23fff'/%3E%3C/svg%3E">
+<script src="../vendor/peerjs.min.js"></script>
 <script type="importmap">{ "imports": { "three": "../vendor/three.module.min.js", "three/addons/": "../vendor/three-addons/" } }</script>
 </head>
 <body>
@@ -20,6 +21,8 @@
       <div class="crest" id="crest"></div>
       <div><div class="t-k">Round</div><div class="t-v" id="t-round">1</div></div>
       <div class="phase" id="t-phase">Planning</div>
+      <div class="tmode" id="t-mode">vs AI</div>
+      <div class="ttimer hidden" id="t-timer">1:30</div>
     </div>
     <div class="top-r">
       <div class="eco" id="t-sup"></div>
@@ -65,13 +68,35 @@
       <p>Tabletop battles · simultaneous orders · speed tiers</p>
       <p class="tag">V4 preview · milestone 3</p>
     </div>
+    <div class="m-sec">Play vs AI</div>
     <div class="factions">
-      <button class="fac kingdom" id="m-kingdom"><b>Kingdom</b><small>Knights, shieldwalls and crossbows</small></button>
-      <button class="fac undead" id="m-undead"><b>Undead Legion</b><small>Skeletons, wraiths and necromancy</small></button>
+      <button class="fac kingdom" id="m-kingdom"><b>Kingdom</b><small>Knights, shieldwalls and crossbows · gold economy</small></button>
+      <button class="fac undead" id="m-undead"><b>Undead Legion</b><small>Skeletons, wraiths and necromancy · souls economy</small></button>
     </div>
+    <button class="online-btn" id="m-online"><b>Play online</b><small>Host a game or join with a 5-letter code</small></button>
+    <div class="m-sec">Settings</div>
     <button class="opt" id="m-anim"><span><b>Mini animation: <em class="anim-v">Posable arms</em></b><small>Posable arms swing their weapons; solid statues lunge like minis moved by hand</small></span></button>
     <button class="opt" id="m-lens"><span><b>Miniature lens</b><small>Tilt-shift blur, like a macro photo</small></span><i class="sw"></i></button>
-    <p class="fine">Pick your army to play against the AI. Online play arrives in a later milestone.<br><a href="../">Back to V3</a></p>
+    <button class="opt" id="m-sound"><span><b>Sound</b><small>Clashes, volleys, hammers and coins</small></span><i class="sw"></i></button>
+    <p class="fine">Older versions: <a href="../">V3</a> · <a href="../v2/">V2</a> · <a href="../v1/">V1</a></p>
+  </div>
+</div>
+
+<div id="lobby" class="overlay hidden">
+  <div class="card lobby-card">
+    <div class="help-head"><h2>Play online</h2><button class="ib" id="lb-cancel" title="Back">✕</button></div>
+    <div id="lb-choose">
+      <button class="online-btn" id="lb-host"><b>Host a game</b><small>Get a code to share with a friend</small></button>
+      <div class="lb-join"><input id="lb-code" maxlength="5" placeholder="CODE" autocomplete="off" spellcheck="false"><button class="ready sm" id="lb-join">Join</button></div>
+      <p class="fine">Games connect directly between your two browsers. The host's game decides each round.</p>
+    </div>
+    <div id="lb-room" class="hidden">
+      <div class="lb-codebox" id="lb-codebox">Your code <b id="lb-code-v">·····</b><button class="chip" id="lb-copy">Copy</button></div>
+      <p class="lb-status" id="lb-status"></p>
+      <div id="lb-players"></div>
+      <div class="lb-timer" id="lb-timer"></div>
+      <div class="lb-actions"><button class="rehearse" id="lb-ready">✓ Ready</button><button class="ready sm" id="lb-start" disabled>Start battle ▸</button></div>
+    </div>
   </div>
 </div>
 
@@ -86,6 +111,7 @@
   <div class="card opts-card">
     <div class="help-head"><h2>Menu</h2><button class="ib" id="o-close">✕</button></div>
     <button class="opt" id="o-lens"><span><b>Miniature lens</b><small>Soft tilt-shift blur at the top and bottom of the view, like a macro photo of a tabletop</small></span><i class="sw"></i></button>
+    <button class="opt" id="o-sound"><span><b>Sound</b><small>Clashes, volleys, hammers and coins</small></span><i class="sw"></i></button>
     <button class="opt" id="o-anim"><span><b>Mini animation: <em class="anim-v">Posable arms</em></b><small>Posable arms swing their weapons; solid statues are one casting and lunge like minis moved by hand</small></span></button>
     <button class="opt" id="o-quit"><span><b>Quit to main menu</b><small>Ends this battle</small></span></button>
   </div>

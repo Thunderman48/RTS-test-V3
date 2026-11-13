@@ -24,7 +24,7 @@ export class SquadView {
     this.group = new THREE.Group();
     this.slots = formation(def.models, def.look);
     this.minis = this.slots.map((s, i) => {
-      const g = makeMini(def.look, sq.faction, seedN++);
+      const g = makeMini(def.look, sq.paint || sq.faction, seedN++);
       g.position.set(s.x, 0, s.z);
       g.rotation.y = ((i * 37) % 11 - 5) * 0.025;
       this.group.add(g);
@@ -33,7 +33,7 @@ export class SquadView {
     for (const m of this.minis) if (!m.alive) m.g.visible = false;
     this.teamRingY = 0.09;
     this.style = this.minis[0].rig.style;
-    this.rimColor = PAINT[sq.faction].rim;
+    this.rimColor = PAINT[sq.paint || sq.faction].rim;
     const R = squadRadius(def, def.models);
     this.teamRing = ringMesh(R + 0.12, 0.07, this.rimColor, 0.5);
     this.teamRing.position.y = 0.09;

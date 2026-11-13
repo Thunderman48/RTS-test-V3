@@ -17,6 +17,9 @@ import { Input } from './ui/input.js';
 import { Planner } from './ui/planner.js';
 import { icon } from './ui/iconset.js';
 import { BaseUI } from './ui/baseui.js';
+import { OnlineUI } from './ui/online.js';
+import { sfx, unlockAudio, soundOn, setSound, setVolume } from './audio/sfx.js';
+import { TEAM, TEAM_HEX, setTeams } from './ui/teams.js';
 import { BUILDINGS } from './data/units.js';
 import { hitRadius, gatherRate } from './sim/base.js';
 import { BuildingView } from './render/buildings.js';
@@ -26,8 +29,7 @@ import { observers } from './sim/vision.js';
 
 const $ = id => document.getElementById(id);
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-const TEAM = ['#3a78d8', '#9b59d0'];
-const TEAM_HEX = [0x3a78d8, 0x9b59d0];
+
 
 class Game {
   constructor() {
@@ -98,18 +100,23 @@ class Game {
   }
 
   bindDOM() {
-    $('m-kingdom').onclick = () => this.start('kingdom');
-    $('m-undead').onclick = () => this.start('undead');
+    $('m-kingdom').onclick = () => this.start({ mode: 'ai', factions: ['kingdom', 'undead'], me: 0 });
+    $('m-undead').onclick = () => this.start({ mode: 'ai', factions: ['undead', 'kingdom'], me: 0 });
+    this.bindOnline();
+    window.addEventListener('pointerdown', () => unlockAudio(), true);
+    window.addEventListener('click', e => { if (e.target.closest('button')) sfx('click', 0.03); }, true);
+    $('o-sound').onclick = $('m-sound').onclick = () => { setSound(!soundOn()); this.soundUi(); };
+    this.soundUi();
     $('b-ready').onclick = () => this.ready();
     $('b-rehearse').onclick = () => this.rehearse();
     $('b-build').onclick = () => this.openBuild();
     $('b-build').innerHTML = icon('build', 20) + '<span>Build</span>';
     try { this.hintsDone = localStorage.getItem('tiers-v4-hints') === '1'; } catch {}
-    $('b-help').onclick = () => { $('help-body').innerHTML = helpHTML(); $('help').classList.remove('hidden'); };
+    $('b-help').onclick = () => showHelp();
     $('help-close').onclick = () => $('help').classList.add('hidden');
     $('b-menu').onclick = () => $('opts').classList.remove('hidden');
     $('o-close').onclick = () => $('opts').classList.add('hidden');
-    $('o-quit').onclick = () => location.reload();
+    $('o-quit').onclick = () => { try { this.net?.send({ t: 'bye' }); } catch {} setTimeout(() => location.reload(), 150); };
     $('o-lens').onclick = $('m-lens').onclick = () => this.setLens(!this.lensOn);
     $('o-anim').onclick = $('m-anim').onclick = () => this.setAnim(MINI_MODE === 'statue' ? 'posable' : 'statue');
     let am = null; try { am = localStorage.getItem('tiers-v4-anim'); } catch {}
@@ -118,7 +125,7 @@ class Game {
     let saved = null; try { saved = localStorage.getItem('tiers-v4-lens'); } catch {}
     this.setLens(saved !== '0', false);
     $('pb-play').onclick = () => { this.playing = !this.playing; if (this.playing && this.T >= this.tl.total) this.T = 0; };
-    $('pb-speed').onclick = () => { this.speed = this.speed === 1 ? 2 : this.speed === 2 ? 4 : this.speed === 4 ? 0.5 : 1; $('pb-speed').textContent = this.speed + '×'; };
+    $('pb-speed').onclick = () => { this.speed = this.speed === 1 ? 2 : this.speed === 2 ? 4 : this.speed === 4 ? 0.5 : 1; $('pb-speed').textContent = this.speed + '×'; setVolume(this.speed >= 4 ? 0.45 : this.speed >= 2 ? 0.7 : 1); };
     $('pb-next').onclick = () => this.finishPlayback();
     const scrub = $('scrub');
     const seek = e => { const r = scrub.getBoundingClientRect(); this.seek(Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)) * this.tl.total); };
@@ -147,7 +154,31 @@ class Game {
     if (save) try { localStorage.setItem('tiers-v4-lens', on ? '1' : '0'); } catch {}
   }
 
+  soundUi() { for (const id of ['o-sound', 'm-sound']) $(id)?.classList.toggle('on', soundOn()); }
+
+  // battle sounds for events that just played (only ones my side can see)
+  playSounds(events) {
+    const vis = id => { const d = this.sampleCache?.find(x => x.id === id); return !d || d.visible !== false; };
+    const mine = id => this.tl.pre.squads.find(q => q.id === id)?.owner === this.me || (this.blist || []).find(b => b.id === id)?.owner === this.me;
+    for (const e of events) {
+      if (e.type === 'release' && vis(e.id)) {
+        const k = { swing: 'swing', sweep: 'swing', volley: 'volley', pierce: 'volley', lob: 'storm', storm: 'storm', blast: 'blast', charge: 'charge' }[e.kind];
+        if (k) sfx(k);
+      } else if (e.type === 'hit' && (vis(e.dst) || vis(e.src))) sfx(e.defended || e.walled ? 'clang' : 'hit', 0.05);
+      else if (e.type === 'parry' && vis(e.id)) sfx('clang');
+      else if (e.type === 'down' && vis(e.id)) sfx('down', 0.15);
+      else if (e.type === 'bdown') sfx('down');
+      else if (e.type === 'buff') sfx('rally');
+      else if (e.type === 'raise') sfx('raise');
+      else if (e.type === 'work' && mine(e.id)) sfx('hammer', 0.4);
+      else if (e.type === 'built' && mine(e.id)) sfx('built');
+      else if ((e.type === 'gather' || e.type === 'income') && e.owner === this.me && e.amount > 0) sfx(this.eco().res === 'gold' ? 'coins' : 'souls', 0.3);
+      else if (e.type === 'souls' && e.owner === this.me) sfx('souls', 0.3);
+    }
+  }
+
   toast(msg, warn = false) {
+    if (warn) sfx('error', 0.2);
     const box = $('toast');
     if (this.lastToast === msg && performance.now() - this.lastToastT < 1500) return;
     this.lastToast = msg; this.lastToastT = performance.now();
@@ -157,13 +188,19 @@ class Game {
   }
 
   // ======================================================================== match flow
-  start(faction) {
-    this.me = faction === 'kingdom' ? 0 : 1;
-    this.ai = 1 - this.me;
+  // opts: { mode: 'ai' | 'host' | 'guest', factions: [player 0, player 1], me (my player index), seed, timer (s) }
+  start(opts) {
+    this.match = opts.mode;
+    this.me = opts.me;
+    this.ai = 1 - this.me;            // the other side (the AI, or the online opponent)
+    this.state = createGame(opts.seed ?? ((Math.random() * 1e9) | 0), opts.factions);
+    setTeams(this.state);
     document.documentElement.style.setProperty('--me', TEAM[this.me]);
     $('crest').style.background = TEAM[this.me];
-    this.state = createGame((Math.random() * 1e9) | 0, ['kingdom', 'undead']);
     this.memory = aiMemory();
+    this.timerMs = (opts.timer || 0) * 1000; this.deadline = null;
+    this.hostOrders = this.hostOrders || {}; this.guestOrders = this.guestOrders || {};
+    $('t-mode').textContent = this.match === 'ai' ? 'vs AI' : 'Online';
     $('menu').classList.add('hidden');
     $('hud').classList.remove('hidden');
     for (const v of this.views.values()) v.destroy();
@@ -176,7 +213,8 @@ class Game {
     const homeX = this.me === 0 ? 14 : 34;
     this.view.cam = { x: homeX, z: 16, dist: portrait ? 40 : 36, yaw: portrait ? (this.me === 0 ? Math.PI / 2 : -Math.PI / 2) : (this.me === 0 ? 0 : Math.PI), pitch: 0.92 };
     this.beginPlanning();
-    if (!localStorage.getItem('tiers-v4-help')) { try { localStorage.setItem('tiers-v4-help', '1'); } catch {} $('help-body').innerHTML = helpHTML(); $('help').classList.remove('hidden'); }
+    let seenHelp = true; try { seenHelp = !!localStorage.getItem('tiers-v4-help'); localStorage.setItem('tiers-v4-help', '1'); } catch {}
+    if (!seenHelp) showHelp('basics');
   }
 
   // what my side sees now; remember where hidden enemies were last seen
@@ -218,6 +256,7 @@ class Game {
     this.clearWatches?.();
     this.changed();
     this.hint();
+    if (this.match === 'host' || this.match === 'guest') this.onlinePlanning();
   }
 
   // play my draft against enemies that stand still, without changing the game
@@ -235,6 +274,7 @@ class Game {
   ready() {
     if (this.phase !== 'planning') return;
     const mine = this.planner.final();
+    if (this.match !== 'ai') { this.onlineReady(mine); return; }
     const theirs = aiOrders(this.state, this.ai, this.memory);
     const orders = []; orders[this.me] = mine; orders[this.ai] = theirs;
     const pre = this.state;
@@ -248,6 +288,7 @@ class Game {
     $('pb-next').textContent = rehearsal ? '◂ Back to planning' : 'Next round ▸';
     $('hintbar').classList.add('hidden');
     this.pre = pre; this.post = post; this.log = log;
+    sfx('drum');
     this.tl = new Timeline(pre, log, { me: this.me, terrain: pre.terrain });
     this.T = 0; this.playing = true; this.lastT = 0; this.fogKey = null;
     this.shotList = [];
@@ -315,6 +356,7 @@ class Game {
         : loser >= 0 && hqGone(loser) ? (w === this.me ? `The enemy ${enemyHq} has fallen.` : `Your ${myHq} has fallen.`)
         : w === this.me ? 'The enemy army and its barracks are gone.' : 'Your army and your barracks are gone.';
       $('over').classList.remove('hidden');
+      sfx(w === this.me ? 'victory' : 'defeat');
     }
     this.beginPlanning();
   }
@@ -831,7 +873,7 @@ class Game {
   }
 
   // short confirmation text over a squad when an order is added
-  confirm(q, text) { this.texts.add(q.x, q.z, text, 'ok', 2.4, 1.3); }
+  confirm(q, text) { this.texts.add(q.x, q.z, text, 'ok', 2.4, 1.3); sfx('confirm', 0.08); }
 
   // first-rounds hint strip: 0 select a squad, 1 give an order, 2 press Ready
   hint(step) {
@@ -984,6 +1026,7 @@ class Game {
     const T = this.T;
     // floating texts for events passed while playing forward
     if (T > this.lastT) {
+      if (this.playing) this.playSounds(tl.eventsBetween(this.lastT, T));
       for (const e of tl.eventsBetween(this.lastT, T)) {
         const at = id => { const d = this.sampleCache?.find(x => x.id === id); return d && d.visible !== false ? d : null; };
         const atB = id => (this.blist || []).find(b => b.id === id);
@@ -1107,7 +1150,7 @@ class Game {
       this.syncViews(list, false, dt);
       if (this.state.buildings) { this.syncBuildings(this.planningBuildings()); this.syncShrines(this.state.shrines || []); }
       this.updatePlaceMark();
-      if (this.phase === 'planning') {
+      if (this.phase === 'planning' || this.phase === 'waiting') {
         if (this.dirty) { this.dirty = false; this.drawPlan(); this.renderSquadBar(); this.renderDock(); this.renderBuildBar(); this.updateTop(); }
         this.updateLabels(list);
       }
@@ -1117,12 +1160,13 @@ class Game {
       this.updateGhost(dt);
     }
     this.texts.update(dt);
+    if (this.match === 'host' || this.match === 'guest') this.tickTimer();
     this.fogLayer.update(dt, this.view.time || 0);
     this.view.render(dt);
   }
 }
 
-Object.assign(Game.prototype, BaseUI);
+Object.assign(Game.prototype, BaseUI, OnlineUI);
 
 const CAT_HEX = { move: '#34c759', attack: '#ff3b30', defense: '#3fa9ff' };
 const ACT_COL = { work: '#ffb020', swing: 'var(--swing)', volley: 'var(--volley)', lob: 'var(--volley)', charge: CAT_HEX.move, leap: CAT_HEX.move, step: CAT_HEX.move, blast: CAT_HEX.attack, storm: CAT_HEX.attack, sweep: CAT_HEX.attack, pierce: CAT_HEX.attack, rally: CAT_HEX.defense, raise: CAT_HEX.defense, wall: CAT_HEX.defense, wait: '#8a857c' };
@@ -1156,41 +1200,70 @@ function apBlocks(q, plan, mini) {
   return parts.join('');
 }
 
-function helpHTML() {
-  return `
-<p><b>V4 preview (milestone 3).</b> Two armies of miniatures on a tabletop. <b>Destroy the enemy ${'Keep / Crypt'}</b> to win (or wipe out its whole army and its barracks). There is no round limit.</p>
+// ---- Help: tabs and an icon legend ------------------------------------------------
+const HELP_TABS = [['basics', 'Basics'], ['combat', 'Combat'], ['economy', 'Economy & builders'], ['fog', 'Fog & scouting'], ['online', 'Online'], ['icons', 'Icons']];
+const G = c => `<b style="color:${c[0]}">${c[1]}</b>`;
+const GREEN = ['#34c759', 'green'], RED = ['#ff3b30', 'red'], BLUE = ['#3fa9ff', 'blue'];
+const LEGEND = [
+  ['Resources', [['gold', 'Gold (Kingdom)'], ['souls', 'Souls (Undead)'], ['cp', 'Command points'], ['army', 'Army size / cap'], ['ap', 'Action points'], ['goal', 'HQ: Keep / Crypt']]],
+  ['Squads', [['hero', 'Hero'], ['tank', 'Tank'], ['fighter', 'Fighter'], ['ranged', 'Ranged'], ['fast', 'Fast'], ['builder', 'Builder']]],
+  ['Orders', [['move', 'Move'], ['attack', 'Swing'], ['shoot', 'Volley'], ['defend', 'Defend'], ['parry', 'Parry'], ['overwatch', 'Overwatch'], ['tierup', 'Act earlier'], ['undo', 'Undo'], ['release', 'Clear'], ['control', 'Your orders']]],
+  ['Skills', [['dash', 'Charge'], ['shove', 'Heroic Leap'], ['disrupt', 'Shadow Step'], ['sweep', 'Sweep'], ['frag', 'Bone Blast'], ['shoot', 'Arrow Storm'], ['range', 'Piercing Bolt'], ['rally', 'Rally'], ['heal', 'Raise'], ['fortify', 'Lock Shields / Grave Wall']]],
+  ['Stances', [['guard', 'Guard'], ['hold', 'Hold'], ['advance', 'Advance']]],
+  ['Buildings', [['spawn', 'Barracks / Ossuary'], ['range', 'Watchtower / Bone Spire'], ['farm', 'Farm'], ['node', 'Mine'], ['souls', 'Soul Well'], ['cp', 'Banner / Obelisk'], ['fortify', 'Palisade / Bone Fence'], ['build', 'Build / work']]],
+  ['Status', [['engaged', 'Engaged in melee'], ['cooldown', 'Skill recharging'], ['defend', 'Defends left'], ['army', 'Models in the squad']]],
+];
+const HELP = {
+  basics: () => `
+<p><b>Two armies of miniatures on a tabletop.</b> <b>Destroy the enemy HQ</b> (the Keep or the Crypt) to win, or wipe out its whole army and its barracks. There is no round limit.</p>
 <h3>A round</h3>
-<p>Both sides give orders at the same time, then press <b>Ready</b>. Squads act in <b>speed tiers</b>: fast squads (tier 6) first, then normal (5), then slow (4). Squads in the same tier act <b>at the same time</b>. Every squad has <b>100 AP</b> per round, and an action's AP cost is also how long it takes. <b>Rehearse</b> plays your plan first with the enemy standing still, so you can check it.</p>
+<p>Both sides give orders at the same time, then press <b>Ready</b>. Squads act in <b>speed tiers</b>: fast squads (tier 6) first, then normal (5), then slow (4); squads in the same tier act <b>at the same time</b>. Every squad has <b>100 AP</b> a round and an action's AP cost is also how long it takes. Buildings fire last. <b>Rehearse</b> plays your plan with the enemy standing still, so you can check it.</p>
 <h3>Giving orders</h3>
 <ul>
-<li>Tap a squad (or its card) to select it. Knobs appear: <b style="color:#34c759">green</b> = move, <b style="color:#ff3b30">red</b> = attack, and its skill knob in the skill's colour. A see-through copy of the squad shows where it will end up. Drag a knob to aim, or tap it and then tap the table.</li>
-<li>Every attack is a <b>skillshot</b>: it hits whatever is inside the shape when it lands. The shape charges up during its wind-up, so enemies can walk out of it, and yours can dodge.</li>
-<li><b>Swing</b> (melee arc) and <b>Volley</b> (a line that walls stop; forests give <b>cover</b> = half damage).</li>
-<li><b>Skills</b> are coloured by type (<b style="color:#34c759">green</b> = movement, <b style="color:#ff3b30">red</b> = attack, <b style="color:#3fa9ff">blue</b> = defence and buffs) and recharge for a round or two: <b>Charge</b> (Outriders, Wraiths), <b>Arrow Storm</b> (Bone Archers: arrows arc over walls onto a circle), <b>Bone Blast</b> (Necromancer), <b>Rally</b> (Lord: allies nearby get +1 defend and hit 25% harder).</li>
-<li><b>Defend</b>: each defend halves one hit. <b>Parry</b> (fighters only): blocks the next melee hit and strikes back. <b>Overwatch</b> (shooters): fires once at the first enemy that moves inside the cone, even in another tier. <b>Act earlier</b>: moves the squad up a tier.</li>
-<li>You can command <b>${RULES.cp} squads</b> per round (the hero is free). The others follow their stance: <b>Guard</b> fights what comes close (shooters set overwatch), <b>Hold</b> stays and defends, <b>Advance</b> marches on the nearest enemy.</li>
+<li>Tap a squad (or its card) to select it. Knobs appear: ${G(GREEN)} = move, ${G(RED)} = attack, and its skills in their colour. A see-through copy shows where the squad will end up. Drag a knob to aim, or tap it and then tap the table.</li>
+<li>You can command <b>${RULES.cp} squads</b> a round (plus one per Banner / Obelisk). Your hero and builders are free. The others follow their <b>stance</b>: <b>Guard</b> fights what comes close, <b>Hold</b> stays and defends, <b>Advance</b> marches on the enemy (and on its HQ once found).</li>
 </ul>
-<h3>Your base and economy</h3>
-<ul>
-<li><b>Kingdom: Gold.</b> A steady income: your Keep earns ${FACTIONS.kingdom.eco.hq} a round, every <b>Farm</b> ${BUILDINGS.farm.income}, every <b>Mine</b> (on a resource site) ${BUILDINGS.mine.income}.</li>
-<li><b>Undead: Souls.</b> Fed by death: your Crypt earns ${FACTIONS.undead.eco.hq} a round and each <b>Soul Well</b> (on a resource site) ${BUILDINGS.well.income}, but every model that dies (either side) within ${RULES.soulRange}″ of your squads, Crypt, Obelisks or Soul Wells gives <b>${RULES.soulPerModel} souls</b> (a hero ${RULES.soulPerHero}).</li>
-<li><b>Builders</b> (Peasants / Grave Thralls) put up every building. Select one and press <b>Build</b> (or the Build button at the bottom), pick a building, drag the see-through ghost to a spot (green = it fits, red = it doesn't, and why) and press <b>✓ Confirm</b>. The builder walks there and spends the rest of its AP as <b>work</b>; the building is finished when its work is done (two builders work twice as fast). Tap one of your damaged buildings with a builder selected to <b>repair</b> it. Builders cost no command points; train more at your HQ (max ${RULES.maxBuilders}).</li>
-<li>Builders have their <b>own controls</b>: the <b>hammer</b> knob (drag it onto a site to finish it, or onto a damaged building to repair it), the <b>gather</b> knob (drag it onto a farm or mine / a soul well or your crypt) and the building cards in their panel. With <b>no orders</b> a builder keeps at its job: it finishes its building over as many rounds as it takes, then <b>gathers</b> at the nearest farm or mine (Kingdom) or soul well or crypt (Undead) for extra income, two builders per building. <b>Hold</b> keeps it still.</li>
-<li><b>Barracks</b> train a new squad each round. <b>Watchtowers</b> see far and shoot the nearest enemy after every round, like your HQ. <b>Banners / Obelisks</b> give +1 command point. <b>Palisades</b> block paths and volleys. Army cap: ${RULES.armyCap} squads.</li>
-<li>Buildings can be attacked by any swing, volley or skill, and take extra damage from it.</li>
-</ul>
-<h3>Fog of war</h3>
-<p>The table is covered in <b>fog</b>: thick mist where you have never been, a thin haze where you have been but can't see now. The enemy HQ starts at one of three spots along the far edge, so <b>scout</b> to find it. You only see enemies your squads and buildings can see: within their vision range, not behind walls or rocks, and not deep in a forest (a squad inside a forest is only seen from close by). Hidden enemies show as faded <b>last seen</b> markers. The battle replay only shows what your squads saw.</p>
-<h3>Engagement</h3>
-<p>Squads touching an enemy melee squad are <b>engaged</b> (red ring). Stepping away costs <b>30 AP</b> and gives that enemy a free <b>parting blow</b>. Wraiths ignore engagement.</p>
-<h3>Squads</h3>
-<p>Each squad is several miniatures. Damage removes models, and a squad hits for <b>damage per model × models left</b>, so wounded squads hit weaker.</p>
-<h3>Terrain</h3>
-<p>Forests and the stream slow movement (cross at the fords) and forests give cover. Ruins and rocks block movement and volleys.</p>
 <h3>Watching the battle</h3>
-<p>The round plays slowly. Drag the timeline to scrub, change the speed, or tap a line in the log to jump to it. Press <b>Next round</b> when you're done.</p>
+<p>The round plays back slowly. Drag the timeline to scrub, change the speed, or tap a log line to jump to it. Press <b>Next round</b> when you're done.</p>
 <h3>Camera</h3>
-<p>Drag the table to pan, pinch or scroll to zoom, two-finger twist or right-drag to rotate.</p>`;
+<p>Drag the table to pan, pinch or scroll to zoom, two-finger twist or right-drag to rotate.</p>`,
+  combat: () => `
+<ul>
+<li>Every attack is a <b>skillshot</b>: it hits whatever is inside the shape when it lands. The shape charges up during its wind-up, so enemies can walk out of it, and yours can dodge.</li>
+<li><b>Swing</b> (melee arc) and <b>Volley</b> (a line that walls stop; forests give <b>cover</b>: half damage).</li>
+<li><b>Skills</b> are coloured by type (${G(GREEN)} movement, ${G(RED)} attack, ${G(BLUE)} defence and buffs) and recharge for a round or two. Heroes have three, one of each colour.</li>
+<li><b>Defend</b>: each defend halves one hit. <b>Parry</b> (fighters): blocks the next melee hit and strikes back. <b>Overwatch</b> (shooters): fires once at the first enemy that moves inside the cone, in any tier. <b>Act earlier</b> moves a squad up a tier.</li>
+<li>Squads are several miniatures: damage removes models, and a squad hits for <b>damage per model × models left</b>.</li>
+<li><b>Engagement:</b> squads touching an enemy melee squad are engaged (red ring). Stepping away costs <b>30 AP</b> and gives that enemy a free <b>parting blow</b>. Wraiths ignore engagement and drift through squads.</li>
+<li><b>Terrain:</b> forests and the stream slow movement (cross at the fords); ruins and rocks block movement and volleys. Your own squads can pass through each other.</li>
+<li><b>Buildings</b> can be hit by any attack and take extra damage. Towers and HQs shoot the nearest enemy they see after every round.</li>
+</ul>`,
+  economy: () => `
+<ul>
+<li><b>Kingdom: Gold.</b> A steady income: the Keep earns ${FACTIONS.kingdom.eco.hq} a round, every <b>Farm</b> ${BUILDINGS.farm.income}, every <b>Mine</b> (on a resource site) ${BUILDINGS.mine.income}.</li>
+<li><b>Undead: Souls.</b> Fed by death: the Crypt earns ${FACTIONS.undead.eco.hq} a round and each <b>Soul Well</b> (on a resource site) ${BUILDINGS.well.income}, and every model that dies (either side) within ${RULES.soulRange}″ of your squads, Crypt, Obelisks or Soul Wells gives <b>${RULES.soulPerModel} souls</b> (a hero ${RULES.soulPerHero}).</li>
+<li><b>Builders</b> (Peasants / Grave Thralls) put up every building. Select one: its panel shows what it will do, its own buttons and the building cards. Pick a building, move the see-through ghost (green = it fits, red = it doesn't, and why) and press <b>✓ Confirm</b>. The builder walks there and spends its AP as <b>work</b>; two builders work twice as fast.</li>
+<li>With <b>no orders</b> a builder keeps at its job: it finishes its building over as many rounds as it takes, then <b>gathers</b> at the nearest farm or mine (Kingdom) or soul well or crypt (Undead) for extra income, two per building. Drag the <b>hammer</b> knob onto a site or damaged building, or the <b>gather</b> knob onto a farm, mine, well or crypt. <b>Hold</b> keeps it still. Train more builders at your HQ (max ${RULES.maxBuilders}).</li>
+<li><b>Barracks</b> train a squad each round. <b>Watchtowers</b> see far and shoot. <b>Banners / Obelisks</b>: +1 command point. <b>Palisades</b> block paths and volleys. Army cap: ${RULES.armyCap} squads.</li>
+</ul>`,
+  fog: () => `
+<p>The table is covered in <b>fog</b>: thick mist where you have never been, a thin haze where you have been but can't see right now. You only see enemies your squads and buildings can see: within their vision, not behind walls or rocks, and not deep in a forest (a squad inside a forest is only seen from close by). Hidden enemies show as faded <b>last seen</b> markers, and enemy buildings stay where you last saw them.</p>
+<p>The enemy HQ starts at one of <b>three spots</b> along the far edge, so <b>scout</b> to find it: fast squads are good at it, and squads on Advance search those spots on their own. The battle replay only shows what your side saw.</p>`,
+  online: () => `
+<p>Press <b>Play online</b> on the start screen. One player <b>hosts</b> and gets a 5-letter code; the other <b>joins</b> with it. Both pick an army (the same army twice is fine: the second one gets a different paint scheme) and press <b>Ready</b>; the host picks the planning timer and starts the battle.</p>
+<p>Each round both players plan at the same time. When the timer runs out, whatever orders you have are sent. The host's game decides each round and sends the result, so both players see the same battle. The host plays on the left side.</p>
+<p>The games connect straight between your two browsers. If one player leaves or the connection drops for a minute, the battle ends.</p>`,
+  icons: () => LEGEND.map(([title, items]) => `<h3>${title}</h3><div class="legend">${items.map(([ic, label]) => `<span>${icon(ic, 18)}${label}</span>`).join('')}</div>`).join(''),
+};
+let helpTab = 'basics';
+try { helpTab = localStorage.getItem('tiers-v4-helptab') || 'basics'; } catch {}
+function showHelp(tab = helpTab) {
+  if (!HELP[tab]) tab = 'basics';
+  helpTab = tab;
+  try { localStorage.setItem('tiers-v4-helptab', tab); } catch {}
+  $('help-body').innerHTML = `<div class="help-tabs">${HELP_TABS.map(([k, n]) => `<button class="chip${k === tab ? ' on' : ''}" data-ht="${k}">${n}</button>`).join('')}</div><div class="help-page">${HELP[tab]()}</div>`;
+  $('help-body').querySelectorAll('[data-ht]').forEach(el => el.onclick = () => showHelp(el.dataset.ht));
+  $('help').classList.remove('hidden');
 }
 
 window.addEventListener('DOMContentLoaded', () => {

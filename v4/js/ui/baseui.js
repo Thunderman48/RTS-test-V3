@@ -8,10 +8,11 @@ import { defOf } from '../sim/state.js';
 import { BuildingView, ShrineView } from '../render/buildings.js';
 import { ribbon, ring, chevrons } from '../render/fx.js';
 import { icon } from './iconset.js';
+import { sfx } from '../audio/sfx.js';
 
 const $ = id => document.getElementById(id);
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-const TEAM = ['#3a78d8', '#9b59d0'];
+import { TEAM } from './teams.js';
 const FX = (type, fac) => {
   const eco = FACTIONS[fac].eco, d = BUILDINGS[type];
   return {
@@ -30,6 +31,7 @@ const SHORT = { barracks: 'Trains squads', tower: 'Sees far · shoots', banner: 
 export const BaseUI = {
   // ---------------------------------------------------------------- views
   faction(owner) { return this.state.players[owner].faction; },
+  paint(owner) { return this.state.players[owner].paint || this.state.players[owner].faction; },
   eco(p = this.me) { return FACTIONS[this.faction(p)].eco; },
   ecoName(p = this.me) { return this.eco(p).name.toLowerCase(); },
   bname(b) { return BUILDINGS[b.type].name[this.faction(b.owner)]; },
@@ -58,7 +60,7 @@ export const BaseUI = {
       keep.add(key);
       let v = this.bviews.get(key);
       if (v && v.sig !== b.type + b.rot + b.owner) { v.destroy(); v = null; this.bviews.delete(key); }
-      if (!v) { v = new BuildingView(b, this.faction(b.owner), this.view.layers.units); v.sig = b.type + b.rot + b.owner; this.bviews.set(key, v); }
+      if (!v) { v = new BuildingView(b, this.paint(b.owner), this.view.layers.units); v.sig = b.type + b.rot + b.owner; this.bviews.set(key, v); }
       v.group.position.set(b.x, 0, b.z);
       v.update({ build: b.build, ghost: b.ghost || b.stale, visible: !(b.dying > 1), dying: b.dying, work: b.build ? 1 - b.build / (bdef(b).work || 1) : 1 });
       v.ring.visible = !b.ghost;
@@ -207,6 +209,7 @@ export const BaseUI = {
     if (pm.err) { this.toast(pm.err, true); return false; }
     if (!this.planner.addBuild(this.buildBy, pm.type, pm.x, pm.z, pm.rot)) return false;
     const pv = pm.prev;
+    sfx('confirm');
     this.texts.add(pm.x, pm.z, `${BUILDINGS[pm.type].name[this.faction(this.me)]}: ${pv && pv.rounds <= 1 ? 'done this round' : pv ? pv.rounds + ' rounds' : 'queued'}`, 'ok', 2.6, 1.6);
     this.buildMode = null;
     this.view.clear('ghost');

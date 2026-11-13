@@ -44,6 +44,9 @@ export const RULES = {
 export const PAINT = {
   kingdom: { cloth: 0x2f5aa8, cloth2: 0xf2efe6, metal: 0xc4cad3, trim: 0xe0b84f, skin: 0xe2ad84, hair: 0x7a4a26, wood: 0x7a5230, leather: 0x5a3b22, horse: 0x8a5a36, mane: 0x3b2a1e, rim: 0x3a78d8, base: 0x2d5fb6, bevel: 0x6f9be6, flock: 0x6f8f48 },
   undead: { cloth: 0x5b3a7a, cloth2: 0x2b2533, metal: 0x6e6f78, trim: 0x9be15d, skin: 0xe6dcc3, hair: 0x2b2533, wood: 0x4a3a2c, leather: 0x3a2e28, horse: 0x2b2533, mane: 0x1a161e, rim: 0x9b59d0, glow: 0x7dff9a, rust: 0x8a5a3a, base: 0x5e3a88, bevel: 0xa47ad0, flock: 0x5f6b44 },
+  // mirror matches: the second player's army in a different scheme
+  kingdomAlt: { cloth: 0xb3262e, cloth2: 0xf2e2b6, metal: 0xc4cad3, trim: 0xe0b84f, skin: 0xe2ad84, hair: 0x3b2a1e, wood: 0x7a5230, leather: 0x5a3b22, horse: 0x5c3a24, mane: 0x2a1d14, rim: 0xd83a3a, base: 0xa82828, bevel: 0xe06a6a, flock: 0x6f8f48 },
+  undeadAlt: { cloth: 0x2f7a5a, cloth2: 0x1f2a24, metal: 0x6e6f78, trim: 0xd9c27a, skin: 0xe6dcc3, hair: 0x1f2a24, wood: 0x4a3a2c, leather: 0x3a2e28, horse: 0x1f2a24, mane: 0x141a17, rim: 0x2fb8a0, glow: 0x7dff9a, rust: 0x8a5a3a, base: 0x23806f, bevel: 0x5fd0bf, flock: 0x5f6b44 },
 };
 
 // Attack shapes:

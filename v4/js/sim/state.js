@@ -10,7 +10,8 @@ export function createGame(seed = 1, factions = ['kingdom', 'undead']) {
   const s = {
     v: 4, seed, round: 1, winner: null, nextId: 1,
     terrain: buildTerrain(),
-    players: factions.map((f, i) => ({ id: i, faction: f })),
+    // paint: which colour scheme the army uses (the second player gets the alternate one in a mirror match)
+    players: factions.map((f, i) => ({ id: i, faction: f, paint: i === 1 && factions[0] === factions[1] ? f + 'Alt' : f })),
     squads: [],
     buildings: [],
     supply: factions.map(f => FACTIONS[f].eco.start),
@@ -39,7 +40,7 @@ export function addSquad(s, owner, role, x, z) {
   const faction = s.players[owner].faction;
   const def = unitDef(faction, role);
   const q = {
-    id: 'q' + (s.nextId++), owner, faction, role, x, z,
+    id: 'q' + (s.nextId++), owner, faction, paint: s.players[owner].paint || faction, role, x, z,
     fx: owner === 0 ? 1 : -1, fz: 0,   // facing (unit vector)
     models: def.models, hp: def.models * def.hpPer,
     stance: 'guard',

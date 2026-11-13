@@ -652,5 +652,30 @@ test('destroying the enemy HQ wins', () => {
   eq(r.state.winner, 0);
 });
 
+console.log('M4 online');
+
+test('online: host and guest stay in sync (same seed, orders sent as JSON, guest re-resolves)', () => {
+  for (const factions of [['kingdom', 'undead'], ['undead', 'undead']]) {
+    let host = createGame(4242, factions), guest = createGame(4242, factions);
+    eq(JSON.stringify(host), JSON.stringify(guest), 'same start');
+    const mem = [aiMemory(), aiMemory()];
+    for (let r = 0; r < 6 && host.winner === null; r++) {
+      const orders = JSON.parse(JSON.stringify([aiOrders(host, 0, mem[0]), aiOrders(guest, 1, mem[1])]));
+      const h = resolveRound(host, orders);
+      const wire = JSON.parse(JSON.stringify({ orders, post: h.state }));   // the 'result' message
+      const g = resolveRound(guest, wire.orders);
+      eq(JSON.stringify(g.state), JSON.stringify(wire.post), 'round ' + host.round + ' matches');
+      host = h.state; guest = wire.post;
+    }
+  }
+});
+
+test('mirror match: the second army gets the alternate paint scheme', () => {
+  const s = createGame(3, ['kingdom', 'kingdom']);
+  eq(s.players[1].paint, 'kingdomAlt');
+  ok(s.squads.filter(q => q.owner === 1).every(q => q.paint === 'kingdomAlt') && s.squads.filter(q => q.owner === 0).every(q => q.paint === 'kingdom'));
+  eq(createGame(3, ['kingdom', 'undead']).players[1].paint, 'undead');
+});
+
 console.log(`\n${pass} passed, ${fail} failed`);
 if (fail) process.exit(1);

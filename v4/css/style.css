@@ -144,7 +144,7 @@ button { font-family: inherit; color: inherit; cursor: pointer; touch-action: ma
 .lg { font-size: 12px; padding: 5px 8px; border-radius: 8px; background: rgba(255,255,255,.05); cursor: pointer; line-height: 1.35; }
 .lg:hover { background: rgba(255,255,255,.12); }
 .lg.past { opacity: .5; }
-.lg b.t0 { color: #8fb8ff; } .lg b.t1 { color: #d6b1ff; }
+.lg b.t0 { color: color-mix(in srgb, var(--t0, #3a78d8) 55%, #fff); } .lg b.t1 { color: color-mix(in srgb, var(--t1, #9b59d0) 55%, #fff); }
 .lg .dmg { color: var(--swing); font-weight: 800; }
 
 /* ---------- floating text ---------- */
@@ -370,3 +370,39 @@ button { font-family: inherit; color: inherit; cursor: pointer; touch-action: ma
   .bd-task { font-size: 11px; padding: 4px 8px; margin-bottom: 5px; }
 }
 .bd-btns .act small { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; padding: 0 3px; }
+
+/* ---------- M4: online lobby, timer ---------- */
+.m-sec { margin: 14px 0 8px; font-size: 11px; font-weight: 800; letter-spacing: .14em; text-transform: uppercase; color: var(--muted); }
+.online-btn { width: 100%; margin-top: 10px; padding: 14px; border-radius: 16px; text-align: left; display: flex; flex-direction: column; gap: 3px; color: #111; background: linear-gradient(160deg, #ffd34d, #e0a422); }
+.online-btn b { font-size: 16px; } .online-btn small { opacity: .8; font-size: 12px; }
+.lobby-card { width: min(520px, calc(100vw - 24px)); }
+.lb-join { display: flex; gap: 8px; margin-top: 12px; }
+.lb-join input { flex: 1; min-width: 0; height: 44px; border-radius: 12px; border: 1px solid var(--line); background: rgba(255,255,255,.06); color: var(--text); font: 800 20px/1 ui-monospace, monospace; letter-spacing: .3em; text-align: center; text-transform: uppercase; }
+.lb-codebox { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 12px; background: rgba(255,255,255,.06); font-size: 13px; color: var(--muted); }
+.lb-codebox b { font: 900 24px/1 ui-monospace, monospace; letter-spacing: .25em; color: #ffd34d; flex: 1; }
+.lb-status { font-size: 13px; color: var(--muted); min-height: 18px; margin: 10px 0; }
+.lb-row { display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: center; padding: 10px; border-radius: 12px; background: rgba(255,255,255,.04); margin-bottom: 8px; }
+.lb-row.me { background: rgba(255,255,255,.08); }
+.lb-who { font-weight: 800; display: flex; flex-direction: column; } .lb-who small { font-weight: 500; color: var(--muted); font-size: 11px; }
+.lb-picks { grid-column: 1 / -1; display: flex; gap: 6px; }
+.lb-ready { grid-row: 1; grid-column: 2; font-size: 12px; font-weight: 800; color: var(--muted); }
+.lb-ready.on { color: #5be07a; }
+.fac-pick { flex: 1; padding: 8px; border-radius: 10px; font-weight: 800; font-size: 13px; color: #fff; opacity: .45; border: 2px solid transparent; }
+.fac-pick.kingdom { background: #2f5aa8; } .fac-pick.undead { background: #5b3a7a; }
+.fac-pick.on { opacity: 1; border-color: #fff; }
+.fac-pick:disabled { cursor: default; }
+.lb-timer { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; font-size: 13px; color: var(--muted); margin: 6px 0 12px; }
+.lb-timer .chip.on { background: #fff; color: #111; }
+.lb-actions { display: flex; gap: 8px; justify-content: flex-end; }
+.lb-actions .rehearse { height: 40px; }
+.tmode { font-size: 11px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+.ttimer { font: 900 15px/1 ui-monospace, monospace; padding: 5px 9px; border-radius: 8px; background: rgba(255,255,255,.1); }
+.ttimer.low { background: #ff3b30; color: #fff; }
+.ready.waiting { background: #3a3631; color: #e9e6df; font-size: 13px; }
+@media (max-width: 720px) { .tmode { display: none; } }
+/* ---------- M4: help tabs and legend ---------- */
+.help-tabs { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; position: sticky; top: -1px; padding: 4px 0 8px; background: var(--panel-solid); z-index: 1; }
+.help-tabs .chip.on { background: #fff; color: #111; }
+.legend { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 6px 12px; }
+.legend span { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+.legend .ic { width: 18px; height: 18px; flex: none; }

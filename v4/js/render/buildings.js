@@ -135,7 +135,7 @@ export function buildingGeo(type, faction, w, d) {
   const key = type + '|' + faction + '|' + w + '|' + d;
   if (CACHE.has(key)) return CACHE.get(key);
   R = rng(key.length * 7 + type.charCodeAt(0));
-  const P = PAINT[faction], und = faction === 'undead';
+  const P = PAINT[faction], und = faction.startsWith('undead');
   const k = new Kit(13, [0, 3, 0.7]);
   ({ hq: keep, barracks, tower, banner, wall: palisade, farm, mine, well }[type])(k, P, und, w, d);
   const g = k.build();
@@ -164,7 +164,7 @@ export class BuildingView {
     this.scaf = new THREE.Mesh(scaffold(sw, sd, def.type === 'hq' ? 3 : 2.2), paintMat('terrain'));
     this.scaf.castShadow = true; this.group.add(this.scaf);
     const rc = def.shape === 'circle' ? def.r + 0.25 : Math.max(b.w, b.d) / 2 + 0.3;
-    this.ring = new THREE.Mesh(new THREE.RingGeometry(rc - 0.05, rc + 0.05, 32), new THREE.MeshBasicMaterial({ color: faction === 'undead' ? 0x9b59d0 : 0x3a78d8, transparent: true, opacity: 0.45, depthWrite: false }));
+    this.ring = new THREE.Mesh(new THREE.RingGeometry(rc - 0.05, rc + 0.05, 32), new THREE.MeshBasicMaterial({ color: PAINT[faction].rim, transparent: true, opacity: 0.45, depthWrite: false }));
     this.ring.rotation.x = -Math.PI / 2; this.ring.position.y = 0.09;
     this.group.add(this.ring);
     this.group.position.set(b.x, 0, b.z);
