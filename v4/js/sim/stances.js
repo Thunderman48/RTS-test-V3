@@ -7,7 +7,8 @@ import { RULES, isMelee, isShooter } from '../data/units.js';
 import { defOf, radiusOf, emptyPlan, apFor } from './state.js';
 import { obstacles, navKey } from './base.js';
 import { builderIdleTarget } from './builders.js';
-import { knownEnemyHq } from './vision.js';
+import { knownEnemyHq, observers, canSee } from './vision.js';
+import { HQ_X, HQ_SPOTS, mirror } from '../data/map.js';
 import { Nav, pathAP, walkAP } from './nav.js';
 import { dist } from './geom.js';
 
@@ -91,10 +92,40 @@ export function buildStancePlan(s, q, enemies) {
     if (b) plan.actions.push({ kind: 'work', x: b.x, z: b.z, ap: left });
     return plan;
   }
+  // advance with the enemy HQ known and nobody close by: go and attack the HQ itself
+  if (st === 'advance') {
+    const hq = knownEnemyHq(s, q.owner);
+    if (hq && !nearestEnemy(s, q, enemies, 10)) {
+      const ht = { id: hq.id, owner: 1 - q.owner, faction: s.players[1 - q.owner].faction, role: 'fighter', x: hq.x, z: hq.z, fx: 1, fz: 0, models: 4, hp: hq.hp, cd: {} };
+      if (isShooter(def)) {
+        const range = def.attack.range, d = dist(q.x, q.z, hq.x, hq.z) - 2;
+        if (d > range - 0.5) {
+          const nav = Nav.for(obstacles(s), radiusOf(q), navKey(s));
+          const pts = trimPath(q.x, q.z, nav.path(q.x, q.z, hq.x, hq.z), range - 1);
+          if (pts.length) plan.actions.push({ kind: 'move', pts, ap: left });
+          return plan;
+        }
+        while (left >= def.attack.ap) { plan.actions.push({ kind: def.attack.kind, x: hq.x, z: hq.z }); left -= def.attack.ap; }
+        fillDefends(plan, left);
+        return plan;
+      }
+      left = meleePlan(s, q, ht, plan, left);
+      fillDefends(plan, left);
+      return plan;
+    }
+  }
   if (!enemies.length && st === 'advance') {
     // nobody in sight: march on the enemy HQ if we know where it is, else into the enemy half
+    // HQ unknown: try the possible HQ spots one by one (the nearest one we can't see right now)
     const known = knownEnemyHq(s, q.owner);
-    const hq = known || { x: q.owner === 0 ? RULES.board.w - 8 : 8, z: RULES.board.h / 2 };
+    let hq = known;
+    if (!hq) {
+      const obs = observers(s, q.owner);
+      const spots = HQ_SPOTS.map(z => q.owner === 0 ? mirror({ x: HQ_X, z }) : { x: HQ_X, z })
+        .filter(sp => !obs.some(o => canSee(s.terrain, o.x, o.z, o.range, sp.x, sp.z)))
+        .sort((a, b) => dist(q.x, q.z, a.x, a.z) - dist(q.x, q.z, b.x, b.z));
+      hq = spots[0] || { x: q.owner === 0 ? RULES.board.w - 8 : 8, z: RULES.board.h / 2 };
+    }
     if (hq) {
       const nav = Nav.for(obstacles(s), radiusOf(q), navKey(s));
       const pts = trimPath(q.x, q.z, nav.path(q.x, q.z, hq.x, hq.z), 3.2);

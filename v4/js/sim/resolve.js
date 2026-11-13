@@ -512,6 +512,11 @@ export function resolveRound(state0, ordersIn) {
     if (r.el >= a.cost) { r.idx++; r.el = 0; r.st = null; }
   }
 
+  // Move every walking squad one AP along its path.
+  //  - enemy squads block (that is how fights start); friendly squads let each other pass and
+  //    spread apart again once they stop (separate), so lines don't jam
+  //  - blocked: try sidesteps up to 90 degrees; after a few stuck steps, re-path around obstacles
+  //  - a squad that somehow stands inside an obstacle may always step out of it
   function resolveMoves(moves, moved) {
     const all = living();
     for (const m of moves) {
@@ -525,25 +530,50 @@ export function resolveRound(state0, ordersIn) {
       }
       const rq = radiusOf(q);
       const ethereal = !!defOf(q).ghost;
-      const civil = q.role === 'builder';   // builders slip between their own squads
+      const O = obs();
+      const depth = (x, z) => { let d = 0; for (const t of O) { if (!blocks(t)) continue; const v = t.r !== undefined ? t.r + rq * 0.85 - dist(x, z, t.x, t.z) : Math.min(t.w / 2 + rq * 0.85 - Math.abs(x - t.x), t.d / 2 + rq * 0.85 - Math.abs(z - t.z)); if (v > d) d = v; } return d; };
+      const stuckIn = pointBlocked(O, q.x, q.z, rq * 0.85);
+      const d0 = stuckIn ? depth(q.x, q.z) : 0;
       const clear = (x, z) => {
-        if (pointBlocked(obs(), x, z, rq * 0.85)) return false;
+        if (pointBlocked(O, x, z, rq * 0.85)) {
+          const W = RULES.board.w, H = RULES.board.h;
+          if (!stuckIn || x < rq * 0.5 || z < rq * 0.5 || x > W - rq * 0.5 || z > H - rq * 0.5 || depth(x, z) >= d0 - 1e-3) return false;
+        }
         if (ethereal) return true;          // wraiths drift through squads
-        for (const o of all) if (o !== q && !(civil && o.owner === q.owner) && dist(x, z, o.x, o.z) < rq + radiusOf(o) - 0.02 && dist(x, z, o.x, o.z) < dist(q.x, q.z, o.x, o.z)) return false;
+        for (const o of all) if (o !== q && o.owner !== q.owner && dist(x, z, o.x, o.z) < rq + radiusOf(o) - 0.02 && dist(x, z, o.x, o.z) < dist(q.x, q.z, o.x, o.z)) return false;
         return true;
       };
-      let nx = cx, nz = cz;
-      if (!clear(nx, nz)) {
-        // slide sideways around whatever is in the way
+      let nx = cx, nz = cz, ok = clear(nx, nz);
+      // walked into contact with an enemy squad: stop here, the fight is on
+      if (!ok && !ethereal && all.some(o => o.owner !== q.owner && dist(cx, cz, o.x, o.z) < rq + radiusOf(o) && dist(q.x, q.z, o.x, o.z) <= rq + radiusOf(o) + RULES.engageGap + 0.05)) {
+        st.pts = []; st.phase = 'arrived'; continue;
+      }
+      if (!ok) {
+        // sidestep around whatever is in the way: keep to one side (switching sides only after
+        // being stuck for a while), so squads slide along walls instead of zig-zagging
         const vx = cx - q.x, vz = cz - q.z;
-        const opts = [[0.819152, 0.573576], [0.819152, -0.573576], [0.34202, 0.939693], [0.34202, -0.939693]];
-        let ok = false;
-        for (const [c, sn] of opts) {
+        if (!st.side) st.side = (q.id.charCodeAt(q.id.length - 1) % 2) ? 1 : -1;
+        if ((st.stuck || 0) >= 4 && st.stuck % 4 === 0) st.side = -st.side;
+        for (const a of [0.5, 0.9, 1.3]) {
+          const c = Math.cos(a * st.side), sn = Math.sin(a * st.side);
           const tx = q.x + (vx * c - vz * sn), tz = q.z + (vx * sn + vz * c);
           if (clear(tx, tz)) { nx = tx; nz = tz; ok = true; break; }
         }
-        if (!ok) { if (st.pts.length <= 1 && st.pts[0] && dist(q.x, q.z, st.pts[0].x, st.pts[0].z) < rq * 3) st.phase = 'arrived'; continue; }
       }
+      if (!ok) {
+        st.stuck = (st.stuck || 0) + 1;
+        const goal = st.pts[st.pts.length - 1];
+        // nearly there and the spot is taken: call it arrived
+        if (goal && st.pts.length <= 1 && dist(q.x, q.z, goal.x, goal.z) < rq * 3) { st.phase = 'arrived'; st.pts = []; continue; }
+        // stuck on terrain or a building: find a new way round (at most every few AP)
+        if (goal && st.stuck >= 3 && (st.repathAt === undefined || T - st.repathAt >= 6)) {
+          st.repathAt = T;
+          const pts = Nav.for(O, rq, navKey(s)).path(q.x, q.z, goal.x, goal.z);
+          if (pts.length) st.pts = pts;
+        }
+        continue;
+      }
+      st.stuck = 0;
       rec(q, T);
       const d = norm(nx - q.x, nz - q.z);
       if (d.l > 1e-4) { q.fx = d.x; q.fz = d.z; moved.add(q.id); }
@@ -551,6 +581,33 @@ export function resolveRound(state0, ordersIn) {
       rec(q, T + 1);
       if (!st.pts.length) st.phase = 'arrived';
     }
+  }
+
+  // friendly squads that ended up overlapping drift apart a little each AP. Only pairs that have both
+  // stopped (walkers pass through without shoving anyone), and never into an enemy or an obstacle.
+  function separate(walking) {
+    const all = living().filter(q => !defOf(q).ghost);
+    const O = obs();
+    const push = new Map();
+    for (let i = 0; i < all.length; i++) for (let j = i + 1; j < all.length; j++) {
+      const a = all[i], b = all[j];
+      if (a.owner !== b.owner || walking.has(a.id) || walking.has(b.id)) continue;
+      const need = radiusOf(a) + radiusOf(b) - 0.05, d = dist(a.x, a.z, b.x, b.z);
+      if (d >= need) continue;
+      const v = d > 1e-4 ? norm(a.x - b.x, a.z - b.z) : { x: a.id < b.id ? 1 : -1, z: 0 };
+      const k = Math.min(0.06, (need - d) / 2 + 0.005);
+      for (const [u, sg] of [[a, 1], [b, -1]]) { const p = push.get(u) || { x: 0, z: 0 }; p.x += v.x * k * sg; p.z += v.z * k * sg; push.set(u, p); }
+    }
+    // one net nudge per squad (so a squad between two friends doesn't jiggle back and forth)
+    let any = false;
+    for (const [u, p] of push) {
+      const l = Math.hypot(p.x, p.z); if (l < 0.005) continue;
+      const f = Math.min(1, 0.06 / l), tx = u.x + p.x * f, tz = u.z + p.z * f, ru = radiusOf(u);
+      if (pointBlocked(O, tx, tz, ru * 0.85)) continue;
+      if (all.some(e => e.owner !== u.owner && dist(tx, tz, e.x, e.z) < ru + radiusOf(e) + 0.05)) continue;
+      rec(u, T); u.x = tx; u.z = tz; rec(u, T + 1); any = true;
+    }
+    return any;
   }
 
   // overwatch: any watcher fires once at the first enemy that moved inside its front cone
@@ -593,12 +650,15 @@ export function resolveRound(state0, ordersIn) {
       const moves = [], moved = new Set();
       for (const r of act) step(r, moves, moved);
       resolveMoves(moves, moved);
+      separate(new Set(moves.filter(m => m.st.pts.length).map(m => m.r.q.id)));
       overwatch(moved);
       const batch = hits; hits = [];
       applyHits(batch);
       checkDeaths();
       T += 1;
     }
+    // let squads that ended this tier on top of each other step apart
+    for (let k = 0; k < 24 && separate(new Set()); k++) T += 1;
     seg.len = T;
     log.segments.push(seg);
   }
@@ -686,10 +746,7 @@ export function resolveRound(state0, ordersIn) {
   if (lost[0] && lost[1]) s.winner = -1;
   else if (lost[0]) s.winner = 1;
   else if (lost[1]) s.winner = 0;
-  else if (round >= RULES.roundLimit) {
-    const v = [0, 1].map(p => armyValue(s, p));
-    s.winner = v[0] === v[1] ? -1 : v[0] > v[1] ? 0 : 1;
-  }
+  // no round limit: the battle goes on until an HQ falls (or a side has no army and no barracks)
   log.segments.push(seg);
   s.round++;
   return { state: s, log };

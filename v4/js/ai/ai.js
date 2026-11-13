@@ -68,6 +68,11 @@ export function aiOrders(s, p, memory = aiMemory()) {
     if (t.isHq && squadsOnly.length && dist(q.x, q.z, t.x, t.z) > 9) t = nearestEnemy(s, q, squadsOnly);
     // assault: when clearly ahead (or the game drags on) ordered squads go for the HQ unless engaged
     if (assault && hqTarget && !engagedWith(q, squadsOnly).length) t = hqTarget;
+    // the enemy HQ still unknown after a while: ordered squads go looking for it
+    if (!hqTarget && s.round >= 8 && !engagedWith(q, squadsOnly).length && !squadsOnly.some(e => dist(e.x, e.z, q.x, q.z) < 8)) {
+      const sp = scoutSpot(q);
+      if (sp) t = { id: '?', owner: 1 - p, faction: s.players[1 - p].faction, role: 'fighter', x: sp.x, z: sp.z, fx: 1, fz: 0, models: 4, hp: 80, cd: {} };
+    }
     // fast squads without a fight nearby scout for the enemy HQ, then raid enemy mines / wells
     const raid = () => {
       if (!hqTarget) return scoutSpot(q);

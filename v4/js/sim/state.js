@@ -1,7 +1,8 @@
 // V4 game state: squads of miniatures on a terrain board.
 import { RULES, FACTIONS, squadRadius, unitDef } from '../data/units.js';
 import { buildTerrain, DEPLOY, mirror, HQ_X, HQ_SPOTS, SHRINES } from '../data/map.js';
-import { addBuilding } from './base.js';
+import { addBuilding, obstacles } from './base.js';
+import { pointBlocked } from './nav.js';
 import { rng } from './rng.js';
 
 export function createGame(seed = 1, factions = ['kingdom', 'undead']) {
@@ -27,7 +28,8 @@ export function createGame(seed = 1, factions = ['kingdom', 'undead']) {
       const pos = p === 0 ? { x: d.x, z: z0 } : mirror({ x: d.x, z: z0 });
       const jit = d.role === 'builder' ? 0 : 16;
       const jx = Math.round((R() - 0.5) * jit) / 10, jz = Math.round((R() - 0.5) * jit) / 10;
-      addSquad(s, p, d.role, pos.x + jx, pos.z + jz);
+      const q = addSquad(s, p, d.role, pos.x + jx, pos.z + jz);
+      freeSpot(s, q);
     }
   }
   return s;
@@ -45,6 +47,17 @@ export function addSquad(s, owner, role, x, z) {
   };
   s.squads.push(q);
   return q;
+}
+
+// nudge a squad to the nearest spot clear of terrain, buildings and other squads
+export function freeSpot(s, q) {
+  const O = obstacles(s), r = radiusOf(q);
+  const ok = (x, z) => !pointBlocked(O, x, z, r + 0.1) && !s.squads.some(o => o !== q && Math.hypot(o.x - x, o.z - z) < r + radiusOf(o) + 0.1);
+  if (ok(q.x, q.z)) return;
+  for (let ring = 1; ring <= 16; ring++) for (let k = 0; k < 12; k++) {
+    const a = k / 12 * Math.PI * 2, x = q.x + Math.cos(a) * ring * 0.4, z = q.z + Math.sin(a) * ring * 0.4;
+    if (ok(x, z)) { q.x = Math.round(x * 100) / 100; q.z = Math.round(z * 100) / 100; return; }
+  }
 }
 
 export const defOf = q => FACTIONS[q.faction].units[q.role];

@@ -22,7 +22,6 @@ export const RULES = {
   overwatchCost: 40,            // prepared overwatch: fire once at the first enemy that moves in the front cone (any tier)
   overwatchCos: 0.5,            // overwatch fires at enemies moving inside this front cone
   coverMult: 0.5,               // volleys through a forest deal half damage
-  roundLimit: 30,
   siegeMult: 2.5,               // attacks deal this much more to buildings
   // M3 base & economy (each faction's currency and income: FACTIONS[f].eco)
   shrineRadius: 3,              // resource sites: the ring drawn around them

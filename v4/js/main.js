@@ -313,7 +313,6 @@ class Game {
       const enemyHq = BUILDINGS.hq.name[this.faction(this.ai)], myHq = BUILDINGS.hq.name[this.faction(this.me)];
       $('over-msg').textContent = w === -1 ? 'Both sides are spent: the battle ends in a draw.'
         : loser >= 0 && hqGone(loser) ? (w === this.me ? `The enemy ${enemyHq} has fallen.` : `Your ${myHq} has fallen.`)
-        : this.pre.round >= RULES.roundLimit ? `Round ${RULES.roundLimit} reached: ${w === this.me ? 'your' : 'the enemy'} army and base are stronger.`
         : w === this.me ? 'The enemy army and its barracks are gone.' : 'Your army and your barracks are gone.';
       $('over').classList.remove('hidden');
     }
@@ -1159,7 +1158,7 @@ function apBlocks(q, plan, mini) {
 
 function helpHTML() {
   return `
-<p><b>V4 preview (milestone 3).</b> Two armies of miniatures on a tabletop. <b>Destroy the enemy ${'Keep / Crypt'}</b> to win (or wipe out its army and barracks). After round ${RULES.roundLimit} the stronger side wins.</p>
+<p><b>V4 preview (milestone 3).</b> Two armies of miniatures on a tabletop. <b>Destroy the enemy ${'Keep / Crypt'}</b> to win (or wipe out its whole army and its barracks). There is no round limit.</p>
 <h3>A round</h3>
 <p>Both sides give orders at the same time, then press <b>Ready</b>. Squads act in <b>speed tiers</b>: fast squads (tier 6) first, then normal (5), then slow (4). Squads in the same tier act <b>at the same time</b>. Every squad has <b>100 AP</b> per round, and an action's AP cost is also how long it takes. <b>Rehearse</b> plays your plan first with the enemy standing still, so you can check it.</p>
 <h3>Giving orders</h3>

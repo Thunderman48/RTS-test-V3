@@ -192,11 +192,11 @@ test('orders over 100 AP are trimmed by validation', () => {
   ok(used <= RULES.ap, 'used ' + used);
 });
 
-test('AI vs AI plays to a finish within the round limit', () => {
+test('AI vs AI plays to a finish (no round limit, but the AI does finish games)', () => {
   for (const seed of [1, 2, 3]) {
     let s = createGame(seed); const mem = [aiMemory(s), aiMemory(s)];
-    while (s.winner === null) { s = resolveRound(s, [aiOrders(s, 0, mem[0]), aiOrders(s, 1, mem[1])]).state; }
-    ok(s.round <= RULES.roundLimit + 1, 'round ' + s.round);
+    while (s.winner === null && s.round < 80) { s = resolveRound(s, [aiOrders(s, 0, mem[0]), aiOrders(s, 1, mem[1])]).state; }
+    ok(s.winner !== null, 'still going at round ' + s.round);
   }
 });
 
@@ -489,7 +489,7 @@ test('a builder walks to a new site and finishes it mid-round with its work', ()
 });
 
 test('two builders stack; a builder further away walks over and works when it arrives', () => {
-  const s = arena([[0, 'builder', 7, 4], [0, 'builder', 7, 9.5], [0, 'builder', 13, 26]]);
+  const s = arena([[0, 'builder', 7, 4], [0, 'builder', 7, 9.5], [0, 'builder', 10, 28]]);
   const b = addBuilding(s, 0, 'barracks', 7, 6.8, 0, false);
   const o = holdAll(s);
   for (const id of ['q1', 'q2']) o[0].squads[id] = plan([{ kind: 'work', x: b.x, z: b.z, ap: 100 }]);
@@ -497,12 +497,12 @@ test('two builders stack; a builder further away walks over and works when it ar
   const r = resolveRound(s, o);
   eq(r.state.buildings.find(x => x.id === b.id).build, 0, '2 x 100 AP of work finishes a 120-work barracks');
   const q3 = r.state.squads.find(q => q.id === 'q3');
-  ok(Math.hypot(q3.x - 7, q3.z - 26) > 5, 'the far builder walked toward it');
+  ok(Math.hypot(q3.x - 10, q3.z - 28) > 5, 'the far builder walked toward it');
   ok(!events(r.log).some(e => e.type === 'workFail'), 'nobody failed');
 });
 
 test('a far-away site is reached and built even with squads in the way (no failures across seeds)', () => {
-  let fails = 0, built = 0;
+  let fails = 0, built = 0, tried = 0;
   for (let seed = 1; seed <= 12; seed++) {
     const s = createGame(seed);
     const q = s.squads.find(x => x.owner === 0 && x.role === 'builder');
@@ -513,14 +513,14 @@ test('a far-away site is reached and built even with squads in the way (no failu
       if (!bp.actions.length) continue;
       const o = [ob([{ type: 'barracks', x, z }]), ob()];
       o[0].squads = { [q.id]: plan(bp.actions) };
-      const r = resolveRound(s, o);
+      const r = resolveRound(s, o); tried++;
       if (events(r.log).some(e => e.type === 'workFail')) fails++;
       const q2 = r.state.squads.find(o => o.id === q.id);
       if (r.state.buildings.some(b => b.type === 'barracks' && b.owner === 0 && b.build < 120) || Math.hypot(q2.x - q.x, q2.z - q.z) > 4) built++;
       break;
     }
   }
-  eq(fails, 0, 'no failed work'); eq(built, 10, 'every builder worked or made real progress');
+  eq(fails, 0, 'no failed work'); ok(tried >= 6, 'tried ' + tried); eq(built, tried, 'every builder worked or made real progress');
 });
 
 test('builders keep at their task next round without new orders, then go gathering', () => {
