@@ -347,3 +347,26 @@ button { font-family: inherit; color: inherit; cursor: pointer; touch-action: ma
 @media (max-width: 720px) {
   #placer button { height: 46px; min-width: 46px; font-size: 16px; }
 }
+/* ---------- M3d: builder dock ---------- */
+.bd-task { margin: 0 0 8px; padding: 6px 10px; border-radius: 10px; background: rgba(255,176,32,.14); border-left: 3px solid #ffb020; font-size: 12.5px; font-weight: 700; }
+.bd-task.gather { background: rgba(245,197,66,.12); border-left-color: #f5c542; }
+.bd-task.hold, .bd-task:not(.build):not(.repair):not(.gather) { background: rgba(255,255,255,.06); border-left-color: #8a857c; }
+.bd-btns { grid-template-columns: repeat(6, 1fr) !important; }
+.bd-sec { margin: 10px 0 6px; font-size: 11px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); display: flex; align-items: center; gap: 4px; }
+.bd-sec.flash { animation: bdflash 1.2s ease-out 2; color: #ffc400; }
+@keyframes bdflash { 0%, 100% { color: var(--muted); } 30% { color: #ffc400; } }
+.bd-cards { grid-template-columns: repeat(3, 1fr); gap: 6px; }
+.bd-cards .bcard { padding: 7px 4px; font-size: 12px; }
+.bd-place { display: flex; flex-direction: column; gap: 10px; }
+.bd-pbtns { display: flex; gap: 8px; justify-content: flex-end; align-items: center; }
+.bd-pbtns .ready.ok { background: #34c759; color: #0b2412; }
+.bd-pbtns .ready.ok:disabled { background: #6b6b6b; color: #222; opacity: .8; }
+.knob.build { background: #ffb020; border-color: #ffd27a; }
+.knob.gather { background: #f5c542; border-color: #ffe9a3; }
+.sl .st.bt { color: #ffd27a; }
+@media (max-width: 720px) {
+  .bd-btns { grid-template-columns: repeat(3, 1fr) !important; }
+  .bd-cards .bcard small.fx { display: none; }
+  .bd-task { font-size: 11px; padding: 4px 8px; margin-bottom: 5px; }
+}
+.bd-btns .act small { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; padding: 0 3px; }

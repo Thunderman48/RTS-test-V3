@@ -163,7 +163,9 @@ function economy(s, p, known, orders) {
   const count = t => mine.filter(b => b.type === t).length + queued.filter(b => b.type === t).length;
   const busy = new Set();
   // 1. unfinished sites / damaged buildings first: send the nearest free builder
-  for (const b of mine.filter(b => b.build > 0 || b.hp < bdef(b).hp * 0.7).sort((a, b) => a.build ? -1 : 1)) {
+  // (builders with no orders keep at their task, finish nearby sites, or gather on their own)
+  const tasked = id => builders.some(q => q.task && q.task.bid === id && q.task.kind !== 'gather');
+  for (const b of mine.filter(b => (b.build > 0 || b.hp < bdef(b).hp * 0.7) && !tasked(b.id)).sort((a, b) => a.build ? -1 : 1)) {
     const q = builders.filter(x => !busy.has(x.id)).sort((a, c) => dist(a.x, a.z, b.x, b.z) - dist(c.x, c.z, b.x, b.z))[0];
     if (!q) break;
     const bp = builderPlan(s, q, b, apFor(q));

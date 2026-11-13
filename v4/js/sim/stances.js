@@ -5,7 +5,8 @@
 //  advance : like guard, but walks toward the nearest enemy when nobody is in reach
 import { RULES, isMelee, isShooter } from '../data/units.js';
 import { defOf, radiusOf, emptyPlan, apFor } from './state.js';
-import { obstacles, navKey, edgeDist, bdef } from './base.js';
+import { obstacles, navKey } from './base.js';
+import { builderIdleTarget } from './builders.js';
 import { knownEnemyHq } from './vision.js';
 import { Nav, pathAP, walkAP } from './nav.js';
 import { dist } from './geom.js';
@@ -84,8 +85,9 @@ export function buildStancePlan(s, q, enemies) {
   let left = apFor(q);
   const st = q.stance;
   if (q.role === 'builder') {
-    // builders left alone keep working on a site (or damaged building) they stand next to
-    const b = (s.buildings || []).find(b => b.owner === q.owner && b.hp > 0 && (b.build > 0 || b.hp < bdef(b).hp) && edgeDist(b, q.x, q.z) - radiusOf(q) <= RULES.workReach);
+    // builders left alone keep at their task, finish a nearby site, or gather resources
+    if (st === 'hold') return plan;
+    const b = builderIdleTarget(s, q);
     if (b) plan.actions.push({ kind: 'work', x: b.x, z: b.z, ap: left });
     return plan;
   }

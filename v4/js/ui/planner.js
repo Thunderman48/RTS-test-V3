@@ -5,7 +5,8 @@ import { planCost, actionCost, cpUsage, SKILL_KINDS } from '../sim/orders.js';
 import { clampAim, engagedWith } from '../sim/resolve.js';
 import { Nav, pathAP, walkAP } from '../sim/nav.js';
 import { obstacles, navKey, placeError, footprint, armySize, builderCount, BUILDINGS, trainCost, bdef } from '../sim/base.js';
-import { builderPlan } from '../sim/builders.js';
+import { builderPlan, builderIdleTarget, gatherTarget } from '../sim/builders.js';
+import { gatherRate, hitRadius } from '../sim/base.js';
 import { norm, segCircle, dist } from '../sim/geom.js';
 
 export class Planner {
@@ -90,7 +91,12 @@ export class Planner {
         legs.push({ kind: a.kind, ox: x, oz: z, cx: c2.x, cz: c2.z, range: sk.range, t0: t, t1: t + c });
         x = c2.x; z = c2.z;
       } else if (a.kind === 'work') {
-        legs.push({ kind: 'work', ox: x, oz: z, cx: a.x, cz: a.z, t0: t, t1: t + c });
+        // a builder walks to its target, then works there: show the walk and where it ends up
+        const tg = this.workTarget(q, a);
+        const bp = tg ? builderPlan(this.s, { ...q, x, z }, tg.f, c) : null;
+        const line = bp && bp.pts && bp.pts.length ? [{ x, z }, ...bp.pts] : null;
+        legs.push({ kind: 'work', ox: x, oz: z, cx: a.x, cz: a.z, line, mode: tg ? tg.mode : null, t0: t, t1: t + c });
+        if (bp && bp.end) { const d = norm(a.x - bp.end.x, a.z - bp.end.z); if (d.l > 0.01) { fx = d.x; fz = d.z; } x = bp.end.x; z = bp.end.z; }
       } else if (a.kind === 'charge') {
         const ln = this.chargeLane(q, x, z, a.x, a.z);
         fx = ln.dx; fz = ln.dz;
@@ -267,15 +273,55 @@ export class Planner {
     this.setBuilderPlan(id, bp.actions);
     return true;
   }
-  // send builder q to keep building / repair an existing building of ours
+  // what a builder's work order at (a.x, a.z) is aimed at: { f (footprint), mode, b, draft }
+  workTarget(q, a) {
+    const d = this.draft.builds.find(b => b.by === q.id && Math.hypot(b.x - a.x, b.z - a.z) < 0.6);
+    if (d) return { f: { type: d.type, ...footprint(d.type, d.x, d.z, d.rot) }, mode: 'build', draft: d };
+    const b = this.s.buildings.find(b => b.owner === q.owner && b.hp > 0 && Math.hypot(b.x - a.x, b.z - a.z) < hitRadius(b) + 0.6);
+    if (!b) return null;
+    return { f: b, b, mode: b.build > 0 ? 'build' : b.hp < bdef(b).hp ? 'repair' : gatherRate(this.s, b) ? 'gather' : null };
+  }
+  // send builder q to build / repair / gather at an existing building of ours
   addWork(id, b) {
     const q = this.squad(id);
+    const mode = b.build > 0 ? 'build' : b.hp < bdef(b).hp ? 'repair' : gatherRate(this.s, b) ? 'gather' : null;
+    if (!mode) { this.g.toast('Nothing to do there: builders finish sites, repair, and gather at ' + this.g.gatherNames(), true); return false; }
     const bp = builderPlan(this.s, q, b, apFor(q));
     if (!bp.actions.length) { this.g.toast('The builder can\'t reach it', true); return false; }
     this.draft.builds = this.draft.builds.filter(x => x.by !== id);
     this.setBuilderPlan(id, bp.actions);
-    this.g.confirm(q, b.build ? 'Building' : 'Repairing');
+    delete this.draft.stances[id];
+    this.g.confirm(q, { build: 'Building', repair: 'Repairing', gather: 'Gathering' }[mode]);
     return true;
+  }
+  // a builder's next round, in words (its orders, or what it will do on its own)
+  builderTask(q) {
+    const plan = this.plan(q.id);
+    const a = plan && plan.actions.find(x => x.kind === 'work');
+    let tg = a ? this.workTarget(q, a) : null, own = !!a;
+    if (!tg && !plan) {
+      if (this.stanceOf(q) === 'hold') return { text: 'Holding: it stays put and does nothing', mode: 'hold' };
+      const b = builderIdleTarget(this.s, q);
+      if (!b) return { text: `Idle: build a ${this.g.gatherNames()} and it will gather there`, mode: null };
+      tg = { f: b, b, mode: b.build > 0 ? 'build' : b.hp < bdef(b).hp ? 'repair' : 'gather' };
+    }
+    if (!tg) return { text: plan ? 'Your orders' : 'Idle', mode: null };
+    const bp = builderPlan(this.s, q, tg.f, a ? a.ap : apFor(q));
+    const name = BUILDINGS[tg.f.type].name[this.fac];
+    const pre = own ? '' : 'No orders, so it will ';
+    if (tg.mode === 'gather') {
+      const n = Math.floor(bp.work / gatherRate(this.s, tg.b));
+      return { text: `${pre ? pre + 'gather' : 'Gathering'} at the ${name}: about +${n} ${this.g.ecoName()} this round`, mode: 'gather', name };
+    }
+    const need = tg.draft ? BUILDINGS[tg.f.type].work : tg.mode === 'build' ? tg.b.build : Math.ceil((bdef(tg.b).hp - tg.b.hp) * bdef(tg.b).work / bdef(tg.b).hp);
+    const rounds = bp.work >= need ? 'done this round' : `${1 + Math.ceil((need - bp.work) / RULES.ap)} rounds`;
+    const verb = tg.mode === 'repair' ? 'repair' : tg.draft ? 'build' : 'finish';
+    return { text: `${pre ? pre + verb : verb[0].toUpperCase() + verb.slice(1) + 'ing'} the ${name}${bp.arrive ? ` (walks ${bp.arrive} AP)` : ''}: ${rounds}`, mode: tg.mode, name };
+  }
+  gatherAuto(id) {
+    const q = this.squad(id), b = gatherTarget(this.s, q);
+    if (!b) { this.g.toast('No free spot to gather at: build a ' + this.g.gatherNames(), true); return false; }
+    return this.addWork(id, b);
   }
   setBuilderPlan(id, actions) {
     const p = emptyPlan(); p.hist = actions.map(() => 'a');

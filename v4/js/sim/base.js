@@ -109,6 +109,11 @@ export function incomeOf(s, p) {
   }
   return v;
 }
+// AP of builder work per 1 resource when gathering at building b (0 = can't gather there)
+export function gatherRate(s, b) {
+  if (!b || b.hp <= 0 || b.build) return 0;
+  return FACTIONS[s.players[b.owner].faction].eco.gather[b.type] || 0;
+}
 // can building b train `role` (ignoring supply)?
 export function trainsRole(b, role) { return (BUILDINGS[b.type].trains || []).includes(role); }
 
@@ -163,7 +168,7 @@ export function spawnSpot(s, b, radius) {
 export function armyValue(s, p) {
   let v = 0;
   for (const q of s.squads) if (q.owner === p && q.hp > 0) v += q.hp;
-  for (const b of s.buildings || []) if (b.owner === p && b.hp > 0) v += b.type === 'hq' ? b.hp * 2 : b.hp * 0.5;
+  for (const b of s.buildings || []) if (b.owner === p && b.hp > 0 && b.type === 'hq') v += b.hp * 2;   // only the HQ: farms and walls don't win battles
   return v;
 }
 export { BUILDINGS, trainCost };

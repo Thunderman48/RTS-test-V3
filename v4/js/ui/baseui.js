@@ -2,7 +2,7 @@
 // training docks, building nameplates and the economy readout. Mixed into Game.
 import * as THREE from 'three';
 import { RULES, FACTIONS, BUILDINGS, trainCost } from '../data/units.js';
-import { footprint, hitRadius, armySize, nearestFreeSite, siteTaken, bdef, incomeOf } from '../sim/base.js';
+import { footprint, hitRadius, armySize, nearestFreeSite, siteTaken, bdef, incomeOf, gatherRate } from '../sim/base.js';
 import { buildingsSeenBy } from '../sim/vision.js';
 import { defOf } from '../sim/state.js';
 import { BuildingView, ShrineView } from '../render/buildings.js';
@@ -140,23 +140,23 @@ export const BaseUI = {
   // ---------------------------------------------------------------- build mode (needs a builder)
   myBuilders() { return this.state.squads.filter(q => q.owner === this.me && q.role === 'builder' && q.hp > 0); },
   builderSq() { return this.buildBy ? this.state.squads.find(q => q.id === this.buildBy) : null; },
-  openBuild(on = !this.buildOpen) {
-    if (on) {
-      const sel = this.selectedSquad?.();
-      const bs = this.myBuilders();
-      const q = sel && sel.role === 'builder' && sel.owner === this.me ? sel : bs.find(x => !this.planner.plan(x.id)) || bs[0];
-      if (!q) {
-        this.toast(`You have no builders. Train one at your ${BUILDINGS.hq.name[this.faction(this.me)]}.`, true);
-        const hq = this.state.buildings.find(b => b.owner === this.me && b.type === 'hq');
-        if (hq) this.selectBuilding(hq.id);
-        return;
-      }
-      this.buildBy = q.id;
-      this.selected = q.id; this.selB = null;
-    } else { this.buildMode = null; this.view.clear('ghost'); }
-    this.buildOpen = on;
+  // the Build button: select a builder (its dock holds the building cards)
+  openBuild() {
+    const sel = this.selectedSquad?.();
+    const bs = this.myBuilders();
+    const q = sel && sel.role === 'builder' && sel.owner === this.me ? sel : bs.find(x => !this.planner.plan(x.id)) || bs[0];
+    if (!q) {
+      this.toast(`You have no builders. Train one at your ${BUILDINGS.hq.name[this.faction(this.me)]}.`, true);
+      const hq = this.state.buildings.find(b => b.owner === this.me && b.type === 'hq');
+      if (hq) this.selectBuilding(hq.id);
+      return;
+    }
+    if (this.selected !== q.id) this.select(q.id, true);
+    this.buildBy = q.id;
+    this.flashCards = true;
     this.changed();
   },
+  gatherNames() { return this.eco().res === 'gold' ? 'farm or mine' : 'soul well or your crypt'; },
   // first spot for a new building: next to the builder, toward home (sites: the nearest free one)
   defaultSpot(type, rot) {
     const q = this.builderSq();
@@ -189,7 +189,7 @@ export const BaseUI = {
     const q = this.builderSq();
     pm.prev = q && !pm.err ? this.planner.builderPreview(q, { type: pm.type, ...footprint(pm.type, pm.x, pm.z, pm.rot) }) : null;
     if (pm.prev && !pm.prev.actions.length) pm.err = 'The builder can\'t reach that spot';
-    this.renderBuildBar();
+    this.changed();
     this.drawPlaceLine();
   },
   // the builder's walk to the site, drawn while placing
@@ -208,7 +208,7 @@ export const BaseUI = {
     if (!this.planner.addBuild(this.buildBy, pm.type, pm.x, pm.z, pm.rot)) return false;
     const pv = pm.prev;
     this.texts.add(pm.x, pm.z, `${BUILDINGS[pm.type].name[this.faction(this.me)]}: ${pv && pv.rounds <= 1 ? 'done this round' : pv ? pv.rounds + ' rounds' : 'queued'}`, 'ok', 2.6, 1.6);
-    this.buildMode = null; this.buildOpen = false;
+    this.buildMode = null;
     this.view.clear('ghost');
     this.changed();
     return true;
@@ -233,7 +233,7 @@ export const BaseUI = {
     return best;
   },
   selectBuilding(id) {
-    this.selB = id; this.selected = null; this.buildOpen = false; this.buildMode = null;
+    this.selB = id; this.selected = null; this.buildMode = null;
     this.view.clear('ghost');
     this.changed();
   },
@@ -259,41 +259,71 @@ export const BaseUI = {
   },
 
   renderBuildBar() {
-    const bar = $('buildbar');
-    $('b-build')?.classList.toggle('on', !!this.buildOpen);
-    if (this.phase !== 'planning' || !this.buildOpen) { bar.classList.add('hidden'); return; }
-    bar.classList.remove('hidden');
-    const fac = this.faction(this.me), eco = this.eco();
-    const pm = this.buildMode, q = this.builderSq();
-    const bn = q ? defOf(q).name : 'Builder';
+    const q = this.selectedSquad?.();
+    $('b-build')?.classList.toggle('on', !!(q && q.role === 'builder' && q.owner === this.me));
+    $('buildbar').classList.add('hidden');
+  },
+
+  // ---------------------------------------------------------------- the builder's own dock
+  renderBuilderDock(q) {
+    const dock = $('dock'), info = $('info');
+    info.classList.add('hidden'); dock.classList.remove('hidden');
+    this.buildBy = q.id;
+    const fac = this.faction(this.me), eco = this.eco(), def = defOf(q);
+    const plan = this.planner.plan(q.id);
+    const task = this.planner.builderTask(q);
+    const st = this.planner.stanceOf(q);
+    const pm = this.buildMode;
+    const head = `<div class="dk-head"><div><div class="nm">${icon('builder', 16)} ${esc(def.name)}</div><div class="sub">${q.models}/${def.models} models · ${q.hp} HP · Builder: free to command</div></div><button class="ib x" data-bd="close">✕</button></div>
+      <div class="bd-task ${task.mode || ''}">${esc(task.text)}</div>`;
     if (pm) {
       const d = BUILDINGS[pm.type], pv = pm.prev;
-      const st = pm.err ? esc(pm.err)
-        : pv ? `${pv.arrive ? `Arrives in ${pv.arrive} AP · ` : 'Already there · '}${Math.min(pv.work, pv.need)}/${pv.need} work this round → <b>${pv.rounds <= 1 ? 'finished this round' : pv.rounds + ' rounds'}</b>`
-        : '';
-      bar.innerHTML = `<div class="bb-place">
-        <div class="bb-t">${icon(d.icon, 20)}<div><b>${esc(d.name[fac])}</b> · ${d.cost} ${esc(eco.name.toLowerCase())} · ${esc(bn)}<div class="bb-st ${pm.err ? 'bad' : 'ok'}">${st}</div><div class="bb-tip">Drag the ghost or tap the table to move it, then press <b>✓ Confirm</b>.</div></div></div></div>`;
+      const stt = pm.err ? esc(pm.err)
+        : pv ? `${pv.arrive ? `Walks ${pv.arrive} AP, then ` : 'Right here: '}${Math.min(pv.work, pv.need)}/${pv.need} work this round → <b>${pv.rounds <= 1 ? 'finished this round' : pv.rounds + ' rounds'}</b>` : '';
+      dock.innerHTML = head + `<div class="bd-place"><div class="bb-t">${icon(d.icon, 22)}<div><b>${esc(d.name[fac])}</b> · ${d.cost} ${esc(eco.name.toLowerCase())}<div class="bb-st ${pm.err ? 'bad' : 'ok'}">${stt}</div><div class="bb-tip">Drag the ghost or tap the table to move it.</div></div></div>
+        <div class="bd-pbtns">${d.shape === 'circle' ? '' : '<button class="chip" data-bd="rot">⟳ Rotate</button>'}<button class="chip" data-bd="cancel">✕ Cancel</button><button class="ready sm ok" data-bd="confirm" ${pm.err ? 'disabled' : ''}>✓ Confirm</button></div></div>`;
     } else {
-      const own = this.planner.draft.builds.find(b => b.by === this.buildBy);
+      const own = this.planner.draft.builds.find(b => b.by === q.id);
       const left = this.planner.supplyLeft() + (own ? BUILDINGS[own.type].cost : 0);
       const live = this.state.buildings.filter(b => b.owner === this.me).concat(this.planner.queued());
-      const builders = this.myBuilders();
-      bar.innerHTML = `<div class="bb-head"><b>Build</b><span>${icon(eco.icon, 14)} ${left} ${esc(eco.name.toLowerCase())} · with ${esc(bn)}${builders.length > 1 ? ' <button class="chip" data-bb="next">Other builder ▸</button>' : ''}</span><button class="ib sm" data-bb="close">✕</button></div>
-        <div class="bb-cards">${FACTIONS[fac].buildings.map(t => {
+      const needs = this.state.buildings.filter(b => this.needsWork(b));
+      const gb = this.state.buildings.filter(b => b.owner === this.me && gatherRate(this.state, b));
+      const btn = (act, ic, label, sub, on = false, dis = false) => `<button class="act cat-none${on ? ' on' : ''}" data-bd="${act}" ${dis ? 'disabled' : ''}>${icon(ic, 20)}${label}<small>${sub}</small></button>`;
+      dock.innerHTML = head + `<div class="dk-btns bd-btns">
+          ${btn('move', 'move', 'Move', 'or tap', this.mode === 'move' && !!plan && plan.actions.some(a => a.kind === 'move'))}
+          ${btn('gather', eco.icon, 'Gather', gb.length ? 'nearest' : 'none yet', task.mode === 'gather' && !!plan, !gb.length)}
+          ${btn('fix', 'build', needs.length ? (needs.some(b => b.build) ? 'Finish' : 'Repair') : 'Repair', needs.length ? esc(this.bname(needs.sort((a, b) => Math.hypot(a.x - q.x, a.z - q.z) - Math.hypot(b.x - q.x, b.z - q.z))[0])) : 'none', false, !needs.length)}
+          ${btn('hold', 'hold', st === 'hold' ? 'Holding' : 'Hold', st === 'hold' ? 'tap: work' : 'stay put', st === 'hold' && !plan)}
+          ${btn('undo', 'undo', 'Undo', '', false, !plan)}
+          ${btn('clear', 'release', 'Clear', 'automatic', false, !plan)}
+        </div>
+        <div class="bd-sec${this.flashCards ? ' flash' : ''}">Build · ${icon(eco.icon, 12)} ${left} ${esc(eco.name.toLowerCase())}</div>
+        <div class="bb-cards bd-cards">${FACTIONS[fac].buildings.map(t => {
           const d = BUILDINGS[t];
           const n = live.filter(b => b.type === t).length;
           const max = t === 'banner' ? RULES.maxBannerCp : t === 'farm' ? RULES.maxFarms : 0;
           const full = max && n >= max, nosite = d.site && !nearestFreeSite(this.state, 24, 16, this.planner.queued());
           const dis = d.cost > left || full || nosite;
-          return `<button class="bcard" data-bt="${t}" ${dis ? 'disabled' : ''}>${icon(d.icon, 22)}<b>${esc(d.name[fac])}</b><small>${d.cost} · ${d.work} work</small><small class="fx">${full ? 'Max reached' : nosite ? 'No free site' : SHORT[t]}</small></button>`;
+          return `<button class="bcard" data-bt="${t}" ${dis ? 'disabled' : ''} title="${esc(FX(t, fac))}">${icon(d.icon, 20)}<b>${esc(d.name[fac])}</b><small>${d.cost} · ${d.work} work</small><small class="fx">${full ? 'Max reached' : nosite ? 'No free site' : SHORT[t]}</small></button>`;
         }).join('')}</div>
-        ${own ? `<div class="bb-q">${esc(bn)} is already going to build a ${esc(BUILDINGS[own.type].name[fac])}: picking another replaces it.</div>` : ''}`;
+        ${own ? `<div class="bb-q">Ordered to build a ${esc(BUILDINGS[own.type].name[fac])}. Picking another replaces it.</div>` : ''}
+        <div class="hint">With no orders a builder keeps at its job: it finishes its building, then gathers ${esc(eco.name.toLowerCase())} at the nearest ${esc(this.gatherNames())}. Tap one of your buildings to send it there.</div>`;
     }
-    bar.querySelectorAll('[data-bt]').forEach(el => el.onclick = () => { this.startPlace(el.dataset.bt); this.changed(); });
-    bar.querySelectorAll('[data-bb]').forEach(el => el.onclick = () => {
-      const a = el.dataset.bb;
-      if (a === 'close') this.openBuild(false);
-      else if (a === 'next') { const bs = this.myBuilders(); const i = bs.findIndex(x => x.id === this.buildBy); this.buildBy = bs[(i + 1) % bs.length].id; this.selected = this.buildBy; this.changed(); }
+    this.flashCards = false;
+    dock.querySelectorAll('[data-bt]').forEach(el => el.onclick = () => { this.startPlace(el.dataset.bt); });
+    dock.querySelectorAll('[data-bd]').forEach(el => el.onclick = () => {
+      const a = el.dataset.bd;
+      if (a === 'close') this.select(null);
+      else if (a === 'rot') this.rotatePlace();
+      else if (a === 'cancel') { this.buildMode = null; this.view.clear('ghost'); }
+      else if (a === 'confirm') this.confirmPlace();
+      else if (a === 'move') { this.mode = 'move'; this.toast('Drag the green knob, or tap the table'); }
+      else if (a === 'gather') this.planner.gatherAuto(q.id);
+      else if (a === 'fix') { const b = this.state.buildings.filter(b => this.needsWork(b)).sort((a, b) => Math.hypot(a.x - q.x, a.z - q.z) - Math.hypot(b.x - q.x, b.z - q.z))[0]; if (b) this.planner.addWork(q.id, b); }
+      else if (a === 'hold') { if (this.planner.plan(q.id)) this.planner.clear(q.id); this.planner.setStance(q.id, st === 'hold' ? 'guard' : 'hold'); }
+      else if (a === 'undo') this.planner.undo(q.id);
+      else if (a === 'clear') this.planner.clear(q.id);
+      this.changed();
     });
   },
 

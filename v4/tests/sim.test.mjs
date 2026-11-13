@@ -488,15 +488,77 @@ test('a builder walks to a new site and finishes it mid-round with its work', ()
   eq(r.state.supply[0], FACTIONS.kingdom.eco.start - 20 + FACTIONS.kingdom.eco.hq + BUILDINGS.farm.income, 'paid, then the farm pays this round');
 });
 
-test('two builders stack; a far-away builder does no work', () => {
-  const s = arena([[0, 'builder', 7, 4], [0, 'builder', 7, 9.5], [0, 'builder', 13, 28]]);
+test('two builders stack; a builder further away walks over and works when it arrives', () => {
+  const s = arena([[0, 'builder', 7, 4], [0, 'builder', 7, 9.5], [0, 'builder', 13, 26]]);
   const b = addBuilding(s, 0, 'barracks', 7, 6.8, 0, false);
   const o = holdAll(s);
   for (const id of ['q1', 'q2']) o[0].squads[id] = plan([{ kind: 'work', x: b.x, z: b.z, ap: 100 }]);
   o[0].squads.q3 = plan([{ kind: 'work', x: b.x, z: b.z, ap: 100 }]);
   const r = resolveRound(s, o);
   eq(r.state.buildings.find(x => x.id === b.id).build, 0, '2 x 100 AP of work finishes a 120-work barracks');
-  ok(events(r.log).some(e => e.type === 'workFail' && e.id === 'q3'), 'out of reach');
+  const q3 = r.state.squads.find(q => q.id === 'q3');
+  ok(Math.hypot(q3.x - 7, q3.z - 26) > 5, 'the far builder walked toward it');
+  ok(!events(r.log).some(e => e.type === 'workFail'), 'nobody failed');
+});
+
+test('a far-away site is reached and built even with squads in the way (no failures across seeds)', () => {
+  let fails = 0, built = 0;
+  for (let seed = 1; seed <= 12; seed++) {
+    const s = createGame(seed);
+    const q = s.squads.find(x => x.owner === 0 && x.role === 'builder');
+    for (const [dx, dz] of [[6, 3], [5, 0], [3, 4], [3, -4], [-1, 6]]) {
+      const x = q.x + dx, z = q.z + dz;
+      if (placeError(s, 0, 'barracks', x, z, 0)) continue;
+      const bp = builderPlan(s, q, { type: 'barracks', ...{ x, z, w: 3.5, d: 2.5 } }, 100);
+      if (!bp.actions.length) continue;
+      const o = [ob([{ type: 'barracks', x, z }]), ob()];
+      o[0].squads = { [q.id]: plan(bp.actions) };
+      const r = resolveRound(s, o);
+      if (events(r.log).some(e => e.type === 'workFail')) fails++;
+      const q2 = r.state.squads.find(o => o.id === q.id);
+      if (r.state.buildings.some(b => b.type === 'barracks' && b.owner === 0 && b.build < 120) || Math.hypot(q2.x - q.x, q2.z - q.z) > 4) built++;
+      break;
+    }
+  }
+  eq(fails, 0, 'no failed work'); eq(built, 10, 'every builder worked or made real progress');
+});
+
+test('builders keep at their task next round without new orders, then go gathering', () => {
+  const s = arena([[0, 'builder', 7, 2.4]]);
+  const b = addBuilding(s, 0, 'barracks', 7, 6.5, 0, false);
+  addBuilding(s, 0, 'farm', 4, 9, 0, true);
+  const o = holdAll(s); delete o[0].stances.q1;
+  o[0].squads.q1 = plan([{ kind: 'wait', ap: 40 }, { kind: 'work', x: b.x, z: b.z, ap: 60 }]);
+  let r = resolveRound(s, o);
+  ok(r.state.buildings.find(x => x.id === b.id).build > 0, 'not finished in round 1');
+  eq(r.state.squads[0].task.kind, 'build');
+  r = resolveRound(r.state, [ob(), ob()]);
+  eq(r.state.buildings.find(x => x.id === b.id).build, 0, 'finished in round 2 with no orders');
+  r = resolveRound(r.state, [ob(), ob()]);
+  eq(r.state.squads[0].task.kind, 'gather', 'walks to the farm');
+  r = resolveRound(r.state, [ob(), ob()]);
+  ok(events(r.log).some(e => e.type === 'gather' && e.owner === 0 && e.amount >= 7), 'and gathers a full round there');
+});
+
+test('gathering: at most two builders per building; the undead gather at the crypt', () => {
+  const s = arena([[0, 'builder', 10, 3], [0, 'builder', 10, 6], [0, 'builder', 10, 9], [1, 'builder', 41.5, 16]]);
+  const f = addBuilding(s, 0, 'farm', 7, 6, 0, true);
+  const o = [ob(), ob()];
+  for (const id of ['q1', 'q2', 'q3']) o[0].squads[id] = plan([{ kind: 'work', x: f.x, z: f.z, ap: 100 }]);
+  const hq1 = s.buildings.find(b => b.owner === 1 && b.type === 'hq');
+  o[1].squads.q4 = plan([{ kind: 'work', x: hq1.x, z: hq1.z, ap: 100 }]);
+  const r = resolveRound(s, o);
+  const g = events(r.log).filter(e => e.type === 'gather');
+  eq(g.filter(e => e.owner === 0).length, 2, 'two gatherers at the farm');
+  ok(events(r.log).some(e => e.type === 'workFail' && e.full), 'the third is turned away');
+  ok(g.some(e => e.owner === 1 && e.amount > 0), 'the thrall gathers souls at the crypt');
+});
+
+test('a builder on Hold stays put', () => {
+  const s = arena([[0, 'builder', 10, 3]]);
+  addBuilding(s, 0, 'farm', 7, 9, 0, true);
+  const r = resolveRound(s, holdAll(s));
+  eq(r.state.squads[0].x, 10); ok(!events(r.log).some(e => e.type === 'gather'));
 });
 
 test('builders repair damaged buildings', () => {

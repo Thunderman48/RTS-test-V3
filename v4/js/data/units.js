@@ -28,6 +28,7 @@ export const RULES = {
   shrineRadius: 3,              // resource sites: the ring drawn around them
   armyCap: 8,
   maxBuilders: 3,
+  gatherSlots: 2,                // builders that can gather at one building
   buildZone: 16,                // own third of the board (inches from your edge)
   maxBannerCp: 2,
   maxFarms: 4,
@@ -91,7 +92,7 @@ export const FACTIONS = {
       builder: { name: 'Peasants', role: 'builder', models: 2, hpPer: 14, armor: 2, tier: 5, look: 'peasant', vision: 8, defends: 0, attack: SWING(25, 2, 1.2) },
     },
     // Gold: a steady builder economy (keep, farms, mines on resource sites)
-    eco: { res: 'gold', name: 'Gold', icon: 'gold', start: 40, hq: 7 },
+    eco: { res: 'gold', name: 'Gold', icon: 'gold', start: 40, hq: 6, gather: { farm: 12, mine: 10 } },
     buildings: ['barracks', 'tower', 'farm', 'mine', 'banner', 'wall'],
     train: { builder: 15, tank: 30, fighter: 24, ranged: 26, fast: 30 },
   },
@@ -106,7 +107,7 @@ export const FACTIONS = {
       builder: { name: 'Grave Thralls', role: 'builder', models: 2, hpPer: 14, armor: 2, tier: 4, look: 'thrall', vision: 8, defends: 0, attack: SWING(25, 2, 1.2) },
     },
     // Souls: fed by death (models dying near undead squads, the crypt, obelisks and soul wells)
-    eco: { res: 'souls', name: 'Souls', icon: 'souls', start: 35, hq: 4 },
+    eco: { res: 'souls', name: 'Souls', icon: 'souls', start: 35, hq: 4, gather: { well: 9, hq: 8 } },
     buildings: ['barracks', 'tower', 'well', 'banner', 'wall'],
     train: { builder: 15, tank: 30, fighter: 18, ranged: 26, fast: 30 },
   },

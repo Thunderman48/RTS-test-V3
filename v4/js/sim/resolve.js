@@ -16,7 +16,9 @@ import { validateOrders, actionCost } from './orders.js';
 import { buildStancePlan } from './stances.js';
 import { terrainFactor, pointBlocked, blocks } from './nav.js';
 import { visibleTo, canSee, updateIntel } from './vision.js';
-import { obstacles, hitRadius, bdef, addBuilding, spawnSpot, armyValue, incomeOf, edgeDist } from './base.js';
+import { obstacles, navKey, hitRadius, bdef, addBuilding, spawnSpot, armyValue, incomeOf, edgeDist, gatherRate } from './base.js';
+import { approachSpot } from './builders.js';
+import { Nav } from './nav.js';
 import { BUILDINGS, FACTIONS, trainCost } from '../data/units.js';
 import { addSquad } from './state.js';
 
@@ -165,6 +167,7 @@ export function resolveRound(state0, ordersIn) {
   // ---- hits ---------------------------------------------------------------------
   let hits = [];
   const deaths = [];       // models that fell: where and when (souls for the undead)
+  const gatherers = new Map(); // building id -> builders gathering there this round
   function hitOne(h) {
     const q = h.dst, r = rtById.get(q.id);
     if (q.hp <= 0) return;
@@ -395,7 +398,8 @@ export function resolveRound(state0, ordersIn) {
         }
       }
     } else if (a.kind === 'work') {
-      // a builder spends its AP on the site (or damaged building) at the order's point
+      // a builder: walk to the building (re-pathing around whatever is in the way), then
+      // build it, repair it, or gather resources at it with the AP that is left
       if (st.target === undefined) {
         let best = null, bd = 1e9;
         for (const b of s.buildings) {
@@ -404,21 +408,59 @@ export function resolveRound(state0, ordersIn) {
           if (d < hitRadius(b) + 0.6 && d < bd) { bd = d; best = b; }
         }
         st.target = best;
+        st.mode = !best ? null : best.build > 0 ? 'build' : best.hp < bdef(best).hp ? 'repair' : gatherRate(s, best) ? 'gather' : null;
+        if (!st.mode && !st.failed) { st.failed = true; ev({ type: 'workFail', id: q.id, bid: best ? best.id : null }); }
+        if (st.mode) q.task = { kind: st.mode, bid: best.id };   // remembered even while still walking there
+        st.got = 0;
       }
       const b = st.target, bd0 = b && bdef(b);
-      if (b && b.hp > 0 && (b.build > 0 || b.hp < bd0.hp)) {
-        if (edgeDist(b, q.x, q.z) - radiusOf(q) <= RULES.workReach) {
-          if (!st.started) { st.started = true; ev({ type: 'work', id: q.id, bid: b.id, repair: !b.build }); const d = norm(b.x - q.x, b.z - q.z); if (d.l > 0.01) { q.fx = d.x; q.fz = d.z; rec(q, T); } }
-          if (b.build > 0) {
+      if (st.mode && b && b.hp > 0) {
+        const gap = edgeDist(b, q.x, q.z) - radiusOf(q);
+        if (gap > RULES.workReach) {
+          // walk: (re)path when there is no path yet or no progress for a while
+          if (!st.pts || !st.pts.length || (st.best !== undefined && gap >= st.best - 0.02 && r.el - st.bestAt > 8)) {
+            const spot = approachSpot(s, b, q.x, q.z, radiusOf(q), q.id);
+            const pts = spot ? Nav.for(obs(), radiusOf(q), navKey(s)).path(q.x, q.z, spot.x, spot.z) : [];
+            if (!pts.length) { if (!st.failed) { st.failed = true; ev({ type: 'workFail', id: q.id, bid: b.id }); } st.mode = null; }
+            st.pts = pts; st.bestAt = r.el; st.best = gap;
+          }
+          if (gap < (st.best ?? 1e9) - 0.02) { st.best = gap; st.bestAt = r.el; }
+          if (st.mode && st.pts.length) moves.push({ r, st, d: speedOf(q) * terrainFactor(s.terrain, q.x, q.z) });
+        } else {
+          if (!st.started) {
+            // gathering: at most RULES.gatherSlots builders per building
+            if (st.mode === 'gather') {
+              const g = gatherers.get(b.id) || new Set();
+              if (g.size >= RULES.gatherSlots && !g.has(q.id)) { ev({ type: 'workFail', id: q.id, bid: b.id, full: true }); st.mode = null; q.task = null; }
+              else { g.add(q.id); gatherers.set(b.id, g); }
+            }
+            if (st.mode) {
+              st.started = true;
+              q.task = { kind: st.mode, bid: b.id };
+              ev({ type: 'work', id: q.id, bid: b.id, mode: st.mode, repair: st.mode === 'repair' });
+              const d = norm(b.x - q.x, b.z - q.z); if (d.l > 0.01) { q.fx = d.x; q.fz = d.z; rec(q, T); }
+            }
+          }
+          if (st.mode === 'build' && b.build > 0) {
             b.build--;
             b.hp = Math.min(bd0.hp, b.hp + bd0.hp * (1 - RULES.siteHp) / bd0.work);
             if (b.build === 0) { b.hp = Math.round(b.hp); b.vision = bd0.vision; ev({ type: 'built', id: b.id, btype: b.type, owner: b.owner, by: q.id }); }
-          } else {
+          } else if (st.mode === 'repair' || (st.mode === 'build' && b.hp < bd0.hp)) {
             b.hp = Math.min(bd0.hp, b.hp + bd0.hp / bd0.work);
             if (b.hp >= bd0.hp) ev({ type: 'repaired', id: b.id, by: q.id });
-          }
-        } else if (!st.failed) { st.failed = true; ev({ type: 'workFail', id: q.id, bid: b.id }); }
-      } else if (!st.failed && !st.started) { st.failed = true; ev({ type: 'workFail', id: q.id, bid: b ? b.id : null }); }
+          } else if (st.mode === 'gather') st.got++;
+          // done: the building is finished / repaired -> go back to gathering next
+          if (st.mode !== 'gather' && !b.build && b.hp >= bd0.hp && q.task?.bid === b.id) q.task = null;
+        }
+      }
+      if (r.el >= a.cost && st.mode === 'gather' && st.got > 0) {
+        // partial work carries over to the next round while the builder stays at it
+        const rate = gatherRate(s, b), acc = (q.gacc && q.gacc.bid === b.id ? q.gacc.ap : 0) + st.got;
+        const amount = Math.floor(acc / rate);
+        q.gacc = { bid: b.id, ap: acc - amount * rate };
+        if (amount > 0) { s.supply[q.owner] += amount; ev({ type: 'gather', id: q.id, bid: b.id, owner: q.owner, amount }); }
+        st.got = 0;
+      }
     } else if (r.el >= a.cost && st.phase === 'go') {
       st.phase = 'done';
       const at = def.attack, sk = st.sk;
@@ -483,10 +525,11 @@ export function resolveRound(state0, ordersIn) {
       }
       const rq = radiusOf(q);
       const ethereal = !!defOf(q).ghost;
+      const civil = q.role === 'builder';   // builders slip between their own squads
       const clear = (x, z) => {
         if (pointBlocked(obs(), x, z, rq * 0.85)) return false;
         if (ethereal) return true;          // wraiths drift through squads
-        for (const o of all) if (o !== q && dist(x, z, o.x, o.z) < rq + radiusOf(o) - 0.02 && dist(x, z, o.x, o.z) < dist(q.x, q.z, o.x, o.z)) return false;
+        for (const o of all) if (o !== q && !(civil && o.owner === q.owner) && dist(x, z, o.x, o.z) < rq + radiusOf(o) - 0.02 && dist(x, z, o.x, o.z) < dist(q.x, q.z, o.x, o.z)) return false;
         return true;
       };
       let nx = cx, nz = cz;

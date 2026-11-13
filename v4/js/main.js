@@ -18,7 +18,7 @@ import { Planner } from './ui/planner.js';
 import { icon } from './ui/iconset.js';
 import { BaseUI } from './ui/baseui.js';
 import { BUILDINGS } from './data/units.js';
-import { hitRadius } from './sim/base.js';
+import { hitRadius, gatherRate } from './sim/base.js';
 import { BuildingView } from './render/buildings.js';
 import { FogLayer } from './render/fog.js';
 import { FogMap } from './ui/fogmap.js';
@@ -169,7 +169,7 @@ class Game {
     for (const v of this.views.values()) v.destroy();
     this.views.clear();
     this.syncViews(this.state.squads.map(q => ({ ...q })), true);
-    this.knownB = new Map(); this.selB = null; this.buildOpen = false; this.buildMode = null;
+    this.knownB = new Map(); this.selB = null; this.buildMode = null;
     this.fogMap = new FogMap(this.me); this.fogFresh = true;
     this.makeShrines(); this.syncBuildings([]);
     const portrait = innerHeight > innerWidth;
@@ -266,7 +266,7 @@ class Game {
       const p = this.tl.pose(e.id, T0), h = this.tl.health(e.id, T0);
       this.shotList.push({ key: e.id + ':' + e.T, T0, T1: e.T, from: v.muzzles(p.x, p.z, p.fx, p.fz, h.models), to: { x: e.ex, z: e.ez }, arc: e.kind === 'volley' || e.kind === 'pierce' ? 0.4 : 3.2 });
     }
-    this.selected = null; this.selB = null; this.buildMode = null; this.buildOpen = false;
+    this.selected = null; this.selB = null; this.buildMode = null;
     $('buildbar').classList.add('hidden'); this.updatePlaceMark();
     if (this.knobs) for (const el of Object.values(this.knobs)) el.style.display = 'none';
     this.ghostView?.destroy(); this.ghostView = null;
@@ -369,14 +369,18 @@ class Game {
       L.add(lineShape(leg.ox, leg.oz, leg.dx, leg.dz, leg.len, leg.w, COL.charge, a * 0.7));
       if (leg.hit) { const m = ring(radiusOf(leg.hit) + 0.2, 0.12, COL.bad, sel ? 1 : 0.6, 0.08); m.position.x = leg.hit.x; m.position.z = leg.hit.z; L.add(m); }
     } else if (leg.kind === 'work') {
-      // a builder at work: an amber ring on the building it works on
-      const r = ring(1.6, 0.12, 0xffb020, sel ? 0.9 : 0.5, 0.12, 40); r.position.x = leg.cx; r.position.z = leg.cz; L.add(r);
+      // a builder: its walk, and a ring on the building (amber = build / repair, gold or green = gather)
+      const col = leg.mode === 'gather' ? (this.eco().res === 'gold' ? 0xf5c542 : 0x7dff9a) : 0xffb020;
+      if (leg.line) { L.add(ribbon(leg.line, sel ? 0.14 : 0.09, col, sel ? 0.85 : 0.5)); L.add(chevrons(leg.line, 0x111111, sel ? 0.7 : 0.35)); }
+      const r = ring(1.7, 0.13, col, sel ? 0.9 : 0.5, 0.12, 40); r.position.x = leg.cx; r.position.z = leg.cz; L.add(r);
     } else if (leg.kind === 'overwatch') L.add(arcShape(leg.ox, leg.oz, leg.dx, leg.dz, leg.R, leg.ch, COL.watch, sel ? 0.22 : 0.12));
   }
 
   drawPlan() {
     const V = this.view; V.clear('plan');
     const L = V.layers.plan;
+    // what each of my builders will do this round (shown on its nameplate and in its dock)
+    this.btasks = new Map(this.state.squads.filter(q => q.owner === this.me && q.role === 'builder').map(q => [q.id, this.planner.builderTask(q)]));
     this.drawBuildZone(L);
     for (const q of this.state.squads) {
       if (q.owner !== this.me) continue;
@@ -385,7 +389,7 @@ class Game {
       const sel = q.id === this.selected;
       const pr = this.planner.predict(q);
       for (const leg of pr.legs) this.drawLeg(L, q, leg, sel);
-      if (pr.legs.some(l => l.kind === 'move' || l.kind === 'charge' || l.kind === 'leap' || l.kind === 'step')) {
+      if (pr.legs.some(l => l.kind === 'move' || l.kind === 'charge' || l.kind === 'leap' || l.kind === 'step' || (l.kind === 'work' && l.line))) {
         const end = ring(radiusOf(q), 0.08, 0xffffff, sel ? 0.9 : 0.5, 0.06);
         end.position.x = pr.x; end.position.z = pr.z; L.add(end);
       }
@@ -423,14 +427,15 @@ class Game {
   updateKnobs() {
     if (!this.knobs) {
       this.knobs = {};
-      for (const k of ['move', 'attack', 'skill0', 'skill1', 'skill2']) { const el = document.createElement('div'); el.className = 'knob ' + (k.startsWith('skill') ? 'skill' : k); $('labels').appendChild(el); this.knobs[k] = el; }
+      for (const k of ['move', 'attack', 'skill0', 'skill1', 'skill2', 'build', 'gather']) { const el = document.createElement('div'); el.className = 'knob ' + (k.startsWith('skill') ? 'skill' : k); $('labels').appendChild(el); this.knobs[k] = el; }
     }
     const q = this.selectedSquad();
-    const show = this.phase === 'planning' && q && q.owner === this.me && !this.buildOpen;
+    const show = this.phase === 'planning' && q && q.owner === this.me && !this.buildMode;
     if (!show) { for (const el of Object.values(this.knobs)) el.style.display = 'none'; this.knobPos = null; return; }
-    const def = defOf(q), sks = skillsOf(def);
+    const def = defOf(q), builder = q.role === 'builder';
+    const sks = builder ? [] : skillsOf(def);
     const atkIc = def.attack.kind === 'swing' ? 'attack' : 'shoot';
-    const content = { move: icon('move', 20), attack: icon(this.mode === 'overwatch' ? 'overwatch' : atkIc, 20) };
+    const content = { move: icon('move', 20), attack: icon(this.mode === 'overwatch' ? 'overwatch' : atkIc, 20), build: icon('build', 20), gather: icon(this.eco().icon, 20) };
     sks.forEach((sk, i) => { const cd = cdOf(q, sk.kind); content['skill' + i] = this.planner.skillReady(q, sk.kind) ? icon(SKILL_IC[sk.kind], 20) : `<b>${cd > 0 ? cd : '✓'}</b>`; });
     // place knobs in screen space around the squad's planned end point: always ~64px apart
     const pr = this.planner.predict(q);
@@ -438,7 +443,7 @@ class Game {
     let ux = f.x - c.x, uy = f.y - c.y; const ul = Math.hypot(ux, uy) || 1; ux /= ul; uy /= ul;
     let px = uy, py = -ux; if (py < 0) { px = -px; py = -py; }       // skill knobs fan out below the squad (its nameplate is above)
     const gap = innerWidth < 720 ? 58 : 64;
-    const pos = { move: { x: c.x, y: c.y }, attack: { x: c.x + ux * gap, y: c.y + uy * gap } };
+    const pos = { move: { x: c.x, y: c.y }, attack: { x: c.x + ux * gap, y: c.y + uy * gap }, build: { x: c.x + ux * gap, y: c.y + uy * gap }, gather: { x: c.x + px * gap, y: c.y + py * gap } };
     const fan = sks.length === 1 ? [0] : sks.length === 2 ? [-0.42, 0.42] : [-0.8, 0, 0.8];
     sks.forEach((sk, i) => {
       const a = fan[i], ca = Math.cos(a), sa = Math.sin(a);
@@ -448,7 +453,7 @@ class Game {
     this.knobPos = {};
     for (const [k, el] of Object.entries(this.knobs)) {
       const si = k.startsWith('skill') ? +k.slice(5) : -1, sk = si >= 0 ? sks[si] : null;
-      if ((si >= 0 && !sk) || c.behind) { el.style.display = 'none'; continue; }
+      if ((si >= 0 && !sk) || c.behind || (builder ? k === 'attack' : k === 'build' || k === 'gather')) { el.style.display = 'none'; continue; }
       const p = pos[k];
       this.knobPos[k] = p;
       const active = this.drag ? (this.drag.knobKey === k || (k === 'attack' && this.drag.kind === 'overwatch') || (!this.drag.knobKey && this.drag.kind === k)) : true;
@@ -500,7 +505,8 @@ class Game {
 
   select(id, focus = false) {
     this.selected = id;
-    if (id) { this.selB = null; if (this.buildMode) this.view.clear('ghost'); this.buildMode = null; this.buildOpen = false; }
+    if (id) { this.selB = null; if (this.buildMode && id !== this.buildBy) { this.view.clear('ghost'); this.buildMode = null; } }
+    else if (this.buildMode) { this.view.clear('ghost'); this.buildMode = null; }
     const q = this.selectedSquad();
     this.mode = 'move';
     if (q && focus) this.focusOn(q);
@@ -537,7 +543,7 @@ class Game {
     if (q && (!sel || sel.owner !== this.me || !aiming || q.owner === this.me)) { this.select(q.id); return; }
     if (!q && (!sel || sel.owner !== this.me || !aiming)) {
       const b = this.pickBuilding(cx, cy);
-      if (b && sel && sel.role === 'builder' && sel.owner === this.me && this.needsWork(b)) { this.planner.addWork(sel.id, b); return; }
+      if (b && sel && sel.role === 'builder' && sel.owner === this.me && !b.ghost && !b.stale && b.owner === this.me && (this.needsWork(b) || gatherRate(this.state, b))) { this.planner.addWork(sel.id, b); return; }
       if (b) { this.selectBuilding(b.id); return; }
     }
     if (sel && sel.owner === this.me) { const t = aiming && q ? q : p; if (this.orderAt(this.mode, sel, t.x, t.z)) this.hint(2); return; }
@@ -552,6 +558,7 @@ class Game {
     const knob = this.knobAt(cx, cy);
     if (knob) {
       if (knob.startsWith('skill')) { this.drag = { kind: 'skill', sk: skillsOf(defOf(q))[+knob.slice(5)].kind, id: q.id, knob: true, knobKey: knob }; return true; }
+      if (knob === 'build' || knob === 'gather') { this.drag = { kind: knob + 'knob', id: q.id, knob: true, knobKey: knob }; return true; }
       const kind = knob === 'attack' && this.mode === 'overwatch' ? 'overwatch' : knob;
       this.drag = { kind, id: q.id, knob: true, knobKey: knob };
       return true;
@@ -659,6 +666,18 @@ class Game {
     const d = this.drag; if (!d) return;
     const p = this.view.pick(cx, cy); if (!p) return;
     if (d.kind === 'place') { d.pt = p; d.far = d.far || Math.hypot(cx - d.sx, cy - d.sy) > 9; this.movePlace(p.x, p.z); return; }
+    if (d.kind === 'buildknob' || d.kind === 'gatherknob') {
+      // drag the hammer onto a site / damaged building, or the coin onto a farm or mine
+      d.pt = p;
+      const b = this.pickBuilding(cx, cy), q = this.selectedSquad();
+      const ok = b && b.owner === this.me && !b.ghost && (d.kind === 'buildknob' ? this.needsWork(b) : gatherRate(this.state, b));
+      const tape = $('tape');
+      tape.innerHTML = ok ? `${d.kind === 'buildknob' ? (b.build ? 'Finish' : 'Repair') : 'Gather at'} the ${esc(this.bname(b))}` : (d.kind === 'buildknob' ? 'Drop on one of your unfinished or damaged buildings<small>or pick a building in the panel to build a new one</small>' : `Drop on your ${this.gatherNames()}`);
+      tape.classList.toggle('short', !ok); tape.classList.remove('warn', 'hidden');
+      tape.style.transform = `translate(${cx + 16}px, ${cy - 46}px)`;
+      d.target = ok ? b : null;
+      return;
+    }
     const q = this.selectedSquad();
     if (d.knob) { const kp = this.knobPos?.[d.knobKey]; if (kp && Math.hypot(kp.x - cx, kp.y - cy) < 14 && !d.pt) return; }
     d.pt = p;
@@ -677,6 +696,12 @@ class Game {
     this.view.clear('ghost'); $('tape').classList.add('hidden');
     if (!d) return;
     if (d.kind === 'place') { if (!moved) { const p = this.view.pick(cx, cy, 0); if (p) this.movePlace(p.x, p.z); } this.changed(); return; }
+    if (d.kind === 'buildknob' || d.kind === 'gatherknob') {
+      if (moved && d.pt) { if (d.target) this.planner.addWork(q.id, d.target); return; }
+      if (d.kind === 'gatherknob') this.planner.gatherAuto(q.id);
+      else { this.flashCards = true; this.toast('Pick a building in the panel, or drag the hammer onto a site to finish it'); this.changed(); }
+      return;
+    }
     const q = this.selectedSquad();
     if (!moved || !d.pt) {
       if (d.knob && q) {
@@ -696,8 +721,9 @@ class Game {
     if (e.key === ' ' && this.phase === 'playback') { e.preventDefault(); this.playing = !this.playing; }
     if ((e.key === 'r' || e.key === 'R') && this.buildMode) this.rotatePlace();
     if (e.key === 'Enter' && this.buildMode) this.confirmPlace();
-    if (e.key === 'Escape') { if (this.buildMode) { this.buildMode = null; this.changed(); } else if (this.buildOpen) this.openBuild(false); else { this.select(null); this.selB = null; this.changed(); } }
+    if (e.key === 'Escape') { if (this.buildMode) { this.buildMode = null; this.view.clear('ghost'); this.changed(); } else { this.select(null); this.selB = null; this.changed(); } }
     if (e.key === 'b' && this.phase === 'planning') this.openBuild();
+    if (e.key === 'g' && this.phase === 'planning' && this.selectedSquad()?.role === 'builder') this.planner.gatherAuto(this.selected);
     if (e.key === 'Backspace' && this.selected) { e.preventDefault(); this.planner.undo(this.selected); }
   }
 
@@ -733,10 +759,10 @@ class Game {
   renderDock() {
     const dock = $('dock'), info = $('info');
     const q = this.selectedSquad();
-    if (this.buildOpen) { dock.classList.add('hidden'); info.classList.add('hidden'); return; }
     const sb = this.phase === 'planning' && !q ? this.selectedBuilding() : null;
     if (sb) { this.renderBuildingDock(sb); return; }
     if (this.phase !== 'planning' || !q) { dock.classList.add('hidden'); info.classList.add('hidden'); return; }
+    if (q.role === 'builder' && q.owner === this.me) { this.renderBuilderDock(q); return; }
     const def = defOf(q), at = def.attack, sks = skillsOf(def);
     const atkName = { swing: 'Swing', volley: 'Volley', lob: 'Lob' }[at.kind];
     if (q.owner !== this.me) {
@@ -778,7 +804,6 @@ class Game {
         ${skBtn}
         ${prepBtn}
         ${b('defend', 'defend', 'Defend', `${RULES.defendCost} AP · ${plan?.defends || 0}`, false, left < RULES.defendCost, 'defense')}
-        ${q.role === 'builder' ? b('build', 'build', 'Build', this.planner.draft.builds.some(x => x.by === q.id) ? 'change' : 'pick a building', this.buildOpen, false, 'none') : ''}
         ${b('tier', 'tierup', 'Act earlier', plan?.upgrades >= RULES.maxUpgrades ? 'max' : `${RULES.tierCost[plan?.upgrades || 0]} AP`, false, (plan?.upgrades || 0) >= RULES.maxUpgrades || left < RULES.tierCost[plan?.upgrades || 0])}
         ${b('undo', 'undo', 'Undo', '', false, !plan, 'none')}
         ${b('clear', 'release', 'Clear', 'back to stance', false, !plan, 'none')}
@@ -802,7 +827,6 @@ class Game {
     else if (k === 'tier') this.planner.prepaid(q.id, 'upgrades');
     else if (k === 'undo') this.planner.undo(q.id);
     else if (k === 'clear') this.planner.clear(q.id);
-    else if (k === 'build') { this.openBuild(!this.buildOpen); return; }
     else if (k === 'stance') this.planner.setStance(q.id, arg);
     this.changed();
   }
@@ -851,7 +875,8 @@ class Game {
       const engaged = planning && engagedWith(d, this.state.squads).length > 0;
       const cds = planning ? skillsOf(def).filter(k => cdOf(d, k.kind) > 0).map(k => [k, cdOf(d, k.kind)]) : [];
       const cd = cds.map(([k, n]) => k.kind + n).join();
-      const key = `${tier}|${d.models}|${d.hp}|${sel}|${!!plan}|${d.dying !== undefined}|${defs}|${ups}|${stance}|${zoomedOut}|${parry}|${watch}|${engaged}|${cd}|${d.lastSeen}`;
+      const bt = planning && d.role === 'builder' ? this.btasks?.get(d.id) : null;
+      const key = `${bt ? bt.mode + bt.name : ''}|${tier}|${d.models}|${d.hp}|${sel}|${!!plan}|${d.dying !== undefined}|${defs}|${ups}|${stance}|${zoomedOut}|${parry}|${watch}|${engaged}|${cd}|${d.lastSeen}`;
       if (el.dataset.key !== key && d.lastSeen !== undefined) {
         el.dataset.key = key;
         el.style.setProperty('--team', TEAM[d.owner]);
@@ -870,6 +895,7 @@ class Game {
         if (watch) st.push(`<span class="st" title="Overwatch">${icon('overwatch', 12)}</span>`);
         if (engaged) st.push(`<span class="st" title="Engaged in melee">${icon('engaged', 12)}</span>`);
         for (const [k, n] of cds) st.push(`<span class="st cdc" style="--c:${CAT_HEX[k.cat]}" title="${esc(k.name)} recharging">${icon(SKILL_IC[k.kind], 11)}${n}</span>`);
+        if (bt && bt.mode && bt.mode !== 'hold') st.push(`<span class="st bt ${bt.mode}">${icon(bt.mode === 'gather' ? this.eco().icon : 'build', 12)}${esc(bt.name || '')}</span>`);
         if (plan) st.push(`<span class="st">${icon('control', 12)}</span>`);
         else if (stance) st.push(`<span class="st">${icon(stance, 12)}</span>`);
         el.innerHTML = `<div class="sl-h"><span class="tr">${tier}</span><span class="nm">${esc(def.name)}</span>${icon(def.role, 14)}</div>
@@ -1150,6 +1176,7 @@ function helpHTML() {
 <li><b>Kingdom: Gold.</b> A steady income: your Keep earns ${FACTIONS.kingdom.eco.hq} a round, every <b>Farm</b> ${BUILDINGS.farm.income}, every <b>Mine</b> (on a resource site) ${BUILDINGS.mine.income}.</li>
 <li><b>Undead: Souls.</b> Fed by death: your Crypt earns ${FACTIONS.undead.eco.hq} a round and each <b>Soul Well</b> (on a resource site) ${BUILDINGS.well.income}, but every model that dies (either side) within ${RULES.soulRange}″ of your squads, Crypt, Obelisks or Soul Wells gives <b>${RULES.soulPerModel} souls</b> (a hero ${RULES.soulPerHero}).</li>
 <li><b>Builders</b> (Peasants / Grave Thralls) put up every building. Select one and press <b>Build</b> (or the Build button at the bottom), pick a building, drag the see-through ghost to a spot (green = it fits, red = it doesn't, and why) and press <b>✓ Confirm</b>. The builder walks there and spends the rest of its AP as <b>work</b>; the building is finished when its work is done (two builders work twice as fast). Tap one of your damaged buildings with a builder selected to <b>repair</b> it. Builders cost no command points; train more at your HQ (max ${RULES.maxBuilders}).</li>
+<li>Builders have their <b>own controls</b>: the <b>hammer</b> knob (drag it onto a site to finish it, or onto a damaged building to repair it), the <b>gather</b> knob (drag it onto a farm or mine / a soul well or your crypt) and the building cards in their panel. With <b>no orders</b> a builder keeps at its job: it finishes its building over as many rounds as it takes, then <b>gathers</b> at the nearest farm or mine (Kingdom) or soul well or crypt (Undead) for extra income, two builders per building. <b>Hold</b> keeps it still.</li>
 <li><b>Barracks</b> train a new squad each round. <b>Watchtowers</b> see far and shoot the nearest enemy after every round, like your HQ. <b>Banners / Obelisks</b> give +1 command point. <b>Palisades</b> block paths and volleys. Army cap: ${RULES.armyCap} squads.</li>
 <li>Buildings can be attacked by any swing, volley or skill, and take extra damage from it.</li>
 </ul>
