@@ -204,11 +204,11 @@ test('charge rushes down the lane and hits the first enemy squad', () => {
   ok(imp, 'no charge impact'); eq(imp.dst, 'q2');
   const q1 = state.squads.find(q => q.id === 'q1'), q2 = state.squads.find(q => q.id === 'q2');
   ok(Math.hypot(q1.x - q2.x, q1.z - q2.z) <= radiusOf(q1) + radiusOf(q2) + 0.1, 'should end in contact');
-  ok(q1.cd > 0, 'charge goes on cooldown');
+  ok(q1.cd.charge > 0, 'charge goes on cooldown');
 });
 
 test('a skill on cooldown is dropped from the orders', () => {
-  const s = arena([[0, 'fast', 10, 4, { cd: 1 }], [1, 'fighter', 17, 4]]);
+  const s = arena([[0, 'fast', 10, 4, { cd: { charge: 1 } }], [1, 'fighter', 17, 4]]);
   const o = holdAll(s);
   o[0].squads.q1 = plan([{ kind: 'charge', x: 30, z: 4 }]);
   const { log } = resolveRound(s, o);
@@ -265,7 +265,7 @@ test('Arrow Storm arcs over walls that stop the archers\' volleys, then recharge
   const rel = events(log).filter(e => e.type === 'release' && e.id === 'q1');
   eq(rel[0].kind, 'volley'); ok(rel[0].blocked, 'volley blocked by the wall');
   eq(rel[1].kind, 'storm'); eq(rel[1].hit.join(), 'q2');
-  ok(state.squads.find(q => q.id === 'q1').cd > 0, 'storm goes on cooldown');
+  ok(state.squads.find(q => q.id === 'q1').cd.storm > 0, 'storm goes on cooldown');
 });
 
 test('only fighters can parry', () => {
@@ -320,6 +320,96 @@ test('balance report: AI vs AI with both factions on both sides', () => {
   }
   console.log('       wins over 12 games:', JSON.stringify(wins));
   ok(wins.kingdom > 0 && wins.undead > 0, 'both factions should be able to win');
+});
+
+console.log('M3 skills');
+
+test('heroes have three skills, one of each colour, usable in the same round', () => {
+  for (const f of ['kingdom', 'undead']) {
+    const def = createGame(1, [f, f]).squads.find(q => q.role === 'hero');
+    const cats = defOf(def).skills.map(k => k.cat).sort().join();
+    eq(cats, 'attack,defense,move', f);
+  }
+  const s = arena([[0, 'hero', 10, 16], [1, 'fighter', 16, 16], [0, 'fighter', 9, 18]]);
+  const o = holdAll(s);
+  o[0].squads.q1 = plan([{ kind: 'rally', x: 10, z: 16 }, { kind: 'leap', x: 13.2, z: 16 }, { kind: 'sweep', x: 13, z: 16 }]);
+  const { state, log } = resolveRound(s, o);
+  const acts = events(log).filter(e => e.type === 'act' && e.id === 'q1').map(e => e.kind).join();
+  eq(acts, 'rally,leap,sweep');
+  const q1 = state.squads.find(q => q.id === 'q1');
+  ok(q1.cd.rally > 0 && q1.cd.leap > 0 && q1.cd.sweep > 0, 'each skill has its own cooldown');
+  ok(events(log).some(e => e.type === 'hit' && e.kind === 'sweep' && e.dst === 'q2'), 'sweep hits after the leap');
+});
+
+test('the same skill cannot be used twice in a round', () => {
+  const s = arena([[0, 'hero', 10, 16], [1, 'fighter', 30, 16]]);
+  const o = holdAll(s);
+  o[0].squads.q1 = plan([{ kind: 'sweep', x: 0, z: 0 }, { kind: 'sweep', x: 0, z: 0 }]);
+  const { log } = resolveRound(s, o);
+  eq(events(log).filter(e => e.type === 'act' && e.kind === 'sweep').length, 1);
+});
+
+test('Lock Shields blunts hits from the front only', () => {
+  const run = (bx) => {
+    const s = arena([[0, 'tank', 20, 16], [1, 'fighter', bx, 16]]);
+    s.squads[0].fx = 1; s.squads[0].fz = 0;
+    const o = holdAll(s);
+    for (const k of Object.keys(o[0].stances)) delete o[0].stances[k];
+    o[0].squads.q1 = { ...plan([{ kind: 'wall', x: 20, z: 16 }]), defends: 0 };
+    o[1].squads.q2 = plan([{ kind: 'swing', x: 20, z: 16 }]);
+    const { log } = resolveRound(s, o);
+    return events(log).find(e => e.type === 'hit' && e.dst === 'q1');
+  };
+  const front = run(22.2), back = run(17.8);
+  ok(front.walled && !back.walled, 'only the front is shielded');
+  ok(front.dmg < back.dmg, 'front hit is smaller');
+});
+
+test('Piercing Bolt hits every squad on the line', () => {
+  const s = arena([[0, 'ranged', 6, 3], [1, 'fighter', 11, 3], [1, 'tank', 15, 3]]);
+  const o = holdAll(s);
+  o[0].squads.q1 = plan([{ kind: 'pierce', x: 20, z: 3 }]);
+  const { log } = resolveRound(s, o);
+  const rel = events(log).find(e => e.type === 'release' && e.kind === 'pierce');
+  eq(rel.hit.sort().join(), 'q2,q3');
+});
+
+test('Raise brings back a fallen model', () => {
+  const s = arena([[1, 'hero', 10, 16], [1, 'fighter', 12, 16]]);
+  const w = s.squads[1], d = defOf(w); w.hp = d.hpPer * 2; w.models = 2;
+  const o = holdAll(s);
+  o[1].squads.q1 = plan([{ kind: 'raise', x: 10, z: 16 }]);
+  const { state } = resolveRound(s, o);
+  eq(state.squads.find(q => q.id === 'q2').models, 3);
+});
+
+test('Shadow Step relocates the necromancer without parting blows', () => {
+  const s = arena([[1, 'hero', 20, 16], [0, 'fighter', 21.9, 16]]);
+  ok(engagedWith(s.squads[0], s.squads).length, 'starts engaged');
+  const o = holdAll(s);
+  o[1].squads.q1 = plan([{ kind: 'step', x: 27, z: 16 }]);
+  const { state, log } = resolveRound(s, o);
+  ok(!events(log).some(e => e.kind === 'parting'), 'no parting blow');
+  ok(state.squads.find(q => q.id === 'q1').x > 25, 'moved away');
+});
+
+test('Heroic Leap clears a wall and shoves enemies at the landing', () => {
+  const s = arena([[0, 'hero', 16, 16], [1, 'fighter', 23.6, 16.2]]);   // ruin wall at x 20.2
+  const o = holdAll(s);
+  o[0].squads.q1 = plan([{ kind: 'leap', x: 22.2, z: 16 }]);
+  const { state, log } = resolveRound(s, o);
+  const q1 = state.squads.find(q => q.id === 'q1');
+  ok(q1.x > 20.6, 'landed beyond the wall');
+  const land = events(log).find(e => e.type === 'land');
+  ok(land && land.pushed.includes('q2'), 'enemy shoved');
+});
+
+test('Wraiths drift through squads', () => {
+  const s = arena([[1, 'fast', 8, 3], [0, 'tank', 12, 3]]);
+  const o = holdAll(s);
+  o[1].squads.q1 = plan([{ kind: 'move', pts: [{ x: 17, z: 3 }], ap: 100 }]);
+  const { state } = resolveRound(s, o);
+  ok(state.squads.find(q => q.id === 'q1').x > 14, 'passed through the tank');
 });
 
 console.log(`\n${pass} passed, ${fail} failed`);

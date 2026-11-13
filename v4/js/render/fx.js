@@ -7,7 +7,7 @@ export const COL = {
   lob: 0xff2d55, watch: 0x3ee6ff,
   // skill categories: green = movement/speed, red = attack, blue = defence/buffs
   catMove: 0x34c759, catAttack: 0xff3b30, catDefense: 0x3fa9ff,
-  charge: 0x34c759, blast: 0xff3b30, storm: 0xff3b30, rally: 0x3fa9ff,
+  charge: 0x34c759, leap: 0x34c759, step: 0x34c759, blast: 0xff3b30, storm: 0xff3b30, sweep: 0xff3b30, pierce: 0xff3b30, rally: 0x3fa9ff, raise: 0x3fa9ff, wall: 0x3fa9ff,
 };
 const LIFT = 0.06; // ground is gently bumpy: keep overlays above it
 const basic = (color, opacity) => new THREE.MeshBasicMaterial({ color, transparent: true, opacity, depthWrite: false, side: THREE.DoubleSide });

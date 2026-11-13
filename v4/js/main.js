@@ -1,6 +1,6 @@
 // V4 game controller.
 import * as THREE from 'three';
-import { RULES, FACTIONS, ROLE_ORDER, isMelee, isShooter } from './data/units.js';
+import { RULES, FACTIONS, ROLE_ORDER, isMelee, isShooter, skillOf, skillsOf, cdOf, SELF_SKILLS } from './data/units.js';
 import { createGame, defOf, radiusOf, apFor } from './sim/state.js';
 import { planCost, actionCost } from './sim/orders.js';
 import { resolveRound, arcHits, losCut, inCover, clampAim, engagedWith } from './sim/resolve.js';
@@ -197,11 +197,11 @@ class Game {
     this.tl = new Timeline(pre, log);
     this.T = 0; this.playing = true; this.lastT = 0;
     this.shotList = [];
-    for (const e of this.tl.events) if (e.type === 'release' && (e.kind === 'volley' || e.kind === 'lob' || e.kind === 'storm')) {
+    for (const e of this.tl.events) if (e.type === 'release' && (e.kind === 'volley' || e.kind === 'lob' || e.kind === 'storm' || e.kind === 'pierce')) {
       const v = this.views.get(e.id); if (!v) continue;
       const lead = e.overwatch ? 2.5 : e.kind === 'storm' ? 7 : (LEAD[v.style] || 4), T0 = e.T - lead;
       const p = this.tl.pose(e.id, T0), h = this.tl.health(e.id, T0);
-      this.shotList.push({ key: e.id + ':' + e.T, T0, T1: e.T, from: v.muzzles(p.x, p.z, p.fx, p.fz, h.models), to: { x: e.ex, z: e.ez }, arc: e.kind === 'volley' ? 0.5 : 3.2 });
+      this.shotList.push({ key: e.id + ':' + e.T, T0, T1: e.T, from: v.muzzles(p.x, p.z, p.fx, p.fz, h.models), to: { x: e.ex, z: e.ez }, arc: e.kind === 'volley' || e.kind === 'pierce' ? 0.4 : 3.2 });
     }
     this.selected = null;
     if (this.knobs) for (const el of Object.values(this.knobs)) el.style.display = 'none';
@@ -275,7 +275,12 @@ class Game {
       const cut = losCut(this.state.terrain, leg.ox, leg.oz, leg.ox + leg.dx * leg.len, leg.oz + leg.dz * leg.len);
       L.add(lineShape(leg.ox, leg.oz, leg.dx, leg.dz, leg.len * cut, leg.w, COL.volley, a));
       if (cut < 1) L.add(lineShape(leg.ox + leg.dx * leg.len * cut, leg.oz + leg.dz * leg.len * cut, leg.dx, leg.dz, leg.len * (1 - cut), leg.w, 0x555555, a * 0.6));
-    } else if (leg.kind === 'lob' || leg.kind === 'blast' || leg.kind === 'storm' || leg.kind === 'rally') {
+    } else if (leg.kind === 'sweep' || leg.kind === 'wall') L.add(arcShape(leg.ox, leg.oz, leg.dx, leg.dz, leg.R, leg.ch, COL[leg.kind], a));
+    else if (leg.kind === 'pierce') L.add(lineShape(leg.ox, leg.oz, leg.dx, leg.dz, leg.len, leg.w, COL.pierce, a));
+    else if (leg.kind === 'leap' || leg.kind === 'step') {
+      L.add(ribbon([{ x: leg.ox, z: leg.oz }, { x: leg.cx, z: leg.cz }], sel ? 0.12 : 0.08, COL[leg.kind], sel ? 0.8 : 0.5, 0.35));
+      const r = ring(radiusOf(q) + 0.3, 0.1, COL[leg.kind], sel ? 0.9 : 0.5); r.position.x = leg.cx; r.position.z = leg.cz; L.add(r);
+    } else if (leg.kind === 'lob' || leg.kind === 'blast' || leg.kind === 'storm' || leg.kind === 'rally' || leg.kind === 'raise') {
       const col = COL[leg.kind];
       const d = disc(leg.R, col, a * 0.8); d.position.x = leg.cx; d.position.z = leg.cz; L.add(d);
       const r = ring(leg.R, 0.08, col, sel ? 0.9 : 0.5); r.position.x = leg.cx; r.position.z = leg.cz; L.add(r);
@@ -295,7 +300,7 @@ class Game {
       const sel = q.id === this.selected;
       const pr = this.planner.predict(q);
       for (const leg of pr.legs) this.drawLeg(L, q, leg, sel);
-      if (pr.legs.some(l => l.kind === 'move' || l.kind === 'charge')) {
+      if (pr.legs.some(l => l.kind === 'move' || l.kind === 'charge' || l.kind === 'leap' || l.kind === 'step')) {
         const end = ring(radiusOf(q), 0.08, 0xffffff, sel ? 0.9 : 0.5, 0.06);
         end.position.x = pr.x; end.position.z = pr.z; L.add(end);
       }
@@ -333,36 +338,39 @@ class Game {
   updateKnobs() {
     if (!this.knobs) {
       this.knobs = {};
-      for (const k of ['move', 'attack', 'skill']) { const el = document.createElement('div'); el.className = 'knob ' + k; $('labels').appendChild(el); this.knobs[k] = el; }
+      for (const k of ['move', 'attack', 'skill0', 'skill1', 'skill2']) { const el = document.createElement('div'); el.className = 'knob ' + (k.startsWith('skill') ? 'skill' : k); $('labels').appendChild(el); this.knobs[k] = el; }
     }
     const q = this.selectedSquad();
     const show = this.phase === 'planning' && q && q.owner === this.me;
     if (!show) { for (const el of Object.values(this.knobs)) el.style.display = 'none'; this.knobPos = null; return; }
-    const def = defOf(q), sk = def.skill;
+    const def = defOf(q), sks = skillsOf(def);
     const atkIc = def.attack.kind === 'swing' ? 'attack' : 'shoot';
-    const content = {
-      move: icon('move', 20),
-      attack: icon(this.mode === 'overwatch' ? 'overwatch' : atkIc, 20),
-      skill: sk ? (this.planner.skillReady(q) ? icon(SKILL_IC[sk.kind], 20) : `<b>${q.cd > 0 ? q.cd : '✓'}</b>`) : '',
-    };
-    // place knobs in screen space around the squad's planned end point: always 64px apart
+    const content = { move: icon('move', 20), attack: icon(this.mode === 'overwatch' ? 'overwatch' : atkIc, 20) };
+    sks.forEach((sk, i) => { const cd = cdOf(q, sk.kind); content['skill' + i] = this.planner.skillReady(q, sk.kind) ? icon(SKILL_IC[sk.kind], 20) : `<b>${cd > 0 ? cd : '✓'}</b>`; });
+    // place knobs in screen space around the squad's planned end point: always ~64px apart
     const pr = this.planner.predict(q);
     const c = this.view.project(pr.x, 0.4, pr.z), f = this.view.project(pr.x + pr.fx, 0.4, pr.z + pr.fz);
     let ux = f.x - c.x, uy = f.y - c.y; const ul = Math.hypot(ux, uy) || 1; ux /= ul; uy /= ul;
-    let px = uy, py = -ux; if (py > 0) { px = -px; py = -py; }       // side knob on the upper side
+    let px = uy, py = -ux; if (py < 0) { px = -px; py = -py; }       // skill knobs fan out below the squad (its nameplate is above)
     const gap = innerWidth < 720 ? 58 : 64;
-    const pos = { move: { x: c.x, y: c.y }, attack: { x: c.x + ux * gap, y: c.y + uy * gap }, skill: { x: c.x + px * gap, y: c.y + py * gap } };
+    const pos = { move: { x: c.x, y: c.y }, attack: { x: c.x + ux * gap, y: c.y + uy * gap } };
+    const fan = sks.length === 1 ? [0] : sks.length === 2 ? [-0.42, 0.42] : [-0.8, 0, 0.8];
+    sks.forEach((sk, i) => {
+      const a = fan[i], ca = Math.cos(a), sa = Math.sin(a);
+      const dx = px * ca - py * sa, dy = px * sa + py * ca;
+      pos['skill' + i] = { x: c.x + dx * gap * (sks.length > 1 ? 1.05 : 1), y: c.y + dy * gap * (sks.length > 1 ? 1.05 : 1) };
+    });
     this.knobPos = {};
     for (const [k, el] of Object.entries(this.knobs)) {
-      if (k === 'skill' && !sk) { el.style.display = 'none'; continue; }
-      if (c.behind) { el.style.display = 'none'; continue; }
+      const si = k.startsWith('skill') ? +k.slice(5) : -1, sk = si >= 0 ? sks[si] : null;
+      if ((si >= 0 && !sk) || c.behind) { el.style.display = 'none'; continue; }
       const p = pos[k];
       this.knobPos[k] = p;
-      el.style.display = (this.drag && this.drag.kind !== k && !(k === 'attack' && this.drag.kind === 'overwatch')) ? 'none' : '';
+      const active = this.drag ? (this.drag.knobKey === k || (k === 'attack' && this.drag.kind === 'overwatch') || (!this.drag.knobKey && this.drag.kind === k)) : true;
+      el.style.display = active ? '' : 'none';
       if (el._c !== content[k]) { el.innerHTML = content[k]; el._c = content[k]; }
-      el.classList.toggle('off', k === 'skill' && !this.planner.skillReady(q));
-      if (k === 'skill') el.dataset.cat = sk.cat;
-      el.classList.toggle('on', this.mode === k || (k === 'attack' && this.mode === 'overwatch'));
+      if (sk) { el.classList.toggle('off', !this.planner.skillReady(q, sk.kind)); el.dataset.cat = sk.cat; el.title = sk.name; }
+      el.classList.toggle('on', sk ? (this.mode === 'skill' && this.modeSkill === sk.kind) : (this.mode === k || (k === 'attack' && this.mode === 'overwatch')));
       el.style.transform = `translate(${p.x}px, ${p.y}px) translate(-50%, -50%)`;
     }
   }
@@ -424,10 +432,10 @@ class Game {
   }
 
   // place an order of the current mode at a table point
-  orderAt(kind, q, x, z) {
+  orderAt(kind, q, x, z, skKind = null) {
     if (kind === 'move') return this.planner.addMove(q.id, x, z);
     if (kind === 'attack') return this.planner.addAttack(q.id, x, z);
-    if (kind === 'skill') return this.planner.addSkill(q.id, x, z);
+    if (kind === 'skill') return this.planner.addSkill(q.id, skKind || this.modeSkill, x, z);
     if (kind === 'overwatch') { const ok = this.planner.setOverwatch(q.id, x, z); this.mode = 'move'; return ok; }
     return false;
   }
@@ -449,8 +457,9 @@ class Game {
     if (!q || q.owner !== this.me) return false;
     const knob = this.knobAt(cx, cy);
     if (knob) {
-      let kind = knob === 'attack' && this.mode === 'overwatch' ? 'overwatch' : knob;
-      this.drag = { kind, id: q.id, knob: true };
+      if (knob.startsWith('skill')) { this.drag = { kind: 'skill', sk: skillsOf(defOf(q))[+knob.slice(5)].kind, id: q.id, knob: true, knobKey: knob }; return true; }
+      const kind = knob === 'attack' && this.mode === 'overwatch' ? 'overwatch' : knob;
+      this.drag = { kind, id: q.id, knob: true, knobKey: knob };
       return true;
     }
     const p = this.view.pick(cx, cy); if (!p) return false;
@@ -458,12 +467,12 @@ class Game {
     const near = Math.hypot(p.x - pr.x, p.z - pr.z) < radiusOf(q) + Math.max(1, 40 / Math.max(1, this.view.pxPerInch(p.x, p.z)));
     const nearSquad = Math.hypot(p.x - q.x, p.z - q.z) < radiusOf(q) + 0.6;
     if (!near && !nearSquad) return false;
-    this.drag = { kind: this.mode, id: q.id };
+    this.drag = { kind: this.mode, sk: this.modeSkill, id: q.id };
     return true;
   }
 
   // live preview while dragging; returns tape label html
-  preview(kind, q, p) {
+  preview(kind, q, p, skKind = null) {
     const V = this.view; V.clear('ghost');
     this.previewEnd = null;
     const L = V.layers.ghost;
@@ -487,7 +496,24 @@ class Game {
       return { html: `Overwatch<small>fires once at the first enemy that moves in the cone · ${RULES.overwatchCost} AP</small>` };
     }
     if (kind === 'skill') {
-      const sk = def.skill;
+      const sk = skillOf(def, skKind || this.modeSkill);
+      if (!sk) return { html: '' };
+      if (sk.kind === 'leap' || sk.kind === 'step') {
+        const c = clampAim(pr.x, pr.z, p.x, p.z, sk.range), col = COL[sk.kind];
+        const rr = ring(sk.range, 0.05, col, 0.4, 0.05, 72); rr.position.x = pr.x; rr.position.z = pr.z; L.add(rr);
+        L.add(ribbon([{ x: pr.x, z: pr.z }, c], 0.1, col, 0.7, 0.35));
+        const d = ring(radiusOf(q) + 0.3, 0.12, col, 0.95); d.position.x = c.x; d.position.z = c.z; L.add(d);
+        this.previewEnd = { x: c.x, z: c.z, fx: ux, fz: uz };
+        return { html: `${sk.name}<small>${sk.kind === 'leap' ? 'jumps over walls and squads; shoves enemies at the landing' : 'reappears there; no parting blows'}</small>` };
+      }
+      if (sk.kind === 'pierce') {
+        const bx = pr.x + ux * sk.range, bz = pr.z + uz * sk.range, cut = losCut(this.state.terrain, pr.x, pr.z, bx, bz);
+        L.add(lineShape(pr.x, pr.z, ux, uz, sk.range * cut, sk.width, COL.pierce, 0.55));
+        if (cut < 1) L.add(lineShape(pr.x + ux * sk.range * cut, pr.z + uz * sk.range * cut, ux, uz, sk.range * (1 - cut), sk.width, 0x444444, 0.45));
+        let n = 0; for (const e of enemies) { const t = segCircle(pr.x, pr.z, bx, bz, e.x, e.z, radiusOf(e) + sk.width / 2); if (t >= 0 && t < cut) { n++; mark(e); } }
+        return { html: `Piercing Bolt ${sk.dmg * q.models}<small>${n ? `hits ${n} on the line if they stay` : cut < 1 ? 'blocked by a wall' : 'nobody on the line now'}</small>`, bad: !n && cut < 1 };
+      }
+      if (SELF_SKILLS.includes(sk.kind)) return { html: `${sk.name}<small>tap the knob to use it</small>` };
       if (sk.kind === 'charge') {
         const ln = this.planner.chargeLane(q, pr.x, pr.z, p.x, p.z);
         this.previewEnd = { x: ln.x, z: ln.z, fx: ln.dx, fz: ln.dz };
@@ -539,9 +565,9 @@ class Game {
     const d = this.drag; if (!d) return;
     const p = this.view.pick(cx, cy); if (!p) return;
     const q = this.selectedSquad();
-    if (d.knob) { const kp = this.knobPos?.[d.kind === 'overwatch' ? 'attack' : d.kind]; if (kp && Math.hypot(kp.x - cx, kp.y - cy) < 14 && !d.pt) return; }
+    if (d.knob) { const kp = this.knobPos?.[d.knobKey]; if (kp && Math.hypot(kp.x - cx, kp.y - cy) < 14 && !d.pt) return; }
     d.pt = p;
-    const r = this.preview(d.kind, q, p);
+    const r = this.preview(d.kind, q, p, d.sk);
     const tape = $('tape');
     tape.innerHTML = r.html;
     tape.classList.toggle('short', !!r.bad);
@@ -558,15 +584,15 @@ class Game {
     const q = this.selectedSquad();
     if (!moved || !d.pt) {
       if (d.knob && q) {
-        // tapping a knob: pick that order type (rally casts at once)
-        const sk = defOf(q).skill;
-        if (d.kind === 'skill' && sk && sk.kind === 'rally') { if (this.planner.addSkill(q.id, q.x, q.z)) this.hint(2); }
-        else { this.mode = d.kind; this.changed(); this.toast(d.kind === 'move' ? 'Move: drag the green knob, or tap the table' : d.kind === 'skill' ? `${sk.name}: drag the skill knob to aim, or tap a spot` : 'Attack: drag the red knob to aim, or tap a spot'); }
+        // tapping a knob: pick that order type (self skills like Rally cast at once)
+        const sk = d.kind === 'skill' ? skillOf(defOf(q), d.sk) : null;
+        if (sk && SELF_SKILLS.includes(sk.kind)) { if (this.planner.addSkill(q.id, sk.kind, q.x, q.z)) this.hint(2); }
+        else { this.mode = d.kind; this.modeSkill = d.sk; this.changed(); this.toast(d.kind === 'move' ? 'Move: drag the green knob, or tap the table' : sk ? `${sk.name}: drag its knob to aim, or tap a spot` : 'Attack: drag the red knob to aim, or tap a spot'); }
         return;
       }
       this.onTap(cx, cy); return;
     }
-    if (this.orderAt(d.kind, q, d.pt.x, d.pt.z)) this.hint(2);
+    if (this.orderAt(d.kind, q, d.pt.x, d.pt.z, d.sk)) this.hint(2);
   }
 
   onKey(e) {
@@ -608,13 +634,13 @@ class Game {
     const dock = $('dock'), info = $('info');
     const q = this.selectedSquad();
     if (this.phase !== 'planning' || !q) { dock.classList.add('hidden'); info.classList.add('hidden'); return; }
-    const def = defOf(q), at = def.attack, sk = def.skill;
+    const def = defOf(q), at = def.attack, sks = skillsOf(def);
     const atkName = { swing: 'Swing', volley: 'Volley', lob: 'Lob' }[at.kind];
     if (q.owner !== this.me) {
       dock.classList.add('hidden');
       info.classList.remove('hidden');
       const atkTxt = at.kind === 'swing' ? `Swings for ${at.dmg * q.models} (${at.dmg} per model), reach ${at.reach}″` : at.kind === 'lob' ? `Lobs arrows over walls for ${at.dmg * q.models}, range ${at.range}″` : `Volleys for ${at.dmg * q.models}, range ${at.range}″ (needs a clear line)`;
-      const skTxt = sk ? ` · ${sk.name}${q.cd > 0 ? ` recharging (${q.cd})` : ' ready'}` : '';
+      const skTxt = sks.map(k => ` · ${k.name}${cdOf(q, k.kind) > 0 ? ` recharging (${cdOf(q, k.kind)})` : ' ready'}`).join('');
       info.innerHTML = `<b>Enemy ${esc(def.name)}</b> · tier ${def.tier} · ${q.models}/${def.models} models · ${q.hp} HP<br>
         <span style="color:var(--muted)">${atkTxt}${skTxt} · moves ${(def.tier * RULES.moveFactor * 100).toFixed(1)}″ per round.${def.ghost ? ' Ignores engagement.' : ''} The red ring shows how far it can strike this round.</span>`;
       return;
@@ -628,7 +654,8 @@ class Game {
     const ctl = plan ? 'Your orders' : (q.role === 'hero' ? 'Hero: free to command' : 'Giving an order uses 1 command point');
     // every button is coloured by category: green = move/speed, red = attack, blue = defence/buffs
     const b = (act, ic, label, sub, on = false, dis = false, cat = 'move') => `<button class="act cat-${cat}${on ? ' on' : ''}" data-act="${act}" ${dis ? 'disabled' : ''}>${icon(ic, 20)}${label}<small>${sub}</small></button>`;
-    const skBtn = sk ? b('mode:skill', SKILL_IC[sk.kind], sk.name, q.cd > 0 ? `recharging ${q.cd}` : this.planner.skillUsed(q.id) ? 'used' : `${sk.ap} AP`, this.mode === 'skill', !this.planner.skillReady(q) || left < sk.ap, sk.cat) : '';
+    const skBtn = sks.map(sk => { const cd = cdOf(q, sk.kind); return b('skill:' + sk.kind, SKILL_IC[sk.kind], sk.name, cd > 0 ? `recharging ${cd}` : this.planner.skillUsed(q.id, sk.kind) ? 'used' : `${sk.ap} AP`, this.mode === 'skill' && this.modeSkill === sk.kind, !this.planner.skillReady(q, sk.kind) || left < sk.ap, sk.cat); }).join('');
+    const msk = this.mode === 'skill' ? skillOf(def, this.modeSkill) : null;
     const melee = at.kind === 'swing';
     const prepBtn = melee
       ? (def.parry ? b('parry', 'parry', 'Parry', plan?.parry ? 'ready' : `${RULES.parryCost} AP`, !!plan?.parry, !plan?.parry && left < RULES.parryCost, 'defense') : '')
@@ -636,7 +663,7 @@ class Game {
     const hints = {
       move: '<b>Drag the green knob</b> to draw a path (or tap the table). The ring shows how far it can still go.' + (engaged ? ' <b>Engaged:</b> stepping away costs 30 AP and gives the enemy a free hit.' : ''),
       attack: `<b>Drag the red knob</b> to aim the ${atkName.toLowerCase()}. It hits whatever is in the shape when it lands, so aim where enemies <b>will be</b>.` + (at.kind === 'volley' ? ' Walls block volleys; forests give cover.' : at.kind === 'lob' ? ' Lobs arc over walls.' : ''),
-      skill: sk ? (sk.kind === 'charge' ? '<b>Drag the green skill knob</b> to aim the charge: the squad rushes down the lane and slams into the first enemy squad.' : sk.kind === 'blast' ? '<b>Drag the red skill knob</b> to place the Bone Blast circle (within 9″).' : sk.kind === 'storm' ? '<b>Drag the red skill knob</b> to place the Arrow Storm: arrows arc over walls onto the circle (within 15″).' : '<b>Tap the blue skill knob</b> to Rally: allies in the circle get +1 defend and hit 25% harder this round.') + ` Then it recharges for ${sk.cd} round${sk.cd > 1 ? 's' : ''}.` : '',
+      skill: msk ? `<b>${esc(msk.name)}:</b> ${SKILL_HELP[msk.kind]} Then it recharges for ${msk.cd} round${msk.cd > 1 ? 's' : ''}.` : '',
       overwatch: '<b>Drag the red knob</b> to point the overwatch cone. The squad fires once at the first enemy that moves inside it, at any speed tier.',
     };
     dock.innerHTML = `<div class="dk-head"><div><div class="nm">${esc(def.name)}${engaged ? ' <span class="eng">Engaged</span>' : ''}</div><div class="sub">Tier ${def.tier + (plan?.upgrades || 0)} · ${q.models}/${def.models} models · ${q.hp} HP · ${ctl}</div></div>
@@ -660,10 +687,11 @@ class Game {
   dockAction(act, q) {
     const [k, arg] = act.split(':');
     if (k === 'close') this.select(null);
-    else if (k === 'mode') {
-      const sk = defOf(q).skill;
-      if (arg === 'skill' && sk && sk.kind === 'rally') { if (this.planner.addSkill(q.id, q.x, q.z)) this.hint(2); }
-      else this.mode = this.mode === arg && arg !== 'move' ? 'move' : arg;
+    else if (k === 'mode') this.mode = this.mode === arg && arg !== 'move' ? 'move' : arg;
+    else if (k === 'skill') {
+      if (SELF_SKILLS.includes(arg)) { if (this.planner.addSkill(q.id, arg, q.x, q.z)) this.hint(2); }
+      else if (this.mode === 'skill' && this.modeSkill === arg) this.mode = 'move';
+      else { this.mode = 'skill'; this.modeSkill = arg; }
     }
     else if (k === 'parry') { const p = this.planner.plan(q.id); if (p?.parry) { p.parry = false; p.hist.splice(p.hist.lastIndexOf('parry'), 1); if (!p.hist.length) this.planner.clear(q.id); } else this.planner.prepaid(q.id, 'parry'); }
     else if (k === 'defend') this.planner.prepaid(q.id, 'defends');
@@ -715,7 +743,8 @@ class Game {
       const parry = planning ? !!plan?.parry : !!d.parryShown;
       const watch = planning ? !!plan?.overwatch : !!d.watchShown;
       const engaged = planning && engagedWith(d, this.state.squads).length > 0;
-      const cd = planning ? (d.cd | 0) : 0;
+      const cds = planning ? skillsOf(def).filter(k => cdOf(d, k.kind) > 0).map(k => [k, cdOf(d, k.kind)]) : [];
+      const cd = cds.map(([k, n]) => k.kind + n).join();
       const key = `${tier}|${d.models}|${d.hp}|${sel}|${!!plan}|${d.dying !== undefined}|${defs}|${ups}|${stance}|${zoomedOut}|${parry}|${watch}|${engaged}|${cd}`;
       if (el.dataset.key !== key) {
         el.dataset.key = key;
@@ -728,7 +757,7 @@ class Game {
         if (parry) st.push(`<span class="st" title="Parry ready">${icon('parry', 12)}</span>`);
         if (watch) st.push(`<span class="st" title="Overwatch">${icon('overwatch', 12)}</span>`);
         if (engaged) st.push(`<span class="st" title="Engaged in melee">${icon('engaged', 12)}</span>`);
-        if (cd > 0 && def.skill) st.push(`<span class="st" title="${def.skill.name} recharging">${icon('cooldown', 12)}${cd}</span>`);
+        for (const [k, n] of cds) st.push(`<span class="st cdc" style="--c:${CAT_HEX[k.cat]}" title="${esc(k.name)} recharging">${icon(SKILL_IC[k.kind], 11)}${n}</span>`);
         if (plan) st.push(`<span class="st">${icon('control', 12)}</span>`);
         else if (stance) st.push(`<span class="st">${icon(stance, 12)}</span>`);
         el.innerHTML = `<div class="sl-h"><span class="tr">${tier}</span><span class="nm">${esc(def.name)}</span>${icon(def.role, 14)}</div>
@@ -780,13 +809,16 @@ class Game {
     const name = id => { const q = tl.pre.squads.find(x => x.id === id); return q ? `<b class="t${q.owner}">${q.owner === this.me ? 'Your' : 'Enemy'} ${esc(defOf(q).name)}</b>` : '?'; };
     const lines = [];
     for (const e of tl.events) {
-      const verb = { swing: 'cuts into', volley: 'shoots', lob: 'rains arrows on', storm: 'brings an Arrow Storm down on', charge: 'charges into', blast: 'blasts', parting: 'lands a parting blow on', riposte: 'ripostes' };
-      if (e.type === 'hit') lines.push({ T: e.T, html: `${name(e.src)} ${verb[e.kind] || 'hits'} ${name(e.dst)} <span class="dmg">−${e.dmg}</span>${e.cover ? ' (cover)' : ''}${e.defended ? ' (defended)' : ''}${e.lost ? ` · ${e.lost} model${e.lost > 1 ? 's' : ''} fall` : ''}` });
+      const verb = { swing: 'cuts into', volley: 'shoots', lob: 'rains arrows on', storm: 'brings an Arrow Storm down on', sweep: 'sweeps through', pierce: 'drives a piercing bolt through', charge: 'charges into', blast: 'blasts', parting: 'lands a parting blow on', riposte: 'ripostes' };
+      if (e.type === 'hit') lines.push({ T: e.T, html: `${name(e.src)} ${verb[e.kind] || 'hits'} ${name(e.dst)} <span class="dmg">−${e.dmg}</span>${e.walled ? ' (shield wall)' : ''}${e.cover ? ' (cover)' : ''}${e.defended ? ' (defended)' : ''}${e.lost ? ` · ${e.lost} model${e.lost > 1 ? 's' : ''} fall` : ''}` });
       else if (e.type === 'down') lines.push({ T: e.T, html: `${name(e.id)} is destroyed` });
       else if (e.type === 'parry') lines.push({ T: e.T, html: `${name(e.id)} parries ${name(e.src)}` });
       else if (e.type === 'disengage') lines.push({ T: e.T, html: `${name(e.id)} disengages from the fight` });
       else if (e.type === 'watchEnd') lines.push({ T: e.T, html: `${name(e.id)}: overwatch fires!` });
       else if (e.type === 'buff') lines.push({ T: e.T, html: `${name(e.id)} rallies ${e.ids.length} squad${e.ids.length > 1 ? 's' : ''}` });
+      else if (e.type === 'raise') lines.push({ T: e.T, html: `${name(e.id)} raises the dead${e.ids.length ? `: ${e.ids.map(name).join(', ')}` : ' (nobody to raise)'}` });
+      else if (e.type === 'land') lines.push({ T: e.T, html: `${name(e.id)} ${e.kind === 'leap' ? 'leaps' : 'steps through the shadows'}${e.pushed.length ? `, shoving ${e.pushed.map(name).join(', ')}` : ''}` });
+      else if (e.type === 'wallOn') lines.push({ T: e.T, html: `${name(e.id)} braces a shield wall` });
       else if (e.type === 'release' && !e.hit.length) lines.push({ T: e.T, html: `${name(e.id)}: ${e.kind} ${e.blocked ? 'blocked' : 'misses (nobody in the area)'}` });
     }
     this.logLines = lines;
@@ -808,7 +840,8 @@ class Game {
           const q = at(e.dst);
           if (q) {
             this.texts.add(q.x, q.z, `−${e.dmg}`, 'dmg');
-            const tag = { charge: 'Charge!', parting: 'Parting blow', riposte: 'Riposte', blast: 'Bone Blast', storm: 'Arrow Storm' }[e.kind];
+            const tag = { charge: 'Charge!', parting: 'Parting blow', riposte: 'Riposte', blast: 'Bone Blast', storm: 'Arrow Storm', sweep: 'Sweep', pierce: 'Piercing Bolt' }[e.kind];
+            if (e.walled) this.texts.add(q.x, q.z, 'Shields!', 'def', 2.1);
             if (tag) this.texts.add(q.x, q.z, tag, 'tag', 2.9);
             if (e.cover) this.texts.add(q.x, q.z, 'Cover', 'def', 1.9);
             if (e.defended) this.texts.add(q.x, q.z, 'Defended', 'def', 1.6);
@@ -819,7 +852,11 @@ class Game {
         else if (e.type === 'disengage') { const q = at(e.id); if (q) this.texts.add(q.x, q.z, 'Disengage', 'def', 2.4); }
         else if (e.type === 'watchEnd') { const q = at(e.id); if (q) this.texts.add(q.x, q.z, 'Overwatch!', 'tag', 2.6); }
         else if (e.type === 'buff') { for (const id of e.ids) { const q = at(id); if (q) { this.texts.add(q.x, q.z, 'Rallied', 'ok', 2.4); this.pulse(q.x, q.z, radiusOf(q) + 0.4, COL.rally); } } }
-        else if (e.type === 'release' && (e.kind === 'blast' || e.kind === 'storm')) this.pulse(e.ex, e.ez, defOf(this.tl.pre.squads.find(x => x.id === e.id)).skill.radius, COL[e.kind], true);
+        else if (e.type === 'release' && (e.kind === 'blast' || e.kind === 'storm')) this.pulse(e.ex, e.ez, skillOf(defOf(this.tl.pre.squads.find(x => x.id === e.id)), e.kind).radius, COL[e.kind], true);
+        else if (e.type === 'release' && e.kind === 'sweep') { const q = at(e.id); if (q) this.pulse(q.x, q.z, radiusOf(q) + 1.6, COL.sweep); }
+        else if (e.type === 'land') { const q = at(e.id); if (q) { this.pulse(e.ex, e.ez, radiusOf(q) + 0.6, COL[e.kind]); this.texts.add(e.ex, e.ez, e.kind === 'leap' ? 'Heroic Leap!' : 'Shadow Step', 'tag', 2.6); } for (const id of e.pushed) { const o = at(id); if (o) this.texts.add(o.x, o.z, 'Shoved', 'def', 2.2); } }
+        else if (e.type === 'raise') { for (const id of e.ids) { const q = at(id); if (q) { this.texts.add(q.x, q.z, '+1 model', 'ok', 2.4); this.pulse(q.x, q.z, radiusOf(q) + 0.4, COL.raise); } } }
+        else if (e.type === 'wallOn') { const q = at(e.id); if (q) this.texts.add(q.x, q.z, defOf(q).skills[0].name, 'ok', 2.4); }
         else if (e.type === 'release' && e.blocked) { const q = at(e.id); if (q) this.texts.add(e.ex, e.ez, 'Blocked', 'def', 1.2); }
       }
     }
@@ -851,17 +888,18 @@ class Game {
   // overwatch cones that follow the watcher until it fires
   updateWatches(list, T) {
     this.watchMeshes = this.watchMeshes || new Map();
-    const active = this.tl.activeWatches(T);
+    const active = this.tl.activeWatches(T).map(w => ({ ...w, col: COL.watch, op: 0.13, key: 'w' + w.id }))
+      .concat(this.tl.activeWalls(T).map(w => ({ ...w, col: COL.wall, op: 0.45, key: 's' + w.id })));
     const L = this.view.layers.fx;
-    for (const [id, m] of this.watchMeshes) if (!active.some(w => w.id === id)) { L.remove(m); m.geometry?.dispose(); m.material?.dispose(); this.watchMeshes.delete(id); }
+    for (const [k, m] of this.watchMeshes) if (!active.some(w => w.key === k)) { L.remove(m); m.geometry?.dispose(); m.material?.dispose(); this.watchMeshes.delete(k); }
     for (const w of active) {
       const d = list.find(x => x.id === w.id); if (!d || d.dying !== undefined) continue;
       const key = `${d.x.toFixed(2)},${d.z.toFixed(2)},${d.fx.toFixed(2)},${d.fz.toFixed(2)}`;
-      const old = this.watchMeshes.get(w.id);
+      const old = this.watchMeshes.get(w.key);
       if (old && old.userData.key === key) continue;
       if (old) { L.remove(old); old.geometry.dispose(); old.material.dispose(); }
-      const m = arcShape(d.x, d.z, d.fx, d.fz, w.R, w.ch, COL.watch, 0.13); m.userData.key = key;
-      L.add(m); this.watchMeshes.set(w.id, m);
+      const m = arcShape(d.x, d.z, d.fx, d.fz, w.R, w.ch, w.col, w.op, w.inner || 0); m.userData.key = key;
+      L.add(m); this.watchMeshes.set(w.key, m);
     }
   }
   clearWatches() { if (!this.watchMeshes) return; for (const m of this.watchMeshes.values()) { this.view.layers.fx.remove(m); m.geometry.dispose(); m.material.dispose(); } this.watchMeshes.clear(); }
@@ -913,8 +951,21 @@ class Game {
   }
 }
 
-const ACT_COL = { swing: 'var(--swing)', volley: 'var(--volley)', lob: 'var(--volley)', charge: '#34c759', blast: '#ff3b30', storm: '#ff3b30', rally: '#3fa9ff', wait: '#8a857c' };
-const SKILL_IC = { charge: 'dash', blast: 'frag', storm: 'shoot', rally: 'rally' };
+const CAT_HEX = { move: '#34c759', attack: '#ff3b30', defense: '#3fa9ff' };
+const ACT_COL = { swing: 'var(--swing)', volley: 'var(--volley)', lob: 'var(--volley)', charge: CAT_HEX.move, leap: CAT_HEX.move, step: CAT_HEX.move, blast: CAT_HEX.attack, storm: CAT_HEX.attack, sweep: CAT_HEX.attack, pierce: CAT_HEX.attack, rally: CAT_HEX.defense, raise: CAT_HEX.defense, wall: CAT_HEX.defense, wait: '#8a857c' };
+const SKILL_IC = { charge: 'dash', leap: 'shove', step: 'disrupt', blast: 'frag', storm: 'shoot', sweep: 'sweep', pierce: 'range', rally: 'rally', raise: 'heal', wall: 'fortify' };
+const SKILL_HELP = {
+  charge: 'drag its knob to aim the lane: the squad rushes down it and slams into the first enemy squad.',
+  leap: 'drag its knob to a spot up to 7″ away: the hero jumps over walls and squads and shoves enemies at the landing.',
+  step: 'drag its knob to a spot up to 7″ away: the hero vanishes and reappears there, with no parting blows.',
+  blast: 'drag its knob to place the circle (within 9″).',
+  storm: 'drag its knob to place the circle (within 15″): arrows arc over walls.',
+  sweep: 'tap its knob: the hero swings all the way round, hitting every enemy close by.',
+  pierce: 'drag its knob to aim the bolt: it hits every squad on the line until a wall.',
+  rally: 'tap its knob: allies in the circle get +1 defend and hit 25% harder this round.',
+  raise: 'tap its knob: wounded squads in the circle each get one fallen model back.',
+  wall: 'tap its knob: from the start of the round, hits from the front deal only 30%.',
+};
 // AP bar blocks for a squad's plan
 function apBlocks(q, plan, mini) {
   if (!plan) return mini ? '' : `<div class="free" style="width:100%">No orders: follows its stance</div>`;

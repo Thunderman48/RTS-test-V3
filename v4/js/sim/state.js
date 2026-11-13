@@ -30,7 +30,7 @@ export function addSquad(s, owner, role, x, z) {
     fx: owner === 0 ? 1 : -1, fz: 0,   // facing (unit vector)
     models: def.models, hp: def.models * def.hpPer,
     stance: 'guard',
-    cd: 0,                             // skill cooldown (rounds)
+    cd: {},                            // skill cooldowns: kind -> rounds left
   };
   s.squads.push(q);
   return q;

@@ -1,5 +1,5 @@
 // Order costs and validation (shared by the planner UI, the AI and the resolver).
-import { RULES, isMelee, isShooter } from '../data/units.js';
+import { RULES, isMelee, isShooter, skillOf, cdOf, SKILL_KINDS as SK } from '../data/units.js';
 import { defOf, emptyPlan, apFor } from './state.js';
 
 export function upgradeCost(n) { let c = 0; for (let i = 0; i < n; i++) c += RULES.tierCost[i]; return c; }
@@ -9,11 +9,10 @@ export function actionCost(q, a) {
   switch (a.kind) {
     case 'move': case 'wait': return a.ap;
     case 'swing': case 'volley': case 'lob': return def.attack.ap;
-    case 'charge': case 'blast': case 'rally': case 'storm': return def.skill ? def.skill.ap : 0;
-    default: return 0;
+    default: { const sk = skillOf(def, a.kind); return sk ? sk.ap : 0; }
   }
 }
-export const SKILL_KINDS = ['charge', 'blast', 'rally', 'storm'];
+export const SKILL_KINDS = SK;
 export function prepaidCost(plan) { return upgradeCost(plan.upgrades || 0) + (plan.defends || 0) * RULES.defendCost + (plan.parry ? RULES.parryCost : 0) + (plan.overwatch ? RULES.overwatchCost : 0); }
 export function planCost(q, plan) { return prepaidCost(plan) + plan.actions.reduce((n, a) => n + actionCost(q, a), 0); }
 
@@ -29,7 +28,7 @@ export function sanitizePlan(q, plan) {
   let used = prepaidCost(p);
   const budget = apFor(q);
   if (used > budget) return emptyPlan();
-  let skillUsed = false;
+  const used1 = new Set();          // each skill at most once per round
   for (const a0 of plan.actions || []) {
     let a;
     if (a0.kind === 'move') {
@@ -38,9 +37,9 @@ export function sanitizePlan(q, plan) {
       a = { kind: 'move', pts, ap: Math.max(1, Math.round(num(a0.ap))) };
     } else if (a0.kind === 'wait') a = { kind: 'wait', ap: Math.max(1, Math.round(num(a0.ap))) };
     else if (a0.kind === def.attack.kind) a = { kind: a0.kind, x: num(a0.x), z: num(a0.z) };
-    else if (def.skill && a0.kind === def.skill.kind) {
-      if (skillUsed || (q.cd | 0) > 0) continue;
-      skillUsed = true;
+    else if (skillOf(def, a0.kind)) {
+      if (used1.has(a0.kind) || cdOf(q, a0.kind) > 0) continue;
+      used1.add(a0.kind);
       a = { kind: a0.kind, x: num(a0.x), z: num(a0.z) };
     } else continue;
     const c = actionCost(q, a);

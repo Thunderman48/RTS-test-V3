@@ -1,5 +1,5 @@
 // Draft orders for this round + predictions for drawing them.
-import { RULES, isMelee, isShooter } from '../data/units.js';
+import { RULES, isMelee, isShooter, skillOf, skillsOf, cdOf } from '../data/units.js';
 import { emptyOrders, emptyPlan, defOf, radiusOf, apFor } from '../sim/state.js';
 import { planCost, actionCost, cpUsage, SKILL_KINDS } from '../sim/orders.js';
 import { clampAim, engagedWith } from '../sim/resolve.js';
@@ -14,8 +14,8 @@ export class Planner {
   plan(id) { return this.draft.squads[id] || null; }
   cp() { return cpUsage(this.s, this.g.me, this.draft); }
   apLeft(q) { const p = this.plan(q.id); return apFor(q) - (p ? planCost(q, p) : 0); }
-  skillUsed(id) { const p = this.plan(id); return !!p && p.actions.some(a => SKILL_KINDS.includes(a.kind)); }
-  skillReady(q) { const sk = defOf(q).skill; return !!sk && (q.cd | 0) === 0 && !this.skillUsed(q.id); }
+  skillUsed(id, kind) { const p = this.plan(id); return !!p && p.actions.some(a => a.kind === kind); }
+  skillReady(q, kind) { return !!skillOf(defOf(q), kind) && cdOf(q, kind) === 0 && !this.skillUsed(q.id, kind); }
   enemies(q) { return this.s.squads.filter(e => e.owner !== q.owner && e.hp > 0); }
 
   // Take control (1 CP, hero free). Returns the plan or null.
@@ -33,7 +33,7 @@ export class Planner {
 
   // the charge lane from (ox,oz) toward (x,z): where it stops and who it hits (enemies where they stand now)
   chargeLane(q, ox, oz, x, z) {
-    const sk = defOf(q).skill, d = norm(x - ox, z - oz);
+    const sk = skillOf(defOf(q), 'charge'), d = norm(x - ox, z - oz);
     const dx = d.l > 0.01 ? d.x : q.fx, dz = d.l > 0.01 ? d.z : q.fz;
     const ex = ox + dx * sk.len, ez = oz + dz * sk.len;
     let hit = null, ht = 2;
@@ -65,13 +65,28 @@ export class Planner {
         if (d.l > 0.01) { fx = d.x; fz = d.z; }
         legs.push({ kind: a.kind, ox: x, oz: z, dx: fx, dz: fz, t0: t, t1: t + c, R: radiusOf(q) + (def.attack.reach || 0), ch: def.attack.cosHalf, len: def.attack.range, w: def.attack.width });
       } else if (a.kind === 'lob' || a.kind === 'blast' || a.kind === 'storm') {
-        const range = a.kind === 'lob' ? def.attack.range : def.skill.range;
+        const sk = skillOf(def, a.kind);
+        const range = a.kind === 'lob' ? def.attack.range : sk.range;
         const c2 = clampAim(x, z, a.x, a.z, range);
         const d = norm(c2.x - x, c2.z - z);
         if (d.l > 0.01) { fx = d.x; fz = d.z; }
-        legs.push({ kind: a.kind, ox: x, oz: z, cx: c2.x, cz: c2.z, R: a.kind === 'lob' ? def.attack.radius : def.skill.radius, range, t0: t, t1: t + c });
-      } else if (a.kind === 'rally') {
-        legs.push({ kind: 'rally', cx: x, cz: z, R: def.skill.radius, t0: t, t1: t + c });
+        legs.push({ kind: a.kind, ox: x, oz: z, cx: c2.x, cz: c2.z, R: a.kind === 'lob' ? def.attack.radius : sk.radius, range, t0: t, t1: t + c });
+      } else if (a.kind === 'rally' || a.kind === 'raise') {
+        legs.push({ kind: a.kind, cx: x, cz: z, R: skillOf(def, a.kind).radius, t0: t, t1: t + c });
+      } else if (a.kind === 'sweep') {
+        legs.push({ kind: 'sweep', ox: x, oz: z, dx: fx, dz: fz, R: radiusOf(q) + skillOf(def, 'sweep').reach, ch: -1, t0: t, t1: t + c });
+      } else if (a.kind === 'wall') {
+        legs.push({ kind: 'wall', ox: x, oz: z, dx: fx, dz: fz, R: radiusOf(q) + 0.6, ch: 0.5, t0: t, t1: t + c });
+      } else if (a.kind === 'pierce') {
+        const sk = skillOf(def, 'pierce'), d = norm(a.x - x, a.z - z);
+        if (d.l > 0.01) { fx = d.x; fz = d.z; }
+        legs.push({ kind: 'pierce', ox: x, oz: z, dx: fx, dz: fz, len: sk.range, w: sk.width, t0: t, t1: t + c });
+      } else if (a.kind === 'leap' || a.kind === 'step') {
+        const sk = skillOf(def, a.kind), c2 = clampAim(x, z, a.x, a.z, sk.range);
+        const d = norm(c2.x - x, c2.z - z);
+        if (d.l > 0.01) { fx = d.x; fz = d.z; }
+        legs.push({ kind: a.kind, ox: x, oz: z, cx: c2.x, cz: c2.z, range: sk.range, t0: t, t1: t + c });
+        x = c2.x; z = c2.z;
       } else if (a.kind === 'charge') {
         const ln = this.chargeLane(q, x, z, a.x, a.z);
         fx = ln.dx; fz = ln.dz;
@@ -134,11 +149,12 @@ export class Planner {
     return true;
   }
 
-  addSkill(id, x, z) {
-    const q = this.squad(id), sk = defOf(q).skill;
+  addSkill(id, kind, x, z) {
+    const q = this.squad(id), sk = skillOf(defOf(q), kind);
     if (!sk) return false;
-    if ((q.cd | 0) > 0) { this.g.toast(`${sk.name} is recharging (${q.cd} round${q.cd > 1 ? 's' : ''})`, true); return false; }
-    if (this.skillUsed(id)) { this.g.toast(`${sk.name} can be used once per round`, true); return false; }
+    const cd = cdOf(q, kind);
+    if (cd > 0) { this.g.toast(`${sk.name} is recharging (${cd} round${cd > 1 ? 's' : ''})`, true); return false; }
+    if (this.skillUsed(id, kind)) { this.g.toast(`${sk.name} can be used once per round`, true); return false; }
     if (this.plan(id) && this.apLeft(q) < sk.ap) { this.g.toast(`Not enough AP (${sk.ap} needed)`, true); return false; }
     const plan = this.ensure(id); if (!plan) return false;
     if (this.apLeft(q) < sk.ap) { this.g.toast(`Not enough AP (${sk.ap} needed)`, true); return false; }

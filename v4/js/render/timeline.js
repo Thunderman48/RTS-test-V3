@@ -35,6 +35,7 @@ export class Timeline {
         const ge = { ...e, T: t0 + e.t, tier: seg.tier };
         this.events.push(ge);
         if (e.type === 'hit') this.hp.get(e.dst)?.push([ge.T, e.hp, e.models]);
+        if (e.type === 'raise') e.ids.forEach((id, i) => this.hp.get(id)?.push([ge.T, e.hp[i], e.models[i]]));
         if (e.type === 'down') this.down.set(e.id, ge.T);
         if (e.type === 'tele') this.teles.push({ ...e, T0: ge.T, T1: t0 + e.t1 });
         if (e.type === 'act') this.blocks.push({ id: e.id, kind: e.kind, T0: ge.T, T1: ge.T + e.cost });
@@ -109,6 +110,13 @@ export class Timeline {
       else if (e.type === 'buff' && e.ids.includes(id)) defLeft += 1;
     }
     return { tier, defLeft, upgrades, stance, parry, watch };
+  }
+
+  // braced shield walls active at T: [{id, R, ch}]
+  activeWalls(T) {
+    const out = [];
+    for (const e of this.events) if (e.type === 'wallOn' && !(this.down.has(e.id) && T >= this.down.get(e.id))) out.push({ id: e.id, R: e.R, ch: e.ch, inner: e.R - 0.25 });
+    return out;
   }
 
   // overwatch cones active at T: [{id, R, ch}]

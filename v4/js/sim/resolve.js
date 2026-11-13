@@ -9,7 +9,7 @@
 //  first enemy that moves in the front cone, in any tier), cover (forests halve volleys),
 //  line of sight (walls and rocks stop volleys; lobs arc over), skill cooldowns.
 // Produces the new state and a log used for scrubbable playback.
-import { RULES, isMelee, isShooter } from '../data/units.js';
+import { RULES, isMelee, isShooter, skillOf, cdOf } from '../data/units.js';
 import { dist, norm, segRect, segCircle } from './geom.js';
 import { clone, defOf, radiusOf, modelsFor, speedOf } from './state.js';
 import { validateOrders, actionCost } from './orders.js';
@@ -125,6 +125,9 @@ export function resolveRound(state0, ordersIn) {
     }
     ev({ type: 'prep', id: r.q.id, tier: r.tier, upgrades: r.plan.upgrades || 0, defends: r.defends, parry: r.parry, watch: !!r.watch, stance: r.direct ? null : r.q.stance });
     if (r.watch) ev({ type: 'watch', id: r.q.id, R: r.def.attack.range, ch: RULES.overwatchCos });
+    // shield walls are braced from the start of the round (the AP is spent holding it)
+    const wl = r.actions.find(x => x.kind === 'wall');
+    if (wl) { r.wall = skillOf(r.def, 'wall'); ev({ type: 'wallOn', id: r.q.id, mult: r.wall.mult, ch: r.wall.cosHalf, R: r3(radiusOf(r.q) + 0.5) }); }
   }
   log.segments.push(seg);
 
@@ -140,13 +143,19 @@ export function resolveRound(state0, ordersIn) {
       if (src && src.q.hp > 0) hitOne({ src: q.id, dst: src.q, dmg: atkDmg(r, r.def.attack.dmg) * RULES.riposteMult, kind: 'riposte' });
       return;
     }
+    // locked shields: hits from the front arc are blunted
+    let walled = false;
+    if (r && r.wall) {
+      const src = rtById.get(h.src)?.q;
+      if (src) { const d = norm(src.x - q.x, src.z - q.z); if (d.l > 1e-4 && d.x * q.fx + d.z * q.fz >= r.wall.cosHalf) walled = true; }
+    }
     let defended = false;
     if (r && r.defends > 0) { r.defends--; defended = true; }
-    const dmg = damageAfter(h.dmg * (h.cover ? RULES.coverMult : 1), defOf(q).armor, defended);
+    const dmg = damageAfter(h.dmg * (h.cover ? RULES.coverMult : 1) * (walled ? r.wall.mult : 1), defOf(q).armor, defended);
     const before = q.models;
     q.hp = Math.max(0, q.hp - dmg);
     q.models = modelsFor(q, q.hp);
-    ev({ type: 'hit', src: h.src, dst: q.id, dmg, raw: Math.round(h.dmg), defended, cover: !!h.cover, kind: h.kind, hp: q.hp, models: q.models, lost: before - q.models, defLeft: r ? r.defends : 0 });
+    ev({ type: 'hit', src: h.src, dst: q.id, dmg, raw: Math.round(h.dmg), defended, cover: !!h.cover, walled, kind: h.kind, hp: q.hp, models: q.models, lost: before - q.models, defLeft: r ? r.defends : 0 });
   }
   function applyHits(batch) {
     const byDst = new Map();
@@ -191,6 +200,33 @@ export function resolveRound(state0, ordersIn) {
     ev({ type: 'release', id: q.id, kind, hit: struck, ex: r3(cx), ez: r3(cz), overwatch });
   }
 
+  // put a jumping/teleporting squad down on the nearest free spot back along its line
+  function land(q, ox, oz) {
+    const rq = radiusOf(q);
+    const free = (x, z) => !pointBlocked(s.terrain, x, z, rq * 0.85) && !living().some(o => o !== q && dist(x, z, o.x, o.z) < rq + radiusOf(o) - 0.05);
+    if (free(q.x, q.z)) return;
+    const d = norm(ox - q.x, oz - q.z);
+    for (let k = 1; k <= 40; k++) {
+      const t = k * 0.25;
+      if (t > d.l) break;
+      const x = q.x + d.x * t, z = q.z + d.z * t;
+      if (free(x, z)) { q.x = x; q.z = z; return; }
+    }
+    q.x = ox; q.z = oz;
+  }
+  // a piercing bolt: every enemy on the line before a wall
+  function pierce(r, ox, oz, dx, dz, sk) {
+    const q = r.q;
+    const bx = ox + dx * sk.range, bz = oz + dz * sk.range;
+    const tCut = losCut(s.terrain, ox, oz, bx, bz), struck = [];
+    for (const e of living()) {
+      if (e.owner === q.owner) continue;
+      const tt = segCircle(ox, oz, bx, bz, e.x, e.z, radiusOf(e) + sk.width / 2);
+      if (tt >= 0 && tt < tCut) { hits.push({ src: q.id, dst: e, dmg: atkDmg(r, sk.dmg), kind: 'pierce', cover: inCover(s.terrain, ox, oz, e.x, e.z) }); struck.push(e.id); }
+    }
+    ev({ type: 'release', id: q.id, kind: 'pierce', hit: struck, ex: r3(ox + (bx - ox) * tCut), ez: r3(oz + (bz - oz) * tCut), blocked: !struck.length && tCut < 1 });
+  }
+
   // ---- one AP of an action ---------------------------------------------------------
   function step(r, moves, moved) {
     const q = r.q, a = r.actions[r.idx];
@@ -198,35 +234,35 @@ export function resolveRound(state0, ordersIn) {
     if (r.el === 0) {
       r.st = { phase: 'go' };
       if (a.kind === 'move') r.st.pts = a.pts.map(p => ({ ...p }));
-      if (a.kind === 'swing' || a.kind === 'volley' || a.kind === 'charge') {
-        const d = norm(a.x - q.x, a.z - q.z);
-        if (d.l > 0.01) { q.fx = d.x; q.fz = d.z; }
+      const sk = skillOf(def, a.kind);
+      if (sk) q.cd = { ...(q.cd || {}), [a.kind]: sk.cd + 1 };
+      r.st.sk = sk;
+      const tele = (kind, extra) => ev({ type: 'tele', id: q.id, kind, ox: r3(q.x), oz: r3(q.z), dx: r3(q.fx), dz: r3(q.fz), t1: r3(T + a.cost), ...extra });
+      const face = (x, z) => { const d = norm(x - q.x, z - q.z); if (d.l > 0.01) { q.fx = d.x; q.fz = d.z; } };
+      if (a.kind === 'swing' || a.kind === 'volley' || a.kind === 'charge' || a.kind === 'pierce') {
+        face(a.x, a.z);
         r.st.dx = q.fx; r.st.dz = q.fz; r.st.ox = q.x; r.st.oz = q.z;
         rec(q, T);
         const at = def.attack;
-        if (a.kind === 'swing') ev({ type: 'tele', id: q.id, kind: 'swing', ox: r3(q.x), oz: r3(q.z), dx: r3(q.fx), dz: r3(q.fz), t1: r3(T + a.cost), shape: 'arc', R: r3(radiusOf(q) + at.reach), ch: at.cosHalf });
-        else if (a.kind === 'volley') ev({ type: 'tele', id: q.id, kind: 'volley', ox: r3(q.x), oz: r3(q.z), dx: r3(q.fx), dz: r3(q.fz), t1: r3(T + a.cost), shape: 'line', len: at.range, w: at.width });
+        if (a.kind === 'swing') tele('swing', { shape: 'arc', R: r3(radiusOf(q) + at.reach), ch: at.cosHalf });
+        else if (a.kind === 'volley') tele('volley', { shape: 'line', len: at.range, w: at.width });
+        else if (a.kind === 'pierce') tele('pierce', { shape: 'line', len: sk.range, w: sk.width });
         else {
-          const sk = def.skill;
-          q.cd = sk.cd + 1;
           r.st.phase = 'wind'; r.st.travel = 0;
-          ev({ type: 'tele', id: q.id, kind: 'charge', ox: r3(q.x), oz: r3(q.z), dx: r3(q.fx), dz: r3(q.fz), t1: r3(T + sk.wind), shape: 'line', len: sk.len, w: r3(radiusOf(q) * 2) });
+          tele('charge', { t1: r3(T + sk.wind), shape: 'line', len: sk.len, w: r3(radiusOf(q) * 2) });
         }
       }
-      if (a.kind === 'lob' || a.kind === 'blast' || a.kind === 'storm') {
-        const range = a.kind === 'lob' ? def.attack.range : def.skill.range;
-        const R = a.kind === 'lob' ? def.attack.radius : def.skill.radius;
+      if (a.kind === 'lob' || a.kind === 'blast' || a.kind === 'storm' || a.kind === 'leap' || a.kind === 'step') {
+        const range = a.kind === 'lob' ? def.attack.range : sk.range;
+        const R = a.kind === 'lob' ? def.attack.radius : sk.radius || radiusOf(q) + 0.4;
         const c = clampAim(q.x, q.z, a.x, a.z, range);
-        const d = norm(c.x - q.x, c.z - q.z);
-        if (d.l > 0.01) { q.fx = d.x; q.fz = d.z; rec(q, T); }
-        if (a.kind !== 'lob') q.cd = def.skill.cd + 1;
-        r.st.cx = c.x; r.st.cz = c.z;
-        ev({ type: 'tele', id: q.id, kind: a.kind, ox: r3(c.x), oz: r3(c.z), dx: r3(q.fx), dz: r3(q.fz), t1: r3(T + a.cost), shape: 'circle', R });
+        face(c.x, c.z); rec(q, T);
+        r.st.cx = c.x; r.st.cz = c.z; r.st.ox = q.x; r.st.oz = q.z;
+        const t1 = a.kind === 'leap' ? T + sk.flight : T + a.cost;
+        ev({ type: 'tele', id: q.id, kind: a.kind, ox: r3(c.x), oz: r3(c.z), dx: r3(q.fx), dz: r3(q.fz), t1: r3(t1), shape: 'circle', R: r3(R) });
       }
-      if (a.kind === 'rally') {
-        q.cd = def.skill.cd + 1;
-        ev({ type: 'tele', id: q.id, kind: 'rally', ox: r3(q.x), oz: r3(q.z), dx: r3(q.fx), dz: r3(q.fz), t1: r3(T + a.cost), shape: 'circle', R: def.skill.radius });
-      }
+      if (a.kind === 'rally' || a.kind === 'raise') tele(a.kind, { shape: 'circle', R: sk.radius });
+      if (a.kind === 'sweep') tele('sweep', { shape: 'arc', R: r3(radiusOf(q) + sk.reach), ch: -1 });
       ev({ type: 'act', id: q.id, kind: a.kind, cost: a.cost });
     }
     r.el += 1;
@@ -254,9 +290,9 @@ export function resolveRound(state0, ordersIn) {
       if (st.hold > 0) st.hold--;
       else moves.push({ r, st, d: speedOf(q) * terrainFactor(s.terrain, q.x, q.z) });
     } else if (a.kind === 'charge') {
-      if (st.phase === 'wind' && r.el >= def.skill.wind) st.phase = 'rush';
+      if (st.phase === 'wind' && r.el >= st.sk.wind) st.phase = 'rush';
       else if (st.phase === 'rush') {
-        const sk = def.skill, rq = radiusOf(q);
+        const sk = st.sk, rq = radiusOf(q);
         const step = Math.min(speedOf(q) * 4.6 * terrainFactor(s.terrain, q.x, q.z), sk.len - st.travel);
         const nx = q.x + st.dx * step, nz = q.z + st.dz * step;
         // first enemy squad in the way takes the impact
@@ -298,9 +334,32 @@ export function resolveRound(state0, ordersIn) {
         rec(q, T + 1);
         if (st.phase === 'rush' && r.el >= a.cost) { settle(); ev({ type: 'release', id: q.id, kind: 'charge', hit: [], ex: r3(q.x), ez: r3(q.z) }); st.phase = 'done'; }
       }
+    } else if (a.kind === 'leap') {
+      // a jump over everything: fly for `flight` AP, land, shove adjacent enemies back
+      const sk = st.sk;
+      if (st.phase === 'go') {
+        const t = Math.min(1, r.el / sk.flight);
+        rec(q, T);
+        q.x = st.ox + (st.cx - st.ox) * t; q.z = st.oz + (st.cz - st.oz) * t;
+        rec(q, T + 1); moved.add(q.id);
+        if (t >= 1) {
+          land(q, st.ox, st.oz);
+          const pushed = [];
+          for (const e of living()) {
+            if (e.owner === q.owner) continue;
+            const d = dist(q.x, q.z, e.x, e.z), need = radiusOf(q) + radiusOf(e) + 0.3;
+            if (d >= need) continue;
+            const v = d > 1e-4 ? norm(e.x - q.x, e.z - q.z) : { x: q.fx, z: q.fz };
+            const tx = e.x + v.x * sk.shove, tz = e.z + v.z * sk.shove;
+            if (!pointBlocked(s.terrain, tx, tz, radiusOf(e) * 0.85)) { rec(e, T); e.x = tx; e.z = tz; rec(e, T + 1); pushed.push(e.id); moved.add(e.id); }
+          }
+          ev({ type: 'land', id: q.id, kind: 'leap', ex: r3(q.x), ez: r3(q.z), pushed });
+          st.phase = 'done';
+        }
+      }
     } else if (r.el >= a.cost && st.phase === 'go') {
       st.phase = 'done';
-      const at = def.attack;
+      const at = def.attack, sk = st.sk;
       if (a.kind === 'swing') {
         const R = radiusOf(q) + at.reach;
         const struck = [];
@@ -311,9 +370,36 @@ export function resolveRound(state0, ordersIn) {
         ev({ type: 'release', id: q.id, kind: 'swing', hit: struck });
       } else if (a.kind === 'volley') volley(r, st.ox, st.oz, st.dx, st.dz);
       else if (a.kind === 'lob') circleHit(r, 'lob', st.cx, st.cz, at.radius, atkDmg(r, at.dmg));
-      else if (a.kind === 'blast' || a.kind === 'storm') circleHit(r, a.kind, st.cx, st.cz, def.skill.radius, atkDmg(r, def.skill.dmg));
+      else if (a.kind === 'blast' || a.kind === 'storm') circleHit(r, a.kind, st.cx, st.cz, sk.radius, atkDmg(r, sk.dmg));
+      else if (a.kind === 'pierce') pierce(r, st.ox, st.oz, st.dx, st.dz, sk);
+      else if (a.kind === 'sweep') {
+        const R = radiusOf(q) + sk.reach, struck = [];
+        for (const e of living()) {
+          if (e.owner === q.owner) continue;
+          if (dist(q.x, q.z, e.x, e.z) <= R + radiusOf(e)) { hits.push({ src: q.id, dst: e, dmg: atkDmg(r, sk.dmg), kind: 'sweep' }); struck.push(e.id); }
+        }
+        ev({ type: 'release', id: q.id, kind: 'sweep', hit: struck });
+      } else if (a.kind === 'step') {
+        // vanish and reappear: no parting blows
+        rec(q, T);
+        q.x = st.cx; q.z = st.cz; land(q, st.ox, st.oz);
+        rec(q, T + 0.001); moved.add(q.id);
+        ev({ type: 'land', id: q.id, kind: 'step', ex: r3(q.x), ez: r3(q.z), pushed: [] });
+      } else if (a.kind === 'raise') {
+        const ids = [];
+        for (const o of living()) {
+          if (o.owner !== q.owner) continue;
+          const od = defOf(o);
+          if (od.models <= 1 || o.models >= od.models) continue;
+          if (dist(q.x, q.z, o.x, o.z) > sk.radius + radiusOf(o)) continue;
+          o.hp = Math.min(od.models * od.hpPer, o.models * od.hpPer + od.hpPer);
+          o.models = modelsFor(o, o.hp);
+          ids.push(o.id);
+        }
+        ev({ type: 'raise', id: q.id, ids, hp: ids.map(id => living().find(o => o.id === id).hp), models: ids.map(id => living().find(o => o.id === id).models) });
+      }
       else if (a.kind === 'rally') {
-        const sk = def.skill, ids = [];
+        const ids = [];
         for (const o of rts) {
           if (o.q.owner !== q.owner || o.q.hp <= 0) continue;
           if (dist(q.x, q.z, o.q.x, o.q.z) <= sk.radius + radiusOf(o.q)) { o.defends += sk.defends; o.mult = Math.max(o.mult, sk.dmgMult); ids.push(o.q.id); }
@@ -336,8 +422,10 @@ export function resolveRound(state0, ordersIn) {
         else { cx += (wp.x - cx) / dd * left; cz += (wp.z - cz) / dd * left; left = 0; }
       }
       const rq = radiusOf(q);
+      const ethereal = !!defOf(q).ghost;
       const clear = (x, z) => {
         if (pointBlocked(s.terrain, x, z, rq * 0.85)) return false;
+        if (ethereal) return true;          // wraiths drift through squads
         for (const o of all) if (o !== q && dist(x, z, o.x, o.z) < rq + radiusOf(o) - 0.02 && dist(x, z, o.x, o.z) < dist(q.x, q.z, o.x, o.z)) return false;
         return true;
       };
@@ -415,7 +503,12 @@ export function resolveRound(state0, ordersIn) {
   // ---- end of round ----------------------------------------------------------------
   seg = { kind: 'end', len: 0, tracks: {}, events: [] };
   s.squads = s.squads.filter(q => q.hp > 0);
-  for (const q of s.squads) { delete q.dead; if (q.cd > 0) q.cd--; }
+  for (const q of s.squads) {
+    delete q.dead;
+    const cd = {};
+    for (const [k, v] of Object.entries(q.cd || {})) if (v > 1) cd[k] = v - 1;
+    q.cd = cd;
+  }
   const aliveBy = [0, 1].map(p => s.squads.some(q => q.owner === p));
   if (!aliveBy[0] && !aliveBy[1]) s.winner = -1;
   else if (!aliveBy[0]) s.winner = 1;

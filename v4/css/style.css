@@ -279,3 +279,6 @@ button { font-family: inherit; color: inherit; cursor: pointer; touch-action: ma
   .rehearse { height: 30px; font-size: 12px; }
   #hintbar { display: none; }
 }
+
+.sl .st.cdc { color: var(--c); font-weight: 900; }
+.sl .st.cdc .ic { width: 11px; height: 11px; }

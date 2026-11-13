@@ -50,6 +50,18 @@ const BLAST = (ap, dmg, range, radius, cd = 2) => ({ kind: 'blast', name: 'Bone 
 //  storm  : a big lobbed volley onto a circle at the aim point; arcs over walls
 const STORM = (ap, dmg, range, radius, cd = 2) => ({ kind: 'storm', name: 'Arrow Storm', cat: 'attack', ap, dmg, range, radius, cd });
 const RALLY = (ap, radius, cd = 2) => ({ kind: 'rally', name: 'Rally', cat: 'defense', ap, radius, defends: 1, dmgMult: 1.25, cd });
+//  sweep  : a full circle swing around the hero
+const SWEEP = (ap, dmg, reach, cd = 2) => ({ kind: 'sweep', name: 'Sweep', cat: 'attack', ap, dmg, reach, cd });
+//  leap   : jump to a point (over terrain and squads); the landing shoves adjacent enemies back
+const LEAP = (ap, range, cd = 2) => ({ kind: 'leap', name: 'Heroic Leap', cat: 'move', ap, range, flight: 6, shove: 1, cd });
+//  step   : vanish and reappear at a point when the wind-up ends; no parting blows
+const STEP = (ap, range, cd = 2) => ({ kind: 'step', name: 'Shadow Step', cat: 'move', ap, range, cd });
+//  wall   : until the round ends, hits from the front 120 degrees deal 30%
+const WALL = (name, ap = 15, cd = 1) => ({ kind: 'wall', name, cat: 'defense', ap, mult: 0.3, cosHalf: 0.5, cd });
+//  pierce : a bolt line that hits every target along it (walls still stop it)
+const PIERCE = (ap, dmg, range, width = 0.7, cd = 2) => ({ kind: 'pierce', name: 'Piercing Bolt', cat: 'attack', ap, dmg, range, width, cd });
+//  raise  : friendly squads in a circle around the caster regain one fallen model each
+const RAISE = (ap, radius, cd = 3) => ({ kind: 'raise', name: 'Raise', cat: 'defense', ap, radius, cd });
 
 // Unit roles are the same for both sides; looks and numbers differ a little.
 //  models: miniatures in the squad, hpPer: HP of each model, dmg is PER MODEL alive
@@ -57,21 +69,21 @@ export const FACTIONS = {
   kingdom: {
     name: 'Kingdom', short: 'KGD', colorCss: '#3a78d8',
     units: {
-      hero:    { name: 'Lord Commander', role: 'hero', models: 1, hpPer: 120, armor: 9, tier: 5, look: 'lord', vision: 12, defends: 2, attack: SWING(25, 18, 1.6), skill: RALLY(20, 5) },
-      tank:    { name: 'Shieldwall', role: 'tank', models: 3, hpPer: 34, armor: 12, tier: 4, look: 'shield', vision: 9, defends: 2, attack: SWING(30, 4, 1.3) },
+      hero:    { name: 'Lord Commander', role: 'hero', models: 1, hpPer: 120, armor: 9, tier: 5, look: 'lord', vision: 12, defends: 2, attack: SWING(25, 18, 1.6), skills: [LEAP(20, 7), SWEEP(30, 14, 1.6), RALLY(20, 5)] },
+      tank:    { name: 'Shieldwall', role: 'tank', models: 3, hpPer: 34, armor: 12, tier: 4, look: 'shield', vision: 9, defends: 2, attack: SWING(30, 4, 1.3), skills: [WALL('Lock Shields')] },
       fighter: { name: 'Men-at-arms', role: 'fighter', parry: true, models: 4, hpPer: 20, armor: 7, tier: 5, look: 'sword', vision: 9, defends: 1, attack: SWING(25, 5, 1.5) },
-      ranged:  { name: 'Crossbows', role: 'ranged', models: 4, hpPer: 15, armor: 3, tier: 5, look: 'crossbow', vision: 11, defends: 1, attack: VOLLEY(30, 4, 14) },
-      fast:    { name: 'Outriders', role: 'fast', models: 3, hpPer: 24, armor: 5, tier: 6, look: 'rider', vision: 11, defends: 1, attack: SWING(20, 7, 1.7), skill: CHARGE(35, 9, 9) },
+      ranged:  { name: 'Crossbows', role: 'ranged', models: 4, hpPer: 15, armor: 3, tier: 5, look: 'crossbow', vision: 11, defends: 1, attack: VOLLEY(30, 4, 14), skills: [PIERCE(35, 5, 16)] },
+      fast:    { name: 'Outriders', role: 'fast', models: 3, hpPer: 24, armor: 5, tier: 6, look: 'rider', vision: 11, defends: 1, attack: SWING(20, 7, 1.7), skills: [CHARGE(35, 9, 9)] },
     },
   },
   undead: {
     name: 'Undead Legion', short: 'UND', colorCss: '#9b59d0',
     units: {
-      hero:    { name: 'Necromancer', role: 'hero', models: 1, hpPer: 118, armor: 7, tier: 5, look: 'necro', vision: 12, defends: 2, attack: SWING(25, 16, 1.6), skill: BLAST(30, 16, 9, 2.2) },
-      tank:    { name: 'Grave Guard', role: 'tank', models: 3, hpPer: 34, armor: 11, tier: 4, look: 'graveguard', vision: 9, defends: 2, attack: SWING(30, 5, 1.3) },
+      hero:    { name: 'Necromancer', role: 'hero', models: 1, hpPer: 118, armor: 7, tier: 5, look: 'necro', vision: 12, defends: 2, attack: SWING(25, 16, 1.6), skills: [STEP(15, 7), BLAST(30, 16, 9, 2.2), RAISE(25, 3)] },
+      tank:    { name: 'Grave Guard', role: 'tank', models: 3, hpPer: 34, armor: 11, tier: 4, look: 'graveguard', vision: 9, defends: 2, attack: SWING(30, 5, 1.3), skills: [WALL('Grave Wall')] },
       fighter: { name: 'Skeleton Warband', role: 'fighter', parry: true, models: 5, hpPer: 15, armor: 5, tier: 5, look: 'skeleton', vision: 9, defends: 1, attack: SWING(25, 4, 1.5) },
-      ranged:  { name: 'Bone Archers', role: 'ranged', models: 4, hpPer: 16, armor: 2, tier: 5, look: 'archer', vision: 11, defends: 1, attack: VOLLEY(30, 4, 14, 0.9), skill: STORM(35, 6, 15, 2.2) },
-      fast:    { name: 'Wraiths', role: 'fast', models: 3, hpPer: 24, armor: 4, tier: 6, look: 'wraith', vision: 11, defends: 1, ghost: true, attack: SWING(20, 7, 1.7), skill: CHARGE(35, 8, 9) },
+      ranged:  { name: 'Bone Archers', role: 'ranged', models: 4, hpPer: 16, armor: 2, tier: 5, look: 'archer', vision: 11, defends: 1, attack: VOLLEY(30, 4, 14, 0.9), skills: [STORM(35, 6, 15, 2.2)] },
+      fast:    { name: 'Wraiths', role: 'fast', models: 3, hpPer: 24, armor: 4, tier: 6, look: 'wraith', vision: 11, defends: 1, ghost: true, attack: SWING(20, 7, 1.7), skills: [CHARGE(35, 8, 9)] },
     },
   },
 };
@@ -87,5 +99,11 @@ export function squadRadius(def, models) {
 
 export function unitDef(faction, role) { return FACTIONS[faction].units[role]; }
 export const isMelee = def => def.attack.kind === 'swing';
+export const skillsOf = def => def.skills || [];
+export const skillOf = (def, kind) => (def.skills || []).find(k => k.kind === kind) || null;
+export const SKILL_KINDS = ['charge', 'blast', 'rally', 'storm', 'sweep', 'leap', 'step', 'wall', 'pierce', 'raise'];
+// skills cast on the squad itself (no aim): tap the knob to use
+export const SELF_SKILLS = ['rally', 'sweep', 'wall', 'raise'];
+export const cdOf = (q, kind) => (q.cd && q.cd[kind]) | 0;
 export const CAT_COLOR = { move: '#34c759', attack: '#ff3b30', defense: '#3fa9ff' };
 export const isShooter = def => def.attack.kind === 'volley' || def.attack.kind === 'lob';
