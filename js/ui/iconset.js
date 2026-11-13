@@ -3,7 +3,7 @@
 // Each icon: c = colour, d = main path, s = stroke-only (line icon), w = stroke width,
 // x = detail path (drawn dark on top), xf = fill colour for the detail instead of a dark line.
 
-const GOLD = '#f5c542', CYAN = '#3ee6ff', LIME = '#9be15d', ORANGE = '#ff4a1c', RED = '#ff2d55', BLUE = '#3fa9ff',
+const AMBER_C = '#ffb020', GOLD = '#f5c542', CYAN = '#3ee6ff', LIME = '#9be15d', ORANGE = '#ff4a1c', RED = '#ff2d55', BLUE = '#3fa9ff',
   WHITE = '#f6f6f4', GREY = '#a8a8a5', PURPLE = '#a86bff', AMBER = '#ffb020', GREEN = '#34c759', STEEL = '#7aa7c7',
   MAGENTA = '#ff4fd8', VIOLET = '#d9b8ff', HEART = '#ff5a3c', FRAG = '#ff6a00', INK = '#0b0b0b';
 
@@ -16,9 +16,19 @@ const CHEV2 = 'M12 2l9 8h-5l-4-3.5L8 10H3ZM12 11l9 8h-5l-4-3.5L8 19H3Z';
 const SLASHCIRCLE = 'M12 3a9 9 0 1 0 .01 0ZM5.6 5.6l12.8 12.8';
 
 export const ICONSET = {
+  // unit types
+  hero: { c: GOLD, d: 'M3 18 4.5 7l5 5L12 4l2.5 8 5-5L21 18Z', x: 'M3 21h18' },
+  tank: { c: STEEL, d: SHIELD, x: 'M12 5v14M7.5 10h9' },
+  fighter: { c: ORANGE, d: 'M18.5 2H22v3.5L10.5 17 7 13.5ZM4.5 12.5l7 7-1.6 1.6-2.2-2.2L5 21.6 2.4 19l2.7-2.7-2.2-2.2Z' },
+  ranged: { c: RED, d: 'M6 2.5c8 2.5 11 10.5 8.5 19M6 2.5l8.5 19M2 12h18M17 8.5 20.5 12 17 15.5', s: true, w: 2.2 },
+  fast: { c: CYAN, d: 'M6 21V11a6 6 0 0 1 12 0v10', s: true, w: 3.4 },
   // resources & state
   supply: { c: GOLD, d: HEX, x: 'M12 7 16.5 9.5v5L12 17l-4.5-2.5v-5Z' },
   income: { c: GOLD, d: HEX, x: 'M12 7.5v9M7.5 12h9' },
+  gold: { c: GOLD, d: 'M12 2a10 10 0 1 0 .01 0Z', x: 'M12 6.5a5.5 5.5 0 1 0 .01 0Z' },
+  souls: { c: '#7dff9a', d: 'M12 2c1 4 6 6 6 12a6 6 0 0 1-12 0c0-3 2-5 3-6 0 2 1 3 2 3 0-4 0-6 1-9Z' },
+  builder: { c: AMBER_C, d: 'M3 19.5l9-9 2.5 2.5-9 9ZM11 5l4-3 7 7-3 3-2-2-2 2-4-4 2-2Z' },
+  farm: { c: LIME, d: 'M12 22V9M12 13c-4 0-6-3-6-6 4 0 6 3 6 6Zm0 0c4 0 6-3 6-6-4 0-6 3-6 6Zm0 5c-4 0-6-3-6-6 4 0 6 3 6 6Zm0 0c4 0 6-3 6-6-4 0-6 3-6 6Z' },
   cp: { c: CYAN, d: 'M3 18 4.5 7l5 5L12 4l2.5 8 5-5L21 18Z', x: 'M3 21h18' },
   ap: { c: LIME, d: 'M13 2 4 14h7l-2 8 10-13h-7l2-7Z' },
   hp: { c: HEART, d: 'M12 21 3.5 12.5A5 5 0 0 1 12 6a5 5 0 0 1 8.5 6.5Z' },
@@ -40,6 +50,7 @@ export const ICONSET = {
   defend: { c: BLUE, d: SHIELD },
   tierup: { c: LIME, d: CHEV2 },
   parry: { c: GOLD, d: 'M4 4l16 16M20 4 4 20', s: true, w: 3.2, x: 'M3 8V3h5M21 8V3h-5' },
+  engaged: { c: RED, d: 'M4 4l16 16M20 4 4 20', s: true, w: 3.2, x: 'M3 8V3h5M21 8V3h-5' },
   overwatch: { c: RED, d: EYE, x: 'M12 8.5a3.5 3.5 0 1 0 .01 0Z', xf: INK },
   heal: { c: GREEN, d: 'M9 3h6v6h6v6h-6v6H9v-6H3V9h6Z' },
   undo: { c: GREY, d: 'M9 14 4 9l5-5M4 9h10a6 6 0 0 1 0 12h-3', s: true, w: 2.4 },

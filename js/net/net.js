@@ -1,6 +1,6 @@
 // Online multiplayer over WebRTC using PeerJS (works from static hosting like GitHub Pages).
 // The host is authoritative: it resolves each round and sends the result to the guest.
-const PREFIX = 'tiers-rts-g3-';
+const PREFIX = 'tiers-v4-';
 const ALPHA = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 
 export function randomCode() {
@@ -99,4 +99,33 @@ export function loopbackPair() {
   a.send = m => { setTimeout(() => b.emit('msg', JSON.parse(JSON.stringify(m))), 5); return true; };
   b.send = m => { setTimeout(() => a.emit('msg', JSON.parse(JSON.stringify(m))), 5); return true; };
   return [a, b];
+}
+
+// Test transport: two pages of the same browser talk over a BroadcastChannel (?nettest).
+export class BcNet {
+  constructor() { this.handlers = {}; this.isHost = false; this.closed = false; this.me = Math.random().toString(36).slice(2); }
+  on(t, fn) { this.handlers[t] = fn; return this; }
+  emit(t, d) { this.handlers[t]?.(d); }
+  available() { return typeof BroadcastChannel === 'function'; }
+  open(code) {
+    this.ch = new BroadcastChannel('tiers-v4-test-' + code);
+    this.ch.onmessage = e => {
+      const m = e.data; if (!m || m.from === this.me) return;
+      if (m.sys === 'join' && this.isHost && !this.peerId) { this.peerId = m.from; this.ch.postMessage({ sys: 'welcome', to: m.from, from: this.me }); this.emit('connected'); return; }
+      if (m.sys === 'welcome' && m.to === this.me) { this.peerId = m.from; this.joined?.(); this.emit('connected'); return; }
+      if (m.sys === 'bye' && m.from === this.peerId) { if (!this.closed) this.emit('closed'); return; }
+      if (m.msg && m.from === this.peerId) this.emit('msg', JSON.parse(JSON.stringify(m.msg)));
+    };
+  }
+  host(code) { this.isHost = true; this.open(code); return Promise.resolve(code); }
+  join(code) {
+    this.isHost = false; this.open(code.toUpperCase());
+    return new Promise((resolve, reject) => {
+      const to = setTimeout(() => reject(new Error('No game found with that code')), 6000);
+      this.joined = () => { clearTimeout(to); resolve(); };
+      this.ch.postMessage({ sys: 'join', from: this.me });
+    });
+  }
+  send(msg) { if (!this.ch || !this.peerId) return false; this.ch.postMessage({ msg, from: this.me }); return true; }
+  close() { this.closed = true; try { this.ch?.postMessage({ sys: 'bye', from: this.me }); this.ch?.close(); } catch {} this.ch = null; }
 }

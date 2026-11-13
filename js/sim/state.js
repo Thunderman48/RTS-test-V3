@@ -1,142 +1,73 @@
-// Game state creation and shared queries (used by sim, UI and AI).
-import { CONFIG } from '../config.js';
-import { buildMap, START, mirror } from './map.js';
-import { dist } from './geom.js';
+// V4 game state: squads of miniatures on a terrain board.
+import { RULES, FACTIONS, squadRadius, unitDef } from '../data/units.js';
+import { buildTerrain, DEPLOY, mirror, HQ_X, HQ_SPOTS, SHRINES } from '../data/map.js';
+import { addBuilding, obstacles } from './base.js';
+import { pointBlocked } from './nav.js';
+import { rng } from './rng.js';
 
-export function createGame(seed = 1) {
-  const map = buildMap();
+export function createGame(seed = 1, factions = ['kingdom', 'undead']) {
+  const R = rng(seed);
   const s = {
-    seed, round: 1, winner: null, nextId: 1,
-    map,
-    players: [0, 1].map(id => ({ id, supply: CONFIG.economy.startSupply, revive: null })),
-    units: [], buildings: [],
+    v: 4, seed, round: 1, winner: null, nextId: 1,
+    terrain: buildTerrain(),
+    // paint: which colour scheme the army uses (the second player gets the alternate one in a mirror match)
+    players: factions.map((f, i) => ({ id: i, faction: f, paint: i === 1 && factions[0] === factions[1] ? f + 'Alt' : f })),
+    squads: [],
+    buildings: [],
+    supply: factions.map(f => FACTIONS[f].eco.start),
+    shrines: SHRINES.map(p => ({ x: p.x, z: p.z, owner: -1 })),
+    // what each side knows about enemy buildings: id -> last seen snapshot
+    intel: [{ known: {} }, { known: {} }],
   };
+  // each HQ starts at one of three spots along its back edge (so it has to be scouted)
+  const hqz = [0, 1].map(() => HQ_SPOTS[Math.floor(R() * HQ_SPOTS.length) % HQ_SPOTS.length]);
+  for (const p of [0, 1]) { const h = p === 0 ? { x: HQ_X, z: hqz[0] } : mirror({ x: HQ_X, z: hqz[1] }); addBuilding(s, p, 'hq', h.x, h.z, 0, true); }
+  // the army deploys in front of its HQ with a small seeded shuffle, so games differ
   for (const p of [0, 1]) {
-    const hq = p === 0 ? START.hq : mirror(START.hq);
-    addBuilding(s, p, 'hq', hq.x, hq.z, true);
-    for (const u of START.units) {
-      const pos = p === 0 ? u : mirror(u);
-      addUnit(s, p, u.type, pos.x, pos.z);
+    for (const d of DEPLOY) {
+      const z0 = Math.max(2.5, Math.min(RULES.board.h - 2.5, hqz[p] + d.dz));
+      const pos = p === 0 ? { x: d.x, z: z0 } : mirror({ x: d.x, z: z0 });
+      const jit = d.role === 'builder' ? 0 : 16;
+      const jx = Math.round((R() - 0.5) * jit) / 10, jz = Math.round((R() - 0.5) * jit) / 10;
+      const q = addSquad(s, p, d.role, pos.x + jx, pos.z + jz);
+      freeSpot(s, q);
     }
   }
   return s;
 }
 
-export function addUnit(s, owner, type, x, z, stance = 'guard') {
-  const def = CONFIG.units[type];
-  const u = {
-    id: 'u' + (s.nextId++), owner, type, x, z,
-    hp: def.hp, maxHp: def.hp,
-    stance, anchor: { x, z },
-    cds: {},               // skill id -> cooldown in rounds
-    revealed: {},          // skill id -> true once used (enemy can then see its cooldown)
-    tierDebuff: 0,         // pending tier debuff applied at next turn
-    lastCombat: -99,
-    born: s.round,
+export function addSquad(s, owner, role, x, z) {
+  const faction = s.players[owner].faction;
+  const def = unitDef(faction, role);
+  const q = {
+    id: 'q' + (s.nextId++), owner, faction, paint: s.players[owner].paint || faction, role, x, z,
+    fx: owner === 0 ? 1 : -1, fz: 0,   // facing (unit vector)
+    models: def.models, hp: def.models * def.hpPer,
+    stance: 'guard',
+    cd: {},                            // skill cooldowns: kind -> rounds left
   };
-  s.units.push(u);
-  return u;
+  s.squads.push(q);
+  return q;
 }
 
-export function addBuilding(s, owner, type, x, z, built = false) {
-  const def = CONFIG.buildings[type];
-  const b = {
-    id: 'b' + (s.nextId++), owner, type, x, z,
-    hp: built ? def.hp : Math.ceil(def.hp * 0.3), maxHp: def.hp,
-    built, progress: 0,
-    queue: [],            // [{unit, progress}]
-    rally: 'guard',
-  };
-  s.buildings.push(b);
-  return b;
-}
-
-export const unitDef = u => CONFIG.units[u.type];
-export const bDef = b => CONFIG.buildings[b.type];
-
-export function findEntity(s, id) {
-  return s.units.find(u => u.id === id) || s.buildings.find(b => b.id === id) || null;
-}
-
-export function isUnit(e) { return e && e.id[0] === 'u'; }
-export function entRadius(e) { return isUnit(e) ? CONFIG.unitRadius : CONFIG.buildings[e.type].r; }
-
-// AP for the coming round, after wound penalties (based on HP at round start)
-export function apFor(u) {
-  let ap = CONFIG.baseAP;
-  const f = u.hp / u.maxHp;
-  for (const [th, loss] of CONFIG.woundSteps) if (f < th) ap = CONFIG.baseAP - loss;
-  return ap;
-}
-
-export function moveSpeed(type) { return CONFIG.units[type].tier * CONFIG.moveFactor; }
-
-export function aliveUnits(s, owner = null) {
-  return s.units.filter(u => u.hp > 0 && (owner === null || u.owner === owner));
-}
-
-export function hqOf(s, p) { return s.buildings.find(b => b.owner === p && b.type === 'hq' && b.hp > 0); }
-
-export function commanderOf(s, p) { return s.units.find(u => u.owner === p && u.type === 'commander' && u.hp > 0); }
-
-// Total CP for player p
-export function cpPools(s, p) {
-  const posts = s.buildings.filter(b => b.owner === p && b.type === 'command' && b.built && b.hp > 0).length;
-  return { base: CONFIG.cp.base + posts * CONFIG.cp.perCommandPost };
-}
-
-// ---- skills -------------------------------------------------------------------
-export const skillsOf = u => CONFIG.units[u.type].skills;
-export const skillDef = (type, id) => CONFIG.units[type].skills.find(k => k.id === id) || null;
-export const cdOf = (u, id) => (u.cds && u.cds[id]) || 0;
-
-// Vision sources for player p (list of {x,z,r})
-export function visionSources(s, p) {
-  const src = [];
-  for (const u of s.units) if (u.owner === p && u.hp > 0) src.push({ x: u.x, z: u.z, r: CONFIG.units[u.type].vision });
-  for (const b of s.buildings) if (b.owner === p && b.hp > 0) src.push({ x: b.x, z: b.z, r: b.built ? CONFIG.buildings[b.type].vision : 3 });
-  return src;
-}
-
-export function seen(src, x, z, pad = 0) {
-  for (const v of src) if ((v.x - x) * (v.x - x) + (v.z - z) * (v.z - z) <= (v.r + pad) * (v.r + pad)) return true;
-  return false;
-}
-
-// Which enemy entities can player p see right now
-export function visibleEnemies(s, p) {
-  const src = visionSources(s, p);
-  return {
-    units: s.units.filter(u => u.owner !== p && u.hp > 0 && seen(src, u.x, u.z)),
-    buildings: s.buildings.filter(b => b.owner !== p && b.hp > 0 && seen(src, b.x, b.z, CONFIG.buildings[b.type].r)),
-  };
-}
-
-export function armyCount(s, p) {
-  const alive = s.units.filter(u => u.owner === p && u.hp > 0 && u.type !== 'commander').length;
-  const queued = s.buildings.filter(b => b.owner === p && b.hp > 0).reduce((n, b) => n + b.queue.length, 0);
-  return alive + queued;
-}
-
-export function retreatPoint(s, u) {
-  let best = null, bd = 1e9;
-  for (const b of s.buildings) {
-    if (b.owner !== u.owner || b.hp <= 0 || !b.built) continue;
-    if (b.type !== 'outpost' && b.type !== 'hq') continue;
-    const d = dist(b.x, b.z, u.x, u.z);
-    const w = b.type === 'outpost' ? d : d + 0.001; // prefer outposts on ties
-    if (w < bd) { bd = w; best = b; }
+// nudge a squad to the nearest spot clear of terrain, buildings and other squads
+export function freeSpot(s, q) {
+  const O = obstacles(s), r = radiusOf(q);
+  const ok = (x, z) => !pointBlocked(O, x, z, r + 0.1) && !s.squads.some(o => o !== q && Math.hypot(o.x - x, o.z - z) < r + radiusOf(o) + 0.1);
+  if (ok(q.x, q.z)) return;
+  for (let ring = 1; ring <= 16; ring++) for (let k = 0; k < 12; k++) {
+    const a = k / 12 * Math.PI * 2, x = q.x + Math.cos(a) * ring * 0.4, z = q.z + Math.sin(a) * ring * 0.4;
+    if (ok(x, z)) { q.x = Math.round(x * 100) / 100; q.z = Math.round(z * 100) / 100; return; }
   }
-  return best;
 }
 
-export function emptyOrders() {
-  return { units: {}, stances: {}, builds: [], production: [], boosts: [], heals: [], rally: {} };
-}
-
-export function emptyPlan() {
-  // buffs: ids of prepaid skills (Fortify, Rally) bought during planning
-  return { actions: [], upgrades: 0, defends: 0, overwatch: 0, parry: false, buffs: [] };
-}
-
+export const defOf = q => FACTIONS[q.faction].units[q.role];
+export const radiusOf = q => squadRadius(defOf(q), q.models);
+export const alive = q => q.hp > 0;
+export const modelsFor = (q, hp) => Math.max(0, Math.ceil(hp / defOf(q).hpPer - 1e-9));
+export const speedOf = q => defOf(q).tier * RULES.moveFactor;
+export const apFor = () => RULES.ap;
+export function emptyOrders() { return { squads: {}, stances: {}, builds: [], trains: [] }; }
+export function emptyPlan() { return { actions: [], upgrades: 0, defends: 0, parry: false, overwatch: null }; }
 export const clone = o => JSON.parse(JSON.stringify(o));
+export const findSquad = (s, id) => s.squads.find(q => q.id === id) || null;

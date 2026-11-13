@@ -1,146 +1,161 @@
-// Stance plan builders. A stance builds a normal plan at the start of resolution using only
-// what its owner knew during planning (the `view`), then it runs under the same rules as orders.
-import { CONFIG } from '../config.js';
-import { dist, norm, rot, ANG } from './geom.js';
-import { apFor, moveSpeed, emptyPlan, retreatPoint, entRadius } from './state.js';
-import { pathLength } from './nav.js';
+// Stance plans: what a squad does when you don't control it. Built from what its side
+// knew during planning (enemy positions at the start of the round), then run like orders.
+//  guard   : strike enemies that come close (melee chases up to 8"); ranged volleys targets in range
+//  hold    : stay put, all AP into defends
+//  advance : like guard, but walks toward the nearest enemy when nobody is in reach
+import { RULES, isMelee, isShooter } from '../data/units.js';
+import { defOf, radiusOf, emptyPlan, apFor } from './state.js';
+import { obstacles, navKey } from './base.js';
+import { builderIdleTarget } from './builders.js';
+import { knownEnemyHq, observers, canSee } from './vision.js';
+import { HQ_X, HQ_SPOTS, mirror } from '../data/map.js';
+import { Nav, pathAP, walkAP } from './nav.js';
+import { dist } from './geom.js';
 
-const reachOf = (u, t) => CONFIG.unitRadius + entRadius(t) + CONFIG.meleeReach;
+const GUARD_RANGE = 8;
 
-// AP needed to walk from unit to within `stopDist` of target point.
-export function approachAP(nav, u, tx, tz, stopDist) {
-  const sp = moveSpeed(u.type);
-  const d = dist(u.x, u.z, tx, tz);
-  if (d <= stopDist) return 0;
-  let l = d;
-  if (nav) { const p = nav.path(u.x, u.z, tx, tz); l = pathLength(u.x, u.z, p); }
-  return Math.ceil(Math.max(0, l - stopDist) / sp) + 2;
+function fillDefends(plan, left) {
+  const n = Math.min(RULES.maxDefends - plan.defends, Math.floor(left / RULES.defendCost));
+  if (n > 0) plan.defends += n;
 }
 
-function nearest(u, list, maxD, from = u) {
+export function nearestEnemy(s, q, enemies, maxGap = 1e9) {
   let best = null, bd = 1e9;
-  for (const e of list) {
-    const d = dist(from.x, from.z, e.x, e.z) - entRadius(e);
-    if (d <= maxD && d < bd) { bd = d; best = e; }
+  for (const e of enemies) {
+    const gap = dist(q.x, q.z, e.x, e.z) - radiusOf(e) - radiusOf(q);
+    if (gap <= maxGap && gap < bd) { bd = gap; best = e; }
   }
   return best;
 }
 
-function fillDefends(u, plan, left) {
-  const d = CONFIG.units[u.type];
-  if (d.parry && !plan.parry && left >= CONFIG.parryCost) { plan.parry = true; left -= CONFIG.parryCost; }
-  const n = Math.min(CONFIG.maxExtraDefends - plan.defends, Math.floor(left / CONFIG.extraDefendCost));
-  if (n > 0) { plan.defends += n; left -= n * CONFIG.extraDefendCost; }
-  return left;
-}
-
-function meleeAttackPlan(nav, u, target, budget, plan, leash = null) {
-  const d = CONFIG.units[u.type];
-  let left = budget;
-  const need = approachAP(nav, u, target.x, target.z, reachOf(u, target) - 0.1);
-  const moveAp = Math.min(need, Math.max(0, left - d.strike.ap));
-  if (left < d.strike.ap) return left;
-  plan.actions.push({ kind: 'attack', target: target.id, moveAp, ...(leash ? { leash } : {}) });
-  left -= moveAp + d.strike.ap;
-  // keep striking while AP allows
-  while (left >= d.strike.ap + 6) {
-    plan.actions.push({ kind: 'attack', target: target.id, moveAp: 6, ...(leash ? { leash } : {}) });
-    left -= 6 + d.strike.ap;
-  }
-  return left;
-}
-
-function rangedFirePlan(u, target, budget, plan, spread) {
-  const d = CONFIG.units[u.type];
-  let left = budget;
-  const dir = norm(target.x - u.x, target.z - u.z);
-  const angles = spread ? CONFIG.stance.guardSpreadDeg : [0];
-  let i = 0;
-  while (left >= d.shot.ap) {
-    const a = angles[i % angles.length];
-    const cs = ANG[a] || ANG[0];
-    const r = rot(dir.x, dir.z, cs[0], cs[1]);
-    plan.actions.push({ kind: 'shoot', x: u.x + r.x * dir.l, z: u.z + r.z * dir.l });
-    left -= d.shot.ap; i++;
-  }
-  return left;
-}
-
-// view: { units: [...enemy units visible at planning], buildings: [...] }
-export function buildStancePlan(s, u, view, nav) {
-  const def = CONFIG.units[u.type];
-  const plan = emptyPlan();
-  let left = apFor(u);
-  const st = u.stance;
-  const enemies = view.units;
-  const enemyB = view.buildings;
-
-  if (st === 'hold') {
-    fillDefends(u, plan, left);
-    return plan;
-  }
-
-  if (st === 'retreat') {
-    const b = retreatPoint(s, u);
-    if (b) {
-      const r = CONFIG.buildings[b.type].r + CONFIG.unitRadius + 0.6;
-      const dir = norm(u.x - b.x, u.z - b.z);
-      const tx = b.x + (dir.l > 0 ? dir.x : 1) * r, tz = b.z + (dir.l > 0 ? dir.z : 0) * r;
-      if (dist(u.x, u.z, tx, tz) > 0.8) { plan.actions.push({ kind: 'move', ap: left, x: tx, z: tz }); return plan; }
+// Move to striking distance of target e and swing at it (aimed at where it stands now).
+// lead: optional {x,z} offset to aim where it is expected to be.
+export function meleePlan(s, q, e, plan, left, lead = null) {
+  const def = defOf(q);
+  const r = radiusOf(q), re = radiusOf(e);
+  const strike = def.attack.ap;
+  const want = r + re + def.attack.reach * 0.55; // stop well inside reach
+  const d = dist(q.x, q.z, e.x, e.z);
+  let fromX = q.x, fromZ = q.z;
+  if (d > want) {
+    const nav = Nav.for(obstacles(s), r, navKey(s));
+    const pts = nav.path(q.x, q.z, e.x, e.z);
+    // stop `want` short of the target
+    const full = pathAP(s.terrain, q.x, q.z, pts, def.tier);
+    const cut = trimPath(q.x, q.z, pts, want);
+    const ap = Math.ceil(pathAP(s.terrain, q.x, q.z, cut, def.tier)) + 1;
+    if (ap + strike > left) {
+      // can't strike this round: walk toward it with everything
+      plan.actions.push({ kind: 'move', pts: cut.length ? cut : pts, ap: left });
+      void full;
+      return 0;
     }
-    fillDefends(u, plan, left);
+    plan.actions.push({ kind: 'move', pts: cut, ap });
+    left -= ap;
+    const end = walkAP(s.terrain, q.x, q.z, cut, ap, def.tier);
+    fromX = end.x; fromZ = end.z;
+  }
+  const ax = e.x + (lead ? lead.x : 0), az = e.z + (lead ? lead.z : 0);
+  while (left >= strike) {
+    plan.actions.push({ kind: 'swing', x: ax, z: az });
+    left -= strike;
+  }
+  void fromX; void fromZ;
+  return left;
+}
+
+// polyline from (ax,az) through pts, shortened by `cut` at the end
+export function trimPath(ax, az, pts, cut) {
+  const all = [{ x: ax, z: az }, ...pts];
+  let total = 0;
+  for (let i = 1; i < all.length; i++) total += dist(all[i - 1].x, all[i - 1].z, all[i].x, all[i].z);
+  let keep = total - cut;
+  if (keep <= 0.05) return [];
+  const out = [];
+  for (let i = 1; i < all.length; i++) {
+    const a = all[i - 1], b = all[i], l = dist(a.x, a.z, b.x, b.z);
+    if (l >= keep) { const t = keep / l; out.push({ x: a.x + (b.x - a.x) * t, z: a.z + (b.z - a.z) * t }); return out; }
+    keep -= l; out.push(b);
+  }
+  return out;
+}
+
+export function buildStancePlan(s, q, enemies) {
+  const def = defOf(q);
+  const plan = emptyPlan();
+  let left = apFor(q);
+  const st = q.stance;
+  if (q.role === 'builder') {
+    // builders left alone keep at their task, finish a nearby site, or gather resources
+    if (st === 'hold') return plan;
+    const b = builderIdleTarget(s, q);
+    if (b) plan.actions.push({ kind: 'work', x: b.x, z: b.z, ap: left });
     return plan;
   }
-
-  if (!def.melee) {
-    // Ranged unit
-    const range = def.shot.range;
-    const anchorPt = st === 'holdground' ? (u.anchor || u) : u;
-    const tgt = nearest(u, enemies, range) || nearest(u, enemyB, range);
-    if (st === 'advance' && !tgt && u.anchor && dist(u.x, u.z, u.anchor.x, u.anchor.z) > 1.5) {
-      plan.actions.push({ kind: 'move', ap: left, x: u.anchor.x, z: u.anchor.z });
+  // advance with the enemy HQ known and nobody close by: go and attack the HQ itself
+  if (st === 'advance') {
+    const hq = knownEnemyHq(s, q.owner);
+    if (hq && !nearestEnemy(s, q, enemies, 10)) {
+      const ht = { id: hq.id, owner: 1 - q.owner, faction: s.players[1 - q.owner].faction, role: 'fighter', x: hq.x, z: hq.z, fx: 1, fz: 0, models: 4, hp: hq.hp, cd: {} };
+      if (isShooter(def)) {
+        const range = def.attack.range, d = dist(q.x, q.z, hq.x, hq.z) - 2;
+        if (d > range - 0.5) {
+          const nav = Nav.for(obstacles(s), radiusOf(q), navKey(s));
+          const pts = trimPath(q.x, q.z, nav.path(q.x, q.z, hq.x, hq.z), range - 1);
+          if (pts.length) plan.actions.push({ kind: 'move', pts, ap: left });
+          return plan;
+        }
+        while (left >= def.attack.ap) { plan.actions.push({ kind: def.attack.kind, x: hq.x, z: hq.z }); left -= def.attack.ap; }
+        fillDefends(plan, left);
+        return plan;
+      }
+      left = meleePlan(s, q, ht, plan, left);
+      fillDefends(plan, left);
       return plan;
     }
-    if (tgt) {
-      const isUnitT = tgt.id[0] === 'u';
-      if (st === 'guard' || st === 'holdground') { plan.overwatch = 1; left -= CONFIG.overwatchCost; }
-      left = rangedFirePlan(u, tgt, left, plan, isUnitT && st !== 'advance');
-      fillDefends(u, plan, left);
-    } else {
-      plan.overwatch = 2; left -= 2 * CONFIG.overwatchCost;
-      fillDefends(u, plan, left);
+  }
+  if (!enemies.length && st === 'advance') {
+    // nobody in sight: march on the enemy HQ if we know where it is, else into the enemy half
+    // HQ unknown: try the possible HQ spots one by one (the nearest one we can't see right now)
+    const known = knownEnemyHq(s, q.owner);
+    let hq = known;
+    if (!hq) {
+      const obs = observers(s, q.owner);
+      const spots = HQ_SPOTS.map(z => q.owner === 0 ? mirror({ x: HQ_X, z }) : { x: HQ_X, z })
+        .filter(sp => !obs.some(o => canSee(s.terrain, o.x, o.z, o.range, sp.x, sp.z)))
+        .sort((a, b) => dist(q.x, q.z, a.x, a.z) - dist(q.x, q.z, b.x, b.z));
+      hq = spots[0] || { x: q.owner === 0 ? RULES.board.w - 8 : 8, z: RULES.board.h / 2 };
     }
-    void anchorPt;
-    return plan;
-  }
-
-  // Melee unit
-  if (st === 'holdground') {
-    const a = u.anchor || { x: u.x, z: u.z };
-    const leash = { x: a.x, z: a.z, r: CONFIG.stance.holdGroundLeash };
-    const tgt = nearest(u, enemies, leash.r + CONFIG.meleeReach + 2 * CONFIG.unitRadius, a);
-    if (tgt) left = meleeAttackPlan(nav, u, tgt, left, plan, leash);
-    else if (dist(u.x, u.z, a.x, a.z) > 0.6) {
-      const need = approachAP(nav, u, a.x, a.z, 0);
-      const ap = Math.min(need, left);
-      plan.actions.push({ kind: 'move', ap, x: a.x, z: a.z });
-      left -= ap;
+    if (hq) {
+      const nav = Nav.for(obstacles(s), radiusOf(q), navKey(s));
+      const pts = trimPath(q.x, q.z, nav.path(q.x, q.z, hq.x, hq.z), 3.2);
+      if (pts.length) { plan.actions.push({ kind: 'move', pts, ap: left }); return plan; }
     }
-    fillDefends(u, plan, left);
+  }
+  if (st === 'hold' || !enemies.length) { fillDefends(plan, left); return plan; }
+  if (isShooter(def)) {
+    const range = def.attack.range;
+    const t = nearestEnemy(s, q, enemies, range);
+    if (t) {
+      while (left >= def.attack.ap) { plan.actions.push({ kind: def.attack.kind, x: t.x, z: t.z }); left -= def.attack.ap; }
+      fillDefends(plan, left);
+      return plan;
+    }
+    const e = nearestEnemy(s, q, enemies);
+    if (st === 'advance') {
+      const nav = Nav.for(obstacles(s), radiusOf(q), navKey(s));
+      const pts = trimPath(q.x, q.z, nav.path(q.x, q.z, e.x, e.z), range * 0.8);
+      if (pts.length) { plan.actions.push({ kind: 'move', pts, ap: left }); return plan; }
+    }
+    // guard: watch the nearest enemy's approach
+    plan.overwatch = { x: e.x, z: e.z }; left -= RULES.overwatchCost;
+    fillDefends(plan, left);
     return plan;
   }
-
-  const engage = st === 'advance' ? CONFIG.stance.advanceEngage : CONFIG.stance.guardRange;
-  const tgt = nearest(u, enemies, engage) || nearest(u, enemyB, engage);
-  if (tgt) {
-    left = meleeAttackPlan(nav, u, tgt, left, plan);
-    fillDefends(u, plan, left);
-    return plan;
-  }
-  if (st === 'advance' && u.anchor && dist(u.x, u.z, u.anchor.x, u.anchor.z) > 1.5) {
-    plan.actions.push({ kind: 'move', ap: left, x: u.anchor.x, z: u.anchor.z });
-    return plan;
-  }
-  fillDefends(u, plan, left);
+  const t = nearestEnemy(s, q, enemies, st === 'advance' ? 1e9 : GUARD_RANGE);
+  // already in contact: prepare a parry before trading blows
+  if (t && def.parry && nearestEnemy(s, q, enemies, RULES.engageGap)) { plan.parry = true; left -= RULES.parryCost; }
+  if (t) left = meleePlan(s, q, t, plan, left);
+  fillDefends(plan, left);
   return plan;
 }

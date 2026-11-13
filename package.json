@@ -4,6 +4,7 @@
   "type": "module",
   "scripts": {
     "test": "node tests/sim.test.mjs",
+    "test:v3": "node v3/tests/sim.test.mjs",
     "serve": "python3 -m http.server 8080"
   }
 }
