@@ -2,9 +2,13 @@
 // Time is in AP units (global). Each tier is preceded by a short gap so tiers read as chapters.
 const GAP = 14;
 
+import { canSee } from '../sim/vision.js';
+import { defOf } from '../sim/state.js';
+
 export class Timeline {
-  constructor(pre, log) {
-    this.pre = pre; this.log = log;
+  // fog: { me, terrain } -> enemies are only shown while one of my squads (or buildings) sees them
+  constructor(pre, log, fog = null) {
+    this.pre = pre; this.log = log; this.fog = fog; this.visCache = new Map();
     this.sections = [];  // {kind, tier, t0, t1, squads}
     this.events = [];    // events with global T
     this.keys = new Map();   // id -> [[T,x,z,fx,fz]]
@@ -91,7 +95,7 @@ export class Timeline {
       let struck;
       for (const e of this.events) { if (e.T > T) break; if (e.type === 'hit' && e.dst === q.id) struck = T - e.T; }
       const info = this.info(q.id, T);
-      out.push({ ...q, ...p, hp: h.hp, models: h.models, dying, atk, struck, flash: struck !== undefined && struck < 5 ? 1 - struck / 5 : 0,
+      out.push({ ...q, ...p, visible: this.visibleAt(q.id, T), hp: h.hp, models: h.models, dying, atk, struck, flash: struck !== undefined && struck < 5 ? 1 - struck / 5 : 0,
         defLeft: info.defLeft, tierShown: info.tier, upgrades: info.upgrades, stanceShown: info.stance, parryShown: info.parry, watchShown: info.watch,
         acting: !!acting && acting.has(q.id) && h.hp > 0 && (dying === undefined) });
     }
@@ -126,7 +130,34 @@ export class Timeline {
     return out;
   }
 
-  activeTeles(T) { return this.teles.filter(t => T >= t.T0 && T <= t.T1 + 4); }
+  activeTeles(T) { return this.teles.filter(t => T >= t.T0 && T <= t.T1 + 4 && this.visibleAt(t.id, T)); }
+
+  // can my side see squad `id` at time T? (my own squads always count as visible)
+  visibleAt(id, T) {
+    if (!this.fog) return true;
+    const q = this.pre.squads.find(x => x.id === id);
+    if (!q || q.owner === this.fog.me) return true;
+    const key = id + '|' + Math.floor(T);
+    if (this.visCache.has(key)) return this.visCache.get(key);
+    const tp = this.pose(id, T);
+    let v = false;
+    for (const o of this.pre.squads) {
+      if (o.owner !== this.fog.me) continue;
+      const dT = this.down.get(o.id);
+      if (dT !== undefined && T >= dT) continue;
+      const op = this.pose(o.id, T);
+      if (canSee(this.fog.terrain, op.x, op.z, defOf(o).vision, tp.x, tp.z)) { v = true; break; }
+    }
+    if (!v) for (const b of this.pre.buildings || []) if (b.owner === this.fog.me && b.vision && canSee(this.fog.terrain, b.x, b.z, b.vision, tp.x, tp.z)) { v = true; break; }
+    this.visCache.set(key, v);
+    return v;
+  }
+  // was squad `id` seen at any point this round?
+  everSeen(id) {
+    if (!this.fog) return true;
+    for (let T = 0; T <= this.total; T += 4) if (this.visibleAt(id, T)) return true;
+    return false;
+  }
   eventsBetween(a, b) { return this.events.filter(e => e.T > a && e.T <= b); }
 }
 

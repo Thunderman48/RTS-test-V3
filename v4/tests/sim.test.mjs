@@ -4,6 +4,7 @@ import { createGame, addSquad, defOf, radiusOf, emptyOrders, emptyPlan } from '.
 import { resolveRound, damageAfter, engagedWith } from '../js/sim/resolve.js';
 import { cpUsage, validateOrders } from '../js/sim/orders.js';
 import { aiOrders, aiMemory } from '../js/ai/ai.js';
+import { canSee, visibleTo } from '../js/sim/vision.js';
 import { Nav, walkAP } from '../js/sim/nav.js';
 
 let pass = 0, fail = 0;
@@ -314,8 +315,8 @@ test('charges weave through their own lines and end beside friends', () => {
 test('balance report: AI vs AI with both factions on both sides', () => {
   const wins = { kingdom: 0, undead: 0, draw: 0 };
   for (let seed = 1; seed <= 6; seed++) for (const fac of [['kingdom', 'undead'], ['undead', 'kingdom']]) {
-    let s = createGame(seed, fac); let mem = aiMemory(s);
-    while (s.winner === null) { const o = [aiOrders(s, 0, mem), aiOrders(s, 1, mem)]; mem = aiMemory(s); s = resolveRound(s, o).state; }
+    let s = createGame(seed, fac); const mem = [aiMemory(), aiMemory()];
+    while (s.winner === null) { const o = [aiOrders(s, 0, mem[0]), aiOrders(s, 1, mem[1])]; s = resolveRound(s, o).state; }
     if (s.winner === -1) wins.draw++; else wins[fac[s.winner]]++;
   }
   console.log('       wins over 12 games:', JSON.stringify(wins));
@@ -410,6 +411,33 @@ test('Wraiths drift through squads', () => {
   o[1].squads.q1 = plan([{ kind: 'move', pts: [{ x: 17, z: 3 }], ap: 100 }]);
   const { state } = resolveRound(s, o);
   ok(state.squads.find(q => q.id === 'q1').x > 14, 'passed through the tank');
+});
+
+console.log('M3 fog of war');
+
+test('sight: range, walls, deep forests, and squads hidden inside forests', () => {
+  const t = createGame(1).terrain;
+  ok(canSee(t, 4, 2, 11, 12, 2), 'open ground in range');
+  ok(!canSee(t, 4, 2, 11, 16, 2), 'out of range');
+  ok(!canSee(t, 22, 8, 12, 22, 19), 'ruin wall blocks sight');            // wall at x 19.9-24.1, z 13.1-13.7
+  ok(!canSee(t, 9, 7.5, 12, 21, 7.5), 'through a whole forest is blocked'); // forest 15,7.5 r3.2
+  ok(!canSee(t, 9, 7.5, 12, 15, 7.5), 'inside a forest: only seen up close');
+  ok(canSee(t, 11.5, 7.5, 12, 14, 7.5), 'seen from within 4 inches');
+});
+
+test('stance squads ignore enemies they cannot see', () => {
+  // an enemy behind the ruin wall, inside guard range but out of sight
+  const s = arena([[0, 'fighter', 22, 11], [1, 'fighter', 22, 16.4]]);
+  ok(!visibleTo(s, 0).has('q2'), 'hidden behind the wall');
+  const { log } = resolveRound(s, [orders(), { squads: {}, stances: { q2: 'hold' } }]);
+  ok(!events(log).some(e => e.type === 'act' && e.id === 'q1'), 'guard squad does not react');
+});
+
+test('the AI only targets what it sees or remembers', () => {
+  const s = arena([[0, 'fighter', 6, 3], [1, 'fighter', 44, 29]]);
+  const mem = aiMemory();
+  aiOrders(s, 1, mem);
+  ok(!mem.seen.q1, 'nothing seen across the board');
 });
 
 console.log(`\n${pass} passed, ${fail} failed`);

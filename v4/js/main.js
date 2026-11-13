@@ -6,6 +6,7 @@ import { planCost, actionCost } from './sim/orders.js';
 import { resolveRound, arcHits, losCut, inCover, clampAim, engagedWith } from './sim/resolve.js';
 import { segCircle } from './sim/geom.js';
 import { aiOrders, aiMemory } from './ai/ai.js';
+import { visibleTo, canSee } from './sim/vision.js';
 import { View } from './render/view.js';
 import { buildTable } from './render/table.js';
 import { SquadView, LEAD } from './render/squads.js';
@@ -141,7 +142,7 @@ class Game {
     document.documentElement.style.setProperty('--me', TEAM[this.me]);
     $('crest').style.background = TEAM[this.me];
     this.state = createGame((Math.random() * 1e9) | 0, ['kingdom', 'undead']);
-    this.memory = aiMemory(this.state);
+    this.memory = aiMemory();
     $('menu').classList.add('hidden');
     $('hud').classList.remove('hidden');
     for (const v of this.views.values()) v.destroy();
@@ -154,8 +155,19 @@ class Game {
     if (!localStorage.getItem('tiers-v4-help')) { try { localStorage.setItem('tiers-v4-help', '1'); } catch {} $('help-body').innerHTML = helpHTML(); $('help').classList.remove('hidden'); }
   }
 
+  // what my side sees now; remember where hidden enemies were last seen
+  updateFog() {
+    this.vis = visibleTo(this.state, this.me);
+    this.seen = this.seen || {};
+    const alive = new Set(this.state.squads.map(q => q.id));
+    for (const q of this.state.squads) if (this.vis.has(q.id)) this.seen[q.id] = { ...q, round: this.state.round };
+    for (const id of Object.keys(this.seen)) if (!alive.has(id)) delete this.seen[id];
+  }
+  canSeeEnemy(id) { return !this.vis || this.vis.has(id); }
+
   beginPlanning() {
     this.phase = 'planning';
+    this.updateFog();
     this.planner.reset();
     this.tele.clear(); this.texts.clear(); this.shots.clear();
     if (this.selected && !this.state.squads.some(q => q.id === this.selected)) this.selected = null;
@@ -181,7 +193,6 @@ class Game {
     if (this.phase !== 'planning') return;
     const mine = this.planner.final();
     const theirs = aiOrders(this.state, this.ai, this.memory);
-    this.memory = aiMemory(this.state);
     const orders = []; orders[this.me] = mine; orders[this.ai] = theirs;
     const pre = this.state;
     const { state: post, log } = resolveRound(pre, orders);
@@ -194,11 +205,12 @@ class Game {
     $('pb-next').textContent = rehearsal ? '◂ Back to planning' : 'Next round ▸';
     $('hintbar').classList.add('hidden');
     this.pre = pre; this.post = post; this.log = log;
-    this.tl = new Timeline(pre, log);
+    this.tl = new Timeline(pre, log, { me: this.me, terrain: pre.terrain });
     this.T = 0; this.playing = true; this.lastT = 0;
     this.shotList = [];
     for (const e of this.tl.events) if (e.type === 'release' && (e.kind === 'volley' || e.kind === 'lob' || e.kind === 'storm' || e.kind === 'pierce')) {
       const v = this.views.get(e.id); if (!v) continue;
+      if (!this.tl.visibleAt(e.id, e.T) && !this.tl.visibleAt(e.id, e.T - 4)) continue;
       const lead = e.overwatch ? 2.5 : e.kind === 'storm' ? 7 : (LEAD[v.style] || 4), T0 = e.T - lead;
       const p = this.tl.pose(e.id, T0), h = this.tl.health(e.id, T0);
       this.shotList.push({ key: e.id + ':' + e.T, T0, T1: e.T, from: v.muzzles(p.x, p.z, p.fx, p.fz, h.models), to: { x: e.ex, z: e.ez }, arc: e.kind === 'volley' || e.kind === 'pierce' ? 0.4 : 3.2 });
@@ -254,12 +266,21 @@ class Game {
     for (const d of list) {
       let v = this.views.get(d.id);
       if (!v) { v = new SquadView(d, this.view.layers.units); this.views.set(d.id, v); }
-      v.update(d, dt, time, snap);
+      // jump (don't glide) when a squad switches between seen / hidden / last-seen
+      const mode = d.visible === false ? 'h' : d.lastSeen !== undefined ? 'g' : 'v';
+      const jump = snap || (v.fogMode && v.fogMode !== mode);
+      v.fogMode = mode;
+      v.update(d, dt, time, jump);
     }
   }
 
   planningDisplay() {
-    return this.state.squads.map(q => ({ ...q, selected: q.id === this.selected }));
+    return this.state.squads.map(q => {
+      if (q.owner === this.me || this.canSeeEnemy(q.id)) return { ...q, selected: q.id === this.selected };
+      const m = this.seen?.[q.id];
+      // fog: a hidden enemy shows as a faded marker where it was last seen
+      return m ? { ...m, ghost: true, lastSeen: this.state.round - m.round, selected: false } : { ...q, visible: false };
+    });
   }
 
   changed() { this.dirty = true; }
@@ -406,6 +427,7 @@ class Game {
     const tolPx = 26 / Math.max(1, this.view.pxPerInch(p.x, p.z));
     let best = null, bd = 1e9;
     for (const q of this.state.squads) {
+      if (q.owner !== this.me && !this.canSeeEnemy(q.id)) continue;
       const d = Math.hypot(q.x - p.x, q.z - p.z) - radiusOf(q);
       if (d < tolPx && d < bd) { bd = d; best = q; }
     }
@@ -480,7 +502,7 @@ class Game {
     const dx = p.x - pr.x, dz = p.z - pr.z, l = Math.hypot(dx, dz) || 1;
     const ux = dx / l, uz = dz / l;
     const mark = e => { const m = ring(radiusOf(e) + 0.2, 0.12, COL.bad, 1, 0.08); m.position.x = e.x; m.position.z = e.z; L.add(m); };
-    const enemies = this.state.squads.filter(e => e.owner !== this.me);
+    const enemies = this.state.squads.filter(e => e.owner !== this.me && this.canSeeEnemy(e.id));
     if (kind === 'move') {
       const pv = this.planner.previewMove(q, p.x, p.z);
       const a = pv.line[pv.line.length - 2] || pv.from, bpt = pv.line[pv.line.length - 1] || pv.end, fl = Math.hypot(bpt.x - a.x, bpt.z - a.z);
@@ -730,6 +752,7 @@ class Game {
     for (const d of list) {
       const v = this.views.get(d.id); if (!v) continue;
       seen.add(d.id);
+      if (d.visible === false) { const el = this.labels.get(d.id); if (el) el.style.display = 'none'; continue; }
       let el = this.labels.get(d.id);
       if (!el) { el = document.createElement('div'); el.className = 'sl'; layer.appendChild(el); this.labels.set(d.id, el); }
       const def = defOf(d);
@@ -745,8 +768,14 @@ class Game {
       const engaged = planning && engagedWith(d, this.state.squads).length > 0;
       const cds = planning ? skillsOf(def).filter(k => cdOf(d, k.kind) > 0).map(k => [k, cdOf(d, k.kind)]) : [];
       const cd = cds.map(([k, n]) => k.kind + n).join();
-      const key = `${tier}|${d.models}|${d.hp}|${sel}|${!!plan}|${d.dying !== undefined}|${defs}|${ups}|${stance}|${zoomedOut}|${parry}|${watch}|${engaged}|${cd}`;
-      if (el.dataset.key !== key) {
+      const key = `${tier}|${d.models}|${d.hp}|${sel}|${!!plan}|${d.dying !== undefined}|${defs}|${ups}|${stance}|${zoomedOut}|${parry}|${watch}|${engaged}|${cd}|${d.lastSeen}`;
+      if (el.dataset.key !== key && d.lastSeen !== undefined) {
+        el.dataset.key = key;
+        el.style.setProperty('--team', TEAM[d.owner]);
+        el.innerHTML = `<div class="sl-h"><span class="tr">?</span><span class="nm">${esc(def.name)}</span>${icon(def.role, 14)}</div><div class="sl-s">last seen ${d.lastSeen ? d.lastSeen + ' round' + (d.lastSeen > 1 ? 's' : '') + ' ago' : 'now'}</div>`;
+        el.className = 'sl lastseen';
+        el._w = el.offsetWidth; el._h = el.offsetHeight;
+      } else if (el.dataset.key !== key) {
         el.dataset.key = key;
         el.style.setProperty('--team', TEAM[d.owner]);
         const maxHp = def.models * def.hpPer;
@@ -796,7 +825,7 @@ class Game {
     $('scrub-sections').innerHTML = tl.sections.map(s => `<div style="left:${pct(s.t0 - 14)};width:${pct(s.t1 - s.t0 + 14)}">TIER ${s.tier}</div>`).join('');
     const rows = new Map();
     let n = 0;
-    $('scrub-blocks').innerHTML = tl.blocks.filter(b => b.kind !== 'wait').map(b => {
+    $('scrub-blocks').innerHTML = tl.blocks.filter(b => b.kind !== 'wait' && tl.everSeen(b.id)).map(b => {
       if (!rows.has(b.id)) rows.set(b.id, n++);
       const q = tl.pre.squads.find(x => x.id === b.id);
       const col = b.kind === 'move' ? (q.owner === this.me ? '#e8e4da' : '#7c766c') : ACT_COL[b.kind] || 'var(--volley)';
@@ -806,7 +835,7 @@ class Game {
 
   buildLog() {
     const tl = this.tl;
-    const name = id => { const q = tl.pre.squads.find(x => x.id === id); return q ? `<b class="t${q.owner}">${q.owner === this.me ? 'Your' : 'Enemy'} ${esc(defOf(q).name)}</b>` : '?'; };
+    const name = id => { const q = tl.pre.squads.find(x => x.id === id); if (!q) return '?'; if (q.owner !== this.me && !tl.everSeen(id)) return `<b class="t${q.owner}">An unseen enemy</b>`; return `<b class="t${q.owner}">${q.owner === this.me ? 'Your' : 'Enemy'} ${esc(defOf(q).name)}</b>`; };
     const lines = [];
     for (const e of tl.events) {
       const verb = { swing: 'cuts into', volley: 'shoots', lob: 'rains arrows on', storm: 'brings an Arrow Storm down on', sweep: 'sweeps through', pierce: 'drives a piercing bolt through', charge: 'charges into', blast: 'blasts', parting: 'lands a parting blow on', riposte: 'ripostes' };
@@ -835,7 +864,7 @@ class Game {
     // floating texts for events passed while playing forward
     if (T > this.lastT) {
       for (const e of tl.eventsBetween(this.lastT, T)) {
-        const at = id => this.sampleCache?.find(x => x.id === id);
+        const at = id => { const d = this.sampleCache?.find(x => x.id === id); return d && d.visible !== false ? d : null; };
         if (e.type === 'hit') {
           const q = at(e.dst);
           if (q) {
@@ -876,7 +905,8 @@ class Game {
     let cap;
     if (!sec) cap = T >= tl.total ? (this.rehearsal ? 'Rehearsal over. Drag the timeline to watch again, or go <b>back to planning</b>.' : 'Round over. Drag the timeline to watch again, or press <b>Next round</b>.') : 'Starting…';
     else {
-      const names = sec.squads.map(id => { const q = tl.pre.squads.find(x => x.id === id); return q ? `${q.owner === this.me ? '' : 'enemy '}${defOf(q).name}` : ''; });
+      const names = sec.squads.map(id => { const q = tl.pre.squads.find(x => x.id === id); return q && (q.owner === this.me || tl.everSeen(id)) ? `${q.owner === this.me ? '' : 'enemy '}${defOf(q).name}` : ''; }).filter(Boolean);
+      if (sec.squads.some(id => { const q = tl.pre.squads.find(x => x.id === id); return q && q.owner !== this.me && !tl.everSeen(id); })) names.push('unseen enemies');
       cap = `<b>Tier ${sec.tier}</b>${sec.tier >= 6 ? ' · fast' : sec.tier <= 4 ? ' · slow' : ''}: ${esc(names.join(', '))} act at the same time.`;
     }
     $('pb-caption').innerHTML = (this.rehearsal ? '<span class="rh">Rehearsal: enemies stand still</span> ' : '') + cap;
@@ -893,7 +923,7 @@ class Game {
     const L = this.view.layers.fx;
     for (const [k, m] of this.watchMeshes) if (!active.some(w => w.key === k)) { L.remove(m); m.geometry?.dispose(); m.material?.dispose(); this.watchMeshes.delete(k); }
     for (const w of active) {
-      const d = list.find(x => x.id === w.id); if (!d || d.dying !== undefined) continue;
+      const d = list.find(x => x.id === w.id); if (!d || d.dying !== undefined || d.visible === false) { const old = this.watchMeshes.get(w.key); if (old) { this.view.layers.fx.remove(old); old.geometry.dispose(); old.material.dispose(); this.watchMeshes.delete(w.key); } continue; }
       const key = `${d.x.toFixed(2)},${d.z.toFixed(2)},${d.fx.toFixed(2)},${d.fz.toFixed(2)}`;
       const old = this.watchMeshes.get(w.key);
       if (old && old.userData.key === key) continue;
@@ -997,6 +1027,8 @@ function helpHTML() {
 <li><b>Defend</b>: each defend halves one hit. <b>Parry</b> (fighters only): blocks the next melee hit and strikes back. <b>Overwatch</b> (shooters): fires once at the first enemy that moves inside the cone, even in another tier. <b>Act earlier</b>: moves the squad up a tier.</li>
 <li>You can command <b>${RULES.cp} squads</b> per round (the hero is free). The others follow their stance: <b>Guard</b> fights what comes close (shooters set overwatch), <b>Hold</b> stays and defends, <b>Advance</b> marches on the nearest enemy.</li>
 </ul>
+<h3>Fog of war</h3>
+<p>You only see enemies your squads can see: within their vision range, not behind walls or rocks, and not deep in a forest (a squad inside a forest is only seen from close by). Hidden enemies show as faded <b>last seen</b> markers. The battle replay only shows what your squads saw.</p>
 <h3>Engagement</h3>
 <p>Squads touching an enemy melee squad are <b>engaged</b> (red ring). Stepping away costs <b>30 AP</b> and gives that enemy a free <b>parting blow</b>. Wraiths ignore engagement.</p>
 <h3>Squads</h3>

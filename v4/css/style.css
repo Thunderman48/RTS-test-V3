@@ -282,3 +282,5 @@ button { font-family: inherit; color: inherit; cursor: pointer; touch-action: ma
 
 .sl .st.cdc { color: var(--c); font-weight: 900; }
 .sl .st.cdc .ic { width: 11px; height: 11px; }
+.sl.lastseen { opacity: .7; border-style: dashed; background: rgba(20,18,16,.6); }
+.sl.lastseen .sl-s { font-style: italic; color: var(--muted); }

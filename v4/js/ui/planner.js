@@ -16,7 +16,7 @@ export class Planner {
   apLeft(q) { const p = this.plan(q.id); return apFor(q) - (p ? planCost(q, p) : 0); }
   skillUsed(id, kind) { const p = this.plan(id); return !!p && p.actions.some(a => a.kind === kind); }
   skillReady(q, kind) { return !!skillOf(defOf(q), kind) && cdOf(q, kind) === 0 && !this.skillUsed(q.id, kind); }
-  enemies(q) { return this.s.squads.filter(e => e.owner !== q.owner && e.hp > 0); }
+  enemies(q) { return this.s.squads.filter(e => e.owner !== q.owner && e.hp > 0 && (!this.g.canSeeEnemy || this.g.canSeeEnemy(e.id))); }
 
   // Take control (1 CP, hero free). Returns the plan or null.
   ensure(id) {

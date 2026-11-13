@@ -6,17 +6,34 @@ import { emptyOrders, emptyPlan, defOf, radiusOf, apFor } from '../sim/state.js'
 import { nearestEnemy, meleePlan, trimPath } from '../sim/stances.js';
 import { Nav } from '../sim/nav.js';
 import { dist } from '../sim/geom.js';
+import { visibleTo } from '../sim/vision.js';
+import { DEPLOY } from '../data/map.js';
 
-export function aiOrders(s, p, memory = {}) {
+// memory (per side, updated in place): seen = last-seen enemy squads, prev = positions seen last round
+export function aiOrders(s, p, memory = aiMemory()) {
   const o = emptyOrders();
+  memory.seen = memory.seen || {}; memory.prev = memory.prev || {};
   const mine = s.squads.filter(q => q.owner === p && q.hp > 0);
-  const enemies = s.squads.filter(q => q.owner !== p && q.hp > 0);
-  if (!enemies.length) return o;
+  // fog: the AI only knows what its side sees, plus where it last saw the others (up to 3 rounds)
+  const vis = visibleTo(s, p);
+  const alive = new Set(s.squads.map(q => q.id));
+  for (const e of s.squads) if (vis.has(e.id)) memory.seen[e.id] = { ...e, round: s.round };
+  for (const id of Object.keys(memory.seen)) if (!alive.has(id) || s.round - memory.seen[id].round > 3) delete memory.seen[id];
+  let enemies = Object.values(memory.seen).map(e => vis.has(e.id) ? s.squads.find(q => q.id === e.id) : e);
+  if (!enemies.length) {
+    // nothing known: scout toward where the enemy deployed
+    const c = DEPLOY.reduce((a, d) => ({ x: a.x + d.x / DEPLOY.length, z: a.z + d.z / DEPLOY.length }), { x: 0, z: 0 });
+    const home = p === 0 ? { x: RULES.board.w - c.x, z: RULES.board.h - c.z } : c;
+    enemies = [{ id: '?', owner: 1 - p, faction: s.players[1 - p].faction, role: 'fighter', x: home.x, z: home.z, fx: 1, fz: 0, models: 4, hp: 80, cd: {} }];
+  }
   for (const q of mine) if (q.stance !== 'advance') o.stances[q.id] = 'advance';
-  // lead targets by their last movement (memory: id -> {x,z} from last round)
+  // lead targets by their last movement (only for squads seen both rounds)
+  const prev = memory.prev;
+  memory.prev = {};
+  for (const e of s.squads) if (vis.has(e.id)) memory.prev[e.id] = { x: e.x, z: e.z };
   const lead = e => {
-    const m = memory[e.id];
-    if (!m) return null;
+    const m = prev[e.id];
+    if (!m || !vis.has(e.id)) return null;
     const vx = (e.x - m.x) * 0.5, vz = (e.z - m.z) * 0.5;
     return { x: vx, z: vz };
   };
@@ -97,8 +114,4 @@ export function aiOrders(s, p, memory = {}) {
   return o;
 }
 
-export function aiMemory(s) {
-  const m = {};
-  for (const q of s.squads) m[q.id] = { x: q.x, z: q.z };
-  return m;
-}
+export function aiMemory() { return { seen: {}, prev: {} }; }

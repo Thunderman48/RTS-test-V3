@@ -15,6 +15,7 @@ import { clone, defOf, radiusOf, modelsFor, speedOf } from './state.js';
 import { validateOrders, actionCost } from './orders.js';
 import { buildStancePlan } from './stances.js';
 import { terrainFactor, pointBlocked, blocks } from './nav.js';
+import { visibleTo } from './vision.js';
 
 const r3 = v => Math.round(v * 1000) / 1000;
 const MELEE_HITS = ['swing', 'charge', 'parting'];
@@ -82,13 +83,15 @@ export function resolveRound(state0, ordersIn) {
   }
   // planning-time knowledge (everything visible until fog arrives in M3)
   const snapshot = s.squads.filter(q => q.hp > 0).map(q => ({ ...q }));
+  // fog: stance squads only react to enemies their side can see
+  const seenBy = [visibleTo(s, 0), visibleTo(s, 1)];
 
   const rts = [];
   for (const q of s.squads) {
     if (q.hp <= 0) continue;
     const def = defOf(q);
     const direct = orders[q.owner].squads[q.id];
-    const plan = direct || buildStancePlan(s, q, snapshot.filter(e => e.owner !== q.owner), snapshot);
+    const plan = direct || buildStancePlan(s, q, snapshot.filter(e => e.owner !== q.owner && seenBy[q.owner].has(e.id)), snapshot);
     rts.push({
       q, def, plan, direct: !!direct,
       actions: plan.actions.map(a => ({ ...a, cost: actionCost(q, a) })),
