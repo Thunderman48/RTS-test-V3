@@ -24,17 +24,19 @@ export const RULES = {
   coverMult: 0.5,               // volleys through a forest deal half damage
   roundLimit: 30,
   siegeMult: 2.5,               // attacks deal this much more to buildings
-  // M3 base & economy
-  startSupply: 40,
-  hqIncome: 8,
-  shrineIncome: 4,
-  shrineRadius: 3,
+  // M3 base & economy (each faction's currency and income: FACTIONS[f].eco)
+  shrineRadius: 3,              // resource sites: the ring drawn around them
   armyCap: 8,
+  maxBuilders: 3,
   buildZone: 16,                // own third of the board (inches from your edge)
-  buildRange: 9,                // new buildings within this distance of one of yours
   maxBannerCp: 2,
+  maxFarms: 4,
   trainRounds: 1,
-  siteHp: 0.4,                  // a construction site starts with this share of its HP
+  siteHp: 0.3,                  // a construction site starts with this share of its HP; work fills the rest
+  workReach: 1.0,               // a builder works on a site while its edge is this close to the footprint
+  soulRange: 8,                 // undead: deaths within this of an undead squad / collector pay souls
+  soulPerModel: 2,
+  soulPerHero: 10,
   planningTimerSec: 120,
 };
 
@@ -86,7 +88,12 @@ export const FACTIONS = {
       fighter: { name: 'Men-at-arms', role: 'fighter', parry: true, models: 4, hpPer: 20, armor: 7, tier: 5, look: 'sword', vision: 9, defends: 1, attack: SWING(25, 5, 1.5) },
       ranged:  { name: 'Crossbows', role: 'ranged', models: 4, hpPer: 15, armor: 3, tier: 5, look: 'crossbow', vision: 11, defends: 1, attack: VOLLEY(30, 4, 14), skills: [PIERCE(35, 5, 16)] },
       fast:    { name: 'Outriders', role: 'fast', models: 3, hpPer: 24, armor: 5, tier: 6, look: 'rider', vision: 11, defends: 1, attack: SWING(20, 7, 1.7), skills: [CHARGE(35, 9, 9)] },
+      builder: { name: 'Peasants', role: 'builder', models: 2, hpPer: 14, armor: 2, tier: 5, look: 'peasant', vision: 8, defends: 0, attack: SWING(25, 2, 1.2) },
     },
+    // Gold: a steady builder economy (keep, farms, mines on resource sites)
+    eco: { res: 'gold', name: 'Gold', icon: 'gold', start: 40, hq: 7 },
+    buildings: ['barracks', 'tower', 'farm', 'mine', 'banner', 'wall'],
+    train: { builder: 15, tank: 30, fighter: 24, ranged: 26, fast: 30 },
   },
   undead: {
     name: 'Undead Legion', short: 'UND', colorCss: '#9b59d0',
@@ -96,24 +103,32 @@ export const FACTIONS = {
       fighter: { name: 'Skeleton Warband', role: 'fighter', parry: true, models: 5, hpPer: 15, armor: 5, tier: 5, look: 'skeleton', vision: 9, defends: 1, attack: SWING(25, 4, 1.5) },
       ranged:  { name: 'Bone Archers', role: 'ranged', models: 4, hpPer: 16, armor: 2, tier: 5, look: 'archer', vision: 11, defends: 1, attack: VOLLEY(30, 4, 14, 0.9), skills: [STORM(35, 6, 15, 2.2)] },
       fast:    { name: 'Wraiths', role: 'fast', models: 3, hpPer: 24, armor: 4, tier: 6, look: 'wraith', vision: 11, defends: 1, ghost: true, attack: SWING(20, 7, 1.7), skills: [CHARGE(35, 8, 9)] },
+      builder: { name: 'Grave Thralls', role: 'builder', models: 2, hpPer: 14, armor: 2, tier: 4, look: 'thrall', vision: 8, defends: 0, attack: SWING(25, 2, 1.2) },
     },
+    // Souls: fed by death (models dying near undead squads, the crypt, obelisks and soul wells)
+    eco: { res: 'souls', name: 'Souls', icon: 'souls', start: 35, hq: 4 },
+    buildings: ['barracks', 'tower', 'well', 'banner', 'wall'],
+    train: { builder: 15, tank: 30, fighter: 18, ranged: 26, fast: 30 },
   },
 };
 
-// Buildings (both factions share the rules; names and looks differ).
+// Buildings. Builders put them up: `work` is the builder AP needed to finish one.
 //  shape: 'rect' (w x d, rotated by rot 0/90) or 'circle' (r). fire: { dmg (x4 shots), range }
+//  income: per round once finished. site: must stand on a resource site. souls: collects souls nearby.
 export const BUILDINGS = {
-  hq:       { name: { kingdom: 'Keep', undead: 'Crypt' }, icon: 'goal', cost: 0, build: 0, hp: 220, armor: 8, shape: 'rect', w: 4, d: 4, vision: 10, fire: { dmg: 3, range: 8 } },
-  barracks: { name: { kingdom: 'Barracks', undead: 'Ossuary' }, icon: 'spawn', cost: 30, build: 1, hp: 150, armor: 8, shape: 'rect', w: 3.5, d: 2.5, vision: 6 },
-  tower:    { name: { kingdom: 'Watchtower', undead: 'Bone Spire' }, icon: 'range', cost: 25, build: 1, hp: 110, armor: 6, shape: 'circle', r: 0.9, vision: 13, fire: { dmg: 4, range: 11 } },
-  banner:   { name: { kingdom: 'Banner', undead: 'Obelisk' }, icon: 'cp', cost: 20, build: 1, hp: 60, armor: 4, shape: 'circle', r: 0.55, vision: 6, cp: 1 },
-  wall:     { name: { kingdom: 'Palisade', undead: 'Bone Fence' }, icon: 'fortify', cost: 8, build: 0, hp: 80, armor: 6, shape: 'rect', w: 3, d: 0.5, vision: 0 },
+  hq:       { name: { kingdom: 'Keep', undead: 'Crypt' }, icon: 'goal', cost: 0, work: 0, hp: 220, armor: 8, shape: 'rect', w: 4, d: 4, vision: 10, fire: { dmg: 3, range: 8 }, souls: true, trains: ['builder'] },
+  barracks: { name: { kingdom: 'Barracks', undead: 'Ossuary' }, icon: 'spawn', cost: 30, work: 120, hp: 150, armor: 8, shape: 'rect', w: 3.5, d: 2.5, vision: 6, trains: ['tank', 'fighter', 'ranged', 'fast'] },
+  tower:    { name: { kingdom: 'Watchtower', undead: 'Bone Spire' }, icon: 'range', cost: 25, work: 100, hp: 110, armor: 6, shape: 'circle', r: 0.9, vision: 13, fire: { dmg: 4, range: 11 } },
+  banner:   { name: { kingdom: 'Banner', undead: 'Obelisk' }, icon: 'cp', cost: 20, work: 60, hp: 60, armor: 4, shape: 'circle', r: 0.55, vision: 6, cp: 1, souls: true },
+  wall:     { name: { kingdom: 'Palisade', undead: 'Bone Fence' }, icon: 'fortify', cost: 6, work: 30, hp: 80, armor: 6, shape: 'rect', w: 3, d: 0.5, vision: 0 },
+  farm:     { name: { kingdom: 'Farm', undead: 'Farm' }, icon: 'farm', cost: 20, work: 60, hp: 70, armor: 3, shape: 'rect', w: 2.6, d: 2.2, vision: 5, income: 4 },
+  mine:     { name: { kingdom: 'Mine', undead: 'Mine' }, icon: 'node', cost: 30, work: 80, hp: 100, armor: 6, shape: 'circle', r: 1.1, vision: 7, income: 6, site: true },
+  well:     { name: { kingdom: 'Soul Well', undead: 'Soul Well' }, icon: 'souls', cost: 25, work: 80, hp: 90, armor: 5, shape: 'circle', r: 1.1, vision: 7, income: 4, site: true, souls: true },
 };
-export const BUILD_ORDER = ['barracks', 'tower', 'banner', 'wall'];
-// what a barracks can train (supply cost); heroes can't be trained
-export const TRAIN_COST = { tank: 30, fighter: 24, ranged: 26, fast: 30 };
+export const ecoOf = faction => FACTIONS[faction].eco;
+export const trainCost = (faction, role) => FACTIONS[faction].train[role] || 0;
 
-export const ROLE_ORDER = ['hero', 'tank', 'fighter', 'ranged', 'fast'];
+export const ROLE_ORDER = ['hero', 'tank', 'fighter', 'ranged', 'fast', 'builder'];
 
 // Squad footprint radius (inches) from model count and look
 export function squadRadius(def, models) {

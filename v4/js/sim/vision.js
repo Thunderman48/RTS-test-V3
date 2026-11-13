@@ -63,14 +63,28 @@ export function visibleTo(s, p, obs = observers(s, p)) {
   return seen;
 }
 
-// ids of enemy buildings side p sees right now (the enemy HQ is always known)
+// ids of enemy buildings side p sees right now
 export function buildingsSeenBy(s, p, obs = observers(s, p)) {
   const seen = new Set();
   for (const b of s.buildings || []) {
     if (b.owner === p || b.hp <= 0) continue;
-    if (b.type === 'hq') { seen.add(b.id); continue; }
     const r = hitRadius(b);
     for (const o of obs) if (canSee(s.terrain, o.x, o.z, o.range + r, b.x, b.z)) { seen.add(b.id); break; }
   }
   return seen;
 }
+// what each side knows about enemy buildings: remembered once seen, forgotten when seen gone
+const snap = b => ({ id: b.id, owner: b.owner, type: b.type, rot: b.rot, x: b.x, z: b.z, w: b.w, d: b.d, r: b.r, hp: b.hp, build: b.build });
+export function updateIntel(s) {
+  s.intel = s.intel || [{ known: {} }, { known: {} }];
+  for (const p of [0, 1]) {
+    const obs = observers(s, p), known = s.intel[p].known;
+    for (const id of buildingsSeenBy(s, p, obs)) known[id] = snap(s.buildings.find(b => b.id === id));
+    for (const id of Object.keys(known)) {
+      if ((s.buildings || []).some(b => b.id === id && b.hp > 0)) continue;
+      const k = known[id];
+      if (obs.some(o => canSee(s.terrain, o.x, o.z, o.range + 1, k.x, k.z))) delete known[id];
+    }
+  }
+}
+export const knownEnemyHq = (s, p) => Object.values((s.intel && s.intel[p].known) || {}).find(b => b.type === 'hq') || null;

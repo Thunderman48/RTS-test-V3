@@ -103,6 +103,33 @@ function palisade(k, P, und, w, d) {
   k.hull(box(0, 0.7, 0, along ? len : 0.12, 0.12, along ? 0.12 : len), und ? 0x5b3a7a : DWOOD);
 }
 
+// Kingdom farm: a little barn beside furrowed field rows and a haystack
+function farm(k, P) {
+  for (let i = 0; i < 4; i++) k.hull(jit(box(-0.45 + i * 0.42, 0.06, 0.25, 0.3, 0.12, 1.6), 0.02), i % 2 ? 0x6b4a2a : 0x7a5632);
+  for (let i = 0; i < 4; i++) for (let j = 0; j < 3; j++) k.hull(jit([...ring(-0.45 + i * 0.42, 0.1, -0.3 + j * 0.55, 0.1, 5), [-0.45 + i * 0.42, 0.42, -0.3 + j * 0.55]], 0.02), 0x8fbf4a);
+  k.hull(jit(box(-0.85, 0.5, -0.65, 0.9, 1.0, 0.8), 0.02), 0xa0452e);
+  k.hull([[-1.35, 1.0, -1.1], [-0.35, 1.0, -1.1], [-1.35, 1.0, -0.2], [-0.35, 1.0, -0.2], [-1.35, 1.45, -0.65], [-0.35, 1.45, -0.65]], 0x5c3a21);
+  k.hull(box(-0.85, 0.35, -0.24, 0.35, 0.6, 0.04), 0xe6dcc3, { sh: 0 });
+  k.hull(jit([...ring(0.9, 0, -0.75, 0.32, 7), ...ring(0.9, 0.35, -0.75, 0.26, 7), [0.9, 0.62, -0.75]], 0.03), 0xe8c66a);
+}
+// Kingdom mine: a timber-framed entrance in a rocky mound, a cart of gold ore
+function mine(k, P) {
+  k.hull(jit([...ring(0, 0, 0, 1.05, 9), ...ring(0, 0.7, -0.2, 0.75, 8), [0, 1.2, -0.35]], 0.07), STONE[1]);
+  k.hull(box(0, 0.4, 0.62, 0.62, 0.8, 0.2), 0x1a161e, { sh: 0 });
+  for (const sx of [-1, 1]) k.hull(box(sx * 0.36, 0.45, 0.68, 0.12, 0.9, 0.12), WOOD);
+  k.hull(box(0, 0.92, 0.68, 0.9, 0.12, 0.14), DWOOD);
+  k.hull(jit(box(0.62, 0.22, 0.95, 0.5, 0.3, 0.36), 0.01), DWOOD);
+  for (let i = 0; i < 4; i++) k.add(new THREE.IcosahedronGeometry(0.1, 0), 0xf5c542, { x: 0.5 + (i % 2) * 0.22, y: 0.42, z: 0.88 + Math.floor(i / 2) * 0.16, sh: 0.1 });
+  for (const sx of [-1, 1]) k.hull(box(-0.2 + sx * 0.08, 0.02, 1.25, 0.05, 0.04, 0.8), 0x7d7f86);
+}
+// Undead soul well: a ring of bones and stones around a glowing green pit
+function well(k, P) {
+  k.hull(jit([...ring(0, 0, 0, 1.05, 10), ...ring(0, 0.35, 0, 0.95, 10)], 0.03), DSTONE[0]);
+  k.add(new THREE.CylinderGeometry(0.62, 0.62, 0.06, 10), P.glow || 0x7dff9a, { y: 0.36, sh: 0 });
+  for (let i = 0; i < 8; i++) { const a = i / 8 * Math.PI * 2; k.hull(jit([...ring(Math.cos(a) * 0.85, 0.3, Math.sin(a) * 0.85, 0.06, 4), [Math.cos(a) * 0.95, 0.95 + (i % 2) * 0.3, Math.sin(a) * 0.95]], 0.02), BONE); }
+  for (let i = 0; i < 3; i++) k.add(new THREE.IcosahedronGeometry(0.13, 0), BONE, { x: Math.cos(i * 2.1) * 0.95, y: 0.45, z: Math.sin(i * 2.1) * 0.95, sh: 0.1 });
+}
+
 const CACHE = new Map();
 export function buildingGeo(type, faction, w, d) {
   const key = type + '|' + faction + '|' + w + '|' + d;
@@ -110,7 +137,7 @@ export function buildingGeo(type, faction, w, d) {
   R = rng(key.length * 7 + type.charCodeAt(0));
   const P = PAINT[faction], und = faction === 'undead';
   const k = new Kit(13, [0, 3, 0.7]);
-  ({ hq: keep, barracks, tower, banner, wall: palisade }[type])(k, P, und, w, d);
+  ({ hq: keep, barracks, tower, banner, wall: palisade, farm, mine, well }[type])(k, P, und, w, d);
   const g = k.build();
   CACHE.set(key, g);
   return g;
@@ -141,21 +168,24 @@ export class BuildingView {
     this.ring.rotation.x = -Math.PI / 2; this.ring.position.y = 0.09;
     this.group.add(this.ring);
     this.group.position.set(b.x, 0, b.z);
-    this.height = def.type === 'hq' ? 5 : b.type === 'tower' ? 5 : b.type === 'banner' ? 3.6 : b.type === 'wall' ? 1.6 : 2.6;
+    this.height = { hq: 5, tower: 5, banner: 3.6, wall: 1.6, farm: 1.6, mine: 1.4, well: 1.4 }[b.type] || 2.6;
+    if (b.type === 'well') { this.glow = new THREE.Mesh(new THREE.CircleGeometry(0.6, 10).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: 0x9dffb4, transparent: true, opacity: 0.85 })); this.glow.position.y = 0.4; this.group.add(this.glow); }
     layer.add(this.group);
   }
-  // d: { x, z, build (rounds left), hp, ghost, visible, dying }
+  // d: { build (work left), work (0..1 done), ghost, visible, dying }
   update(d) {
     this.group.visible = d.visible !== false;
     const site = d.build > 0;
-    this.scaf.visible = site;
-    const op = d.ghost ? 0.55 : site ? 0.6 : 1;
+    this.scaf.visible = site && !d.ghost;
+    const op = d.ghost ? 0.5 : site ? 0.62 : 1;
     if (this.op !== op) { const t = op < 1; if (this.mat.transparent !== t) this.mat.needsUpdate = true; this.op = op; this.mat.transparent = t; this.mat.opacity = op; this.mat.depthWrite = !t; this.mesh.castShadow = !d.ghost; }
-    this.mesh.scale.y = site ? 0.55 : 1;
+    // a site rises as the builders work on it
+    this.mesh.scale.y = site ? 0.25 + 0.6 * (d.work || 0) : 1;
+    if (this.glow) this.glow.visible = !site && !d.ghost;
     if (d.dying !== undefined) { const k = Math.min(1, d.dying); this.mesh.scale.y = Math.max(0.15, 1 - k); if (!this.mat.transparent) { this.mat.transparent = true; this.mat.needsUpdate = true; } this.op = -1; this.mat.opacity = 1 - k * 0.8; }
   }
   top() { return { x: this.group.position.x, y: this.height + 0.4, z: this.group.position.z }; }
-  destroy() { this.layer.remove(this.group); this.mat.dispose(); this.scaf.material.dispose(); this.ring.geometry.dispose(); this.ring.material.dispose(); }
+  destroy() { this.layer.remove(this.group); this.mat.dispose(); this.scaf.material.dispose(); this.ring.geometry.dispose(); this.ring.material.dispose(); if (this.glow) { this.glow.geometry.dispose(); this.glow.material.dispose(); } }
 }
 
 // shrine node: a ring of standing stones with a floating crystal in the owner's colour
@@ -168,7 +198,7 @@ export class ShrineView {
     for (let i = 0; i < 6; i++) { const a = i / 6 * Math.PI * 2, x = Math.cos(a) * 0.95, z = Math.sin(a) * 0.95, h = 0.6 + R() * 0.5; k.hull(jit([...box(x, h / 2, z, 0.32, h, 0.28)], 0.05), STONE[i % 3]); }
     k.hull(jit([...ring(0, 0, 0, 0.55, 6), ...ring(0, 0.25, 0, 0.45, 6)], 0.03), STONE[1]);
     this.group = new THREE.Group();
-    const base = new THREE.Mesh(k.build(), paintMat('terrain')); base.castShadow = true; base.receiveShadow = true;
+    const base = this.base = new THREE.Mesh(k.build(), paintMat('terrain')); base.castShadow = true; base.receiveShadow = true;
     this.crystalMat = new THREE.MeshStandardMaterial({ color: FREE, emissive: FREE, emissiveIntensity: 0.35, flatShading: true, roughness: 0.3 });
     this.crystal = new THREE.Mesh(new THREE.OctahedronGeometry(0.32, 0), this.crystalMat);
     this.crystal.scale.y = 1.6; this.crystal.position.y = 1.15;
@@ -179,9 +209,11 @@ export class ShrineView {
     this.group.position.set(sh.x, 0, sh.z);
     layer.add(this.group);
   }
-  update(owner, time) {
+  // occupied: a mine / soul well stands on the site (hide the stones and crystal)
+  update(owner, time, occupied = false) {
     const c = owner >= 0 ? OWN[owner] : FREE;
     if (this.c !== c) { this.c = c; this.crystalMat.color.setHex(c); this.crystalMat.emissive.setHex(c); this.ringMat.color.setHex(c); }
+    this.crystal.visible = this.base.visible = !occupied;
     this.crystal.rotation.y = time * 0.8; this.crystal.position.y = 1.15 + Math.sin(time * 2) * 0.08;
   }
 }

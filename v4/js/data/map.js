@@ -26,14 +26,18 @@ export function buildTerrain() {
   return out;
 }
 
-// Deployment for player 0 (left edge); player 1 is mirrored. The HQ sits behind the army.
+// Deployment for player 0 (left edge); player 1 is mirrored. The army stands in front of its HQ:
+// positions are relative to the HQ's z (the HQ starts at one of HQ_SPOTS, chosen per game).
 export const DEPLOY = [
-  { role: 'hero', x: 9.5, z: 16 },
-  { role: 'tank', x: 12.5, z: 13 },
-  { role: 'fighter', x: 12.5, z: 19.5 },
-  { role: 'ranged', x: 9, z: 10.5 },
-  { role: 'fast', x: 9, z: 22 },
+  { role: 'hero', x: 9.5, dz: 0 },
+  { role: 'tank', x: 12.5, dz: -3 },
+  { role: 'fighter', x: 12.5, dz: 3.5 },
+  { role: 'ranged', x: 9, dz: -5.5 },
+  { role: 'fast', x: 9, dz: 6 },
+  { role: 'builder', x: 7, dz: 3.2 },
 ];
-export const HQ_POS = { x: 3.5, z: 16 };
-// shrine nodes: hold one (your squads within 3", no enemy squads) for extra supply each round
-export const SHRINES = [{ x: 16.5, z: 19.5 }, { x: 31.5, z: 12.5 }, { x: 24, z: 25 }, { x: 24, z: 7 }];
+export const HQ_X = 3.5;
+export const HQ_SPOTS = [9, 16, 23];
+export const HQ_POS = { x: HQ_X, z: 16 };
+// resource sites: build a Mine (Kingdom) or a Soul Well (Undead) on one for income
+export const SHRINES = [{ x: 16.5, z: 19.5 }, { x: 31.5, z: 12.5 }, { x: 27.5, z: 25.5 }, { x: 20.5, z: 6.5 }];

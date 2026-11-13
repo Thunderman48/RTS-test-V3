@@ -334,3 +334,16 @@ button { font-family: inherit; color: inherit; cursor: pointer; touch-action: ma
   #buildbar { bottom: calc(110px + var(--sab)); }
   .rc-row .rehearse { height: 30px; }
 }
+/* ---------- M3c: builders, confirm, souls ---------- */
+#placer { position: absolute; left: 0; top: 0; display: flex; gap: 6px; pointer-events: auto; z-index: 5; }
+#placer button { height: 40px; min-width: 40px; padding: 0 12px; border-radius: 12px; background: rgba(20,18,16,.9); color: #fff; font-weight: 800; font-size: 15px; border: 1.5px solid rgba(255,255,255,.25); box-shadow: 0 6px 18px rgba(0,0,0,.4); }
+#placer button.ok { background: #34c759; color: #0b2412; border-color: #34c759; font-size: 15px; padding: 0 16px; }
+#placer button.ok:disabled { background: #6b6b6b; border-color: #6b6b6b; color: #222; opacity: .8; }
+.bb-tip { font-size: 11px; color: var(--muted); margin-top: 2px; }
+.sl-wk { height: 4px; border-radius: 2px; background: rgba(255,255,255,.12); overflow: hidden; }
+.sl-wk b { display: block; height: 100%; background: #ffb020; }
+.ftext.soul { color: #9dffb4; font-size: 14px; text-shadow: 0 0 6px rgba(80,255,140,.7), 0 1px 2px #000; }
+.eco .ec.souls small { color: #9dffb4; }
+@media (max-width: 720px) {
+  #placer button { height: 46px; min-width: 46px; font-size: 16px; }
+}

@@ -15,9 +15,9 @@ import { clone, defOf, radiusOf, modelsFor, speedOf } from './state.js';
 import { validateOrders, actionCost } from './orders.js';
 import { buildStancePlan } from './stances.js';
 import { terrainFactor, pointBlocked, blocks } from './nav.js';
-import { visibleTo, canSee } from './vision.js';
-import { obstacles, hitRadius, bdef, addBuilding, spawnSpot, armyValue } from './base.js';
-import { BUILDINGS, FACTIONS, TRAIN_COST } from '../data/units.js';
+import { visibleTo, canSee, updateIntel } from './vision.js';
+import { obstacles, hitRadius, bdef, addBuilding, spawnSpot, armyValue, incomeOf, edgeDist } from './base.js';
+import { BUILDINGS, FACTIONS, trainCost } from '../data/units.js';
 import { addSquad } from './state.js';
 
 const r3 = v => Math.round(v * 1000) / 1000;
@@ -78,6 +78,7 @@ export function engagedWith(q, squads) {
 export function resolveRound(state0, ordersIn) {
   const s = clone(state0);
   const round = s.round;
+  updateIntel(s);
   const orders = [0, 1].map(p => validateOrders(s, p, ordersIn[p]));
   const log = { round, segments: [] };
 
@@ -90,12 +91,12 @@ export function resolveRound(state0, ordersIn) {
     for (const b0 of orders[p].builds || []) {
       const d = BUILDINGS[b0.type];
       s.supply[p] -= d.cost;
-      const b = addBuilding(s, p, b0.type, b0.x, b0.z, b0.rot, d.build === 0);
+      const b = addBuilding(s, p, b0.type, b0.x, b0.z, b0.rot, !d.work);
       baseEvents.push({ type: 'construct', id: b.id, btype: b.type, owner: p, x: b.x, z: b.z, rot: b.rot, hp: b.hp, build: b.build, done: !b.build });
     }
     for (const t0 of orders[p].trains || []) {
       const b = s.buildings.find(x => x.id === t0.bid);
-      s.supply[p] -= TRAIN_COST[t0.role] || 0;
+      s.supply[p] -= trainCost(s.players[p].faction, t0.role);
       b.train = { role: t0.role, left: RULES.trainRounds };
       baseEvents.push({ type: 'train', id: b.id, role: t0.role, owner: p });
     }
@@ -163,13 +164,14 @@ export function resolveRound(state0, ordersIn) {
 
   // ---- hits ---------------------------------------------------------------------
   let hits = [];
+  const deaths = [];       // models that fell: where and when (souls for the undead)
   function hitOne(h) {
     const q = h.dst, r = rtById.get(q.id);
     if (q.hp <= 0) return;
     if (q.type) {          // a building
       const dmg = damageAfter(h.dmg * RULES.siegeMult, bdef(q).armor, false);
       q.hp = Math.max(0, q.hp - dmg);
-      ev({ type: 'hit', src: h.src, dst: q.id, dmg, raw: Math.round(h.dmg), kind: h.kind, hp: q.hp, building: true });
+      ev({ type: 'hit', src: h.src, dst: q.id, dmg, raw: Math.round(h.dmg), kind: h.kind, hp: r3(q.hp), building: true });
       if (q.hp <= 0) ev({ type: 'bdown', id: q.id, btype: q.type, owner: q.owner });
       return;
     }
@@ -192,6 +194,7 @@ export function resolveRound(state0, ordersIn) {
     const before = q.models;
     q.hp = Math.max(0, q.hp - dmg);
     q.models = modelsFor(q, q.hp);
+    if (before > q.models) deaths.push({ x: q.x, z: q.z, n: before - q.models, hero: defOf(q).models === 1, T });
     ev({ type: 'hit', src: h.src, dst: q.id, dmg, raw: Math.round(h.dmg), defended, cover: !!h.cover, walled, kind: h.kind, hp: q.hp, models: q.models, lost: before - q.models, defLeft: r ? r.defends : 0 });
   }
   function applyHits(batch) {
@@ -391,6 +394,31 @@ export function resolveRound(state0, ordersIn) {
           st.phase = 'done';
         }
       }
+    } else if (a.kind === 'work') {
+      // a builder spends its AP on the site (or damaged building) at the order's point
+      if (st.target === undefined) {
+        let best = null, bd = 1e9;
+        for (const b of s.buildings) {
+          if (b.owner !== q.owner || b.hp <= 0) continue;
+          const d = dist(b.x, b.z, a.x, a.z);
+          if (d < hitRadius(b) + 0.6 && d < bd) { bd = d; best = b; }
+        }
+        st.target = best;
+      }
+      const b = st.target, bd0 = b && bdef(b);
+      if (b && b.hp > 0 && (b.build > 0 || b.hp < bd0.hp)) {
+        if (edgeDist(b, q.x, q.z) - radiusOf(q) <= RULES.workReach) {
+          if (!st.started) { st.started = true; ev({ type: 'work', id: q.id, bid: b.id, repair: !b.build }); const d = norm(b.x - q.x, b.z - q.z); if (d.l > 0.01) { q.fx = d.x; q.fz = d.z; rec(q, T); } }
+          if (b.build > 0) {
+            b.build--;
+            b.hp = Math.min(bd0.hp, b.hp + bd0.hp * (1 - RULES.siteHp) / bd0.work);
+            if (b.build === 0) { b.hp = Math.round(b.hp); b.vision = bd0.vision; ev({ type: 'built', id: b.id, btype: b.type, owner: b.owner, by: q.id }); }
+          } else {
+            b.hp = Math.min(bd0.hp, b.hp + bd0.hp / bd0.work);
+            if (b.hp >= bd0.hp) ev({ type: 'repaired', id: b.id, by: q.id });
+          }
+        } else if (!st.failed) { st.failed = true; ev({ type: 'workFail', id: q.id, bid: b.id }); }
+      } else if (!st.failed && !st.started) { st.failed = true; ev({ type: 'workFail', id: q.id, bid: b ? b.id : null }); }
     } else if (r.el >= a.cost && st.phase === 'go') {
       st.phase = 'done';
       const at = def.attack, sk = st.sk;
@@ -566,11 +594,8 @@ export function resolveRound(state0, ordersIn) {
   seg = { kind: 'end', len: 0, tracks: {}, events: [] };
   s.squads = s.squads.filter(q => q.hp > 0);
   s.buildings = s.buildings.filter(b => b.hp > 0);
-  // construction and training
-  for (const b of s.buildings) {
-    const d = bdef(b);
-    if (b.build > 0 && --b.build === 0) { b.hp = Math.min(d.hp, b.hp + Math.round(d.hp * (1 - RULES.siteHp))); b.vision = d.vision; ev({ type: 'built', id: b.id, btype: b.type, owner: b.owner }); }
-  }
+  for (const b of s.buildings) b.hp = Math.max(1, Math.round(b.hp));
+  // training
   for (const b of s.buildings) {
     if (!b.train || --b.train.left > 0) continue;
     const role = b.train.role; b.train = null;
@@ -580,18 +605,30 @@ export function resolveRound(state0, ordersIn) {
     const q = addSquad(s, b.owner, role, spot.x, spot.z);
     ev({ type: 'spawn', id: q.id, bid: b.id, role, owner: b.owner, x: r3(q.x), z: r3(q.z) });
   }
-  // shrines and income
+  // resource sites belong to whoever has a finished mine / soul well on them
   for (const sh of s.shrines || []) {
-    const near = [0, 1].map(p => s.squads.some(q => q.owner === p && dist(q.x, q.z, sh.x, sh.z) <= RULES.shrineRadius + radiusOf(q) * 0.5));
-    const owner = near[0] && !near[1] ? 0 : near[1] && !near[0] ? 1 : sh.owner;
+    const b = s.buildings.find(b => bdef(b).site && !b.build && dist(b.x, b.z, sh.x, sh.z) < 0.6);
+    const owner = b ? b.owner : -1;
     if (owner !== sh.owner) { sh.owner = owner; ev({ type: 'shrine', x: sh.x, z: sh.z, owner }); }
   }
+  // souls: models that fell near an undead squad or collector (either side's dead)
   for (const p of [0, 1]) {
-    const hq = s.buildings.some(b => b.owner === p && b.type === 'hq');
-    const inc = (hq ? RULES.hqIncome : 0) + (s.shrines || []).filter(sh => sh.owner === p).length * RULES.shrineIncome;
+    if (FACTIONS[s.players[p].faction].eco.res !== 'souls') continue;
+    const col = s.squads.filter(q => q.owner === p).map(q => ({ x: q.x, z: q.z }))
+      .concat(s.buildings.filter(b => b.owner === p && bdef(b).souls).map(b => ({ x: b.x, z: b.z })));
+    for (const d of deaths) {
+      if (!col.some(c => dist(c.x, c.z, d.x, d.z) <= RULES.soulRange)) continue;
+      const amount = d.hero ? RULES.soulPerHero : d.n * RULES.soulPerModel;
+      s.supply[p] += amount;
+      ev({ type: 'souls', owner: p, x: r3(d.x), z: r3(d.z), amount });
+    }
+  }
+  for (const p of [0, 1]) {
+    const inc = incomeOf(s, p);
     s.supply[p] += inc;
     ev({ type: 'income', owner: p, amount: inc, supply: s.supply[p] });
   }
+  updateIntel(s);
   for (const q of s.squads) {
     delete q.dead;
     const cd = {};

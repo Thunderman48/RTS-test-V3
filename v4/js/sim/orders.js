@@ -8,7 +8,7 @@ export function upgradeCost(n) { let c = 0; for (let i = 0; i < n; i++) c += RUL
 export function actionCost(q, a) {
   const def = defOf(q);
   switch (a.kind) {
-    case 'move': case 'wait': return a.ap;
+    case 'move': case 'wait': case 'work': return a.ap;
     case 'swing': case 'volley': case 'lob': return def.attack.ap;
     default: { const sk = skillOf(def, a.kind); return sk ? sk.ap : 0; }
   }
@@ -37,6 +37,7 @@ export function sanitizePlan(q, plan) {
       if (!pts.length) continue;
       a = { kind: 'move', pts, ap: Math.max(1, Math.round(num(a0.ap))) };
     } else if (a0.kind === 'wait') a = { kind: 'wait', ap: Math.max(1, Math.round(num(a0.ap))) };
+    else if (a0.kind === 'work' && q.role === 'builder') a = { kind: 'work', x: num(a0.x), z: num(a0.z), ap: Math.max(1, Math.round(num(a0.ap))) };
     else if (a0.kind === def.attack.kind) a = { kind: a0.kind, x: num(a0.x), z: num(a0.z) };
     else if (skillOf(def, a0.kind)) {
       if (used1.has(a0.kind) || cdOf(q, a0.kind) > 0) continue;
@@ -45,7 +46,7 @@ export function sanitizePlan(q, plan) {
     } else continue;
     const c = actionCost(q, a);
     if (used + c > budget) {
-      if ((a.kind === 'move' || a.kind === 'wait') && budget - used >= 1) { a.ap = budget - used; p.actions.push(a); used = budget; }
+      if ((a.kind === 'move' || a.kind === 'wait' || a.kind === 'work') && budget - used >= 1) { a.ap = budget - used; p.actions.push(a); used = budget; }
       break;
     }
     used += c; p.actions.push(a);
@@ -53,7 +54,7 @@ export function sanitizePlan(q, plan) {
   return p;
 }
 
-// Direct control costs 1 CP per squad; the hero is free. Returns accepted ids.
+// Direct control costs 1 CP per squad; the hero and builders are free. Returns accepted ids.
 export function cpUsage(s, p, orders) {
   const total = RULES.cp + bonusCp(s, p);
   let left = total;
@@ -61,7 +62,7 @@ export function cpUsage(s, p, orders) {
   for (const id of Object.keys(orders.squads || {})) {
     const q = s.squads.find(x => x.id === id);
     if (!q || q.owner !== p || q.hp <= 0) { rejected.push(id); continue; }
-    if (q.role === 'hero') { accepted.push(id); continue; }
+    if (q.role === 'hero' || q.role === 'builder') { accepted.push(id); continue; }
     if (left > 0) { left--; accepted.push(id); } else rejected.push(id);
   }
   return { total, left, accepted, rejected };

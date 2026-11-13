@@ -1,11 +1,13 @@
 // Headless tests for the V4 simulation. Run: node v4/tests/sim.test.mjs
-import { RULES, TRAIN_COST } from '../js/data/units.js';
+import { RULES, FACTIONS, BUILDINGS, trainCost } from '../js/data/units.js';
 import { createGame, addSquad, defOf, radiusOf, emptyOrders, emptyPlan } from '../js/sim/state.js';
 import { resolveRound, damageAfter, engagedWith } from '../js/sim/resolve.js';
 import { cpUsage, validateOrders } from '../js/sim/orders.js';
 import { aiOrders, aiMemory } from '../js/ai/ai.js';
 import { canSee, visibleTo } from '../js/sim/vision.js';
-import { placeError, addBuilding } from '../js/sim/base.js';
+import { placeError, addBuilding, incomeOf } from '../js/sim/base.js';
+import { builderPlan } from '../js/sim/builders.js';
+import { knownEnemyHq } from '../js/sim/vision.js';
 import { Nav, walkAP } from '../js/sim/nav.js';
 
 let pass = 0, fail = 0;
@@ -20,6 +22,8 @@ const eq = (a, b, msg) => ok(a === b, `${msg || 'expected equal'}: ${JSON.string
 function arena(list) {
   const s = createGame(7);
   s.squads = []; s.nextId = 1;
+  // HQs at fixed spots for the tests
+  for (const b of s.buildings) { b.z = 16; b.x = b.owner === 0 ? 3.5 : 44.5; }
   for (const [owner, role, x, z, extra] of list) Object.assign(addSquad(s, owner, role, x, z), extra || {});
   return s;
 }
@@ -30,9 +34,10 @@ const events = log => log.segments.flatMap(sg => sg.events.map(e => ({ ...e, seg
 
 console.log('V4 simulation');
 
-test('createGame deploys 5 squads per side with full models', () => {
+test('createGame deploys 6 squads per side (with a builder) with full models', () => {
   const s = createGame(1);
-  eq(s.squads.length, 10);
+  eq(s.squads.length, 12);
+  eq(s.squads.filter(q => q.role === 'builder').length, 2);
   for (const q of s.squads) { eq(q.models, defOf(q).models); eq(q.hp, defOf(q).models * defOf(q).hpPer); }
 });
 
@@ -168,14 +173,14 @@ test('movement goes around rocks and slows in forests', () => {
   ok(wood.x - 12 < open.x - 4, 'forest should be slower');
 });
 
-test('command points: 3 squads plus the hero', () => {
+test('command points: 3 squads plus the hero and builders', () => {
   const s = createGame(1);
   const o = emptyOrders();
   for (const q of s.squads.filter(q => q.owner === 0)) o.squads[q.id] = plan([{ kind: 'wait', ap: 10 }]);
   const cp = cpUsage(s, 0, o);
-  eq(cp.accepted.length, RULES.cp + 1);
+  eq(cp.accepted.length, RULES.cp + 2, 'hero and builder are free');
   const v = validateOrders(s, 0, o);
-  eq(Object.keys(v.squads).length, RULES.cp + 1);
+  eq(Object.keys(v.squads).length, RULES.cp + 2);
 });
 
 test('orders over 100 AP are trimmed by validation', () => {
@@ -445,54 +450,116 @@ console.log('M3 base & economy');
 
 const ob = (builds = [], trains = []) => ({ squads: {}, stances: {}, builds, trains });
 
-test('a new game has an HQ each, starting supply and four unowned shrines', () => {
+test('a new game: an HQ each at a seeded spot, faction currencies, four free resource sites', () => {
   const s = createGame(1);
   eq(s.buildings.filter(b => b.type === 'hq').length, 2);
-  eq(s.supply.join(), RULES.startSupply + ',' + RULES.startSupply);
+  eq(s.supply.join(), FACTIONS.kingdom.eco.start + ',' + FACTIONS.undead.eco.start);
   eq(s.shrines.length, 4); ok(s.shrines.every(x => x.owner === -1));
+  const spots = new Set();
+  for (let sd = 1; sd < 30; sd++) spots.add(createGame(sd).buildings[0].z);
+  ok(spots.size === 3, 'three HQ spots in use: ' + [...spots]);
+  eq(JSON.stringify(createGame(5).buildings), JSON.stringify(createGame(5).buildings), 'deterministic per seed');
 });
 
-test('placement: only in your third, near your buildings, not on terrain or squads', () => {
-  const s = createGame(1);
-  eq(placeError(s, 0, 'barracks', 5, 9), '', 'a valid spot');
+const k = () => arena([[0, 'builder', 7, 9], [1, 'builder', 41, 23]]);
+test('placement: own third only, sites only on resource sites, faction lists', () => {
+  const s = k();
+  eq(placeError(s, 0, 'barracks', 6, 4), '', 'a valid spot');
   ok(placeError(s, 0, 'barracks', 30, 9), 'outside your third');
-  ok(placeError(s, 0, 'barracks', 14, 3), 'too far from your buildings');
   ok(placeError(s, 0, 'barracks', 3.5, 16), 'on top of the HQ');
-  ok(placeError(s, 0, 'barracks', 9.5, 16), 'on a squad');
+  ok(placeError(s, 0, 'barracks', 7, 9), 'on a squad');
+  eq(placeError(s, 0, 'mine', 16.5, 19.5), '', 'a mine on a site');
+  ok(placeError(s, 0, 'mine', 10, 10), 'a mine off a site');
+  ok(placeError(s, 0, 'well', 16.5, 19.5), 'the kingdom has no soul wells');
+  ok(placeError(s, 1, 'farm', 40, 4), 'the undead have no farms');
 });
 
-test('construction: paid at once, a site this round, finished the next', () => {
+const workOrder = (s, q, f) => ({ [q.id]: plan(builderPlan(s, q, f, 100).actions) });
+test('a builder walks to a new site and finishes it mid-round with its work', () => {
+  const s = k();
+  const q = s.squads[0], f = { type: 'farm', x: 6, z: 5, w: 2.6, d: 2.2 };
+  const o = [ob([{ type: 'farm', x: 6, z: 5 }]), ob()];
+  o[0].squads = workOrder(s, q, f);
+  const r = resolveRound(s, o);
+  const b = r.state.buildings.find(x => x.type === 'farm');
+  ok(b, 'site placed'); eq(b.build, 0, 'finished'); eq(b.hp, BUILDINGS.farm.hp, 'full hp');
+  const e = events(r.log);
+  ok(e.some(x => x.type === 'work') && e.some(x => x.type === 'built' && x.by === q.id), 'work then built');
+  eq(r.state.supply[0], FACTIONS.kingdom.eco.start - 20 + FACTIONS.kingdom.eco.hq + BUILDINGS.farm.income, 'paid, then the farm pays this round');
+});
+
+test('two builders stack; a far-away builder does no work', () => {
+  const s = arena([[0, 'builder', 7, 4], [0, 'builder', 7, 9.5], [0, 'builder', 13, 28]]);
+  const b = addBuilding(s, 0, 'barracks', 7, 6.8, 0, false);
+  const o = holdAll(s);
+  for (const id of ['q1', 'q2']) o[0].squads[id] = plan([{ kind: 'work', x: b.x, z: b.z, ap: 100 }]);
+  o[0].squads.q3 = plan([{ kind: 'work', x: b.x, z: b.z, ap: 100 }]);
+  const r = resolveRound(s, o);
+  eq(r.state.buildings.find(x => x.id === b.id).build, 0, '2 x 100 AP of work finishes a 120-work barracks');
+  ok(events(r.log).some(e => e.type === 'workFail' && e.id === 'q3'), 'out of reach');
+});
+
+test('builders repair damaged buildings', () => {
+  const s = arena([[0, 'builder', 7, 4]]);
+  const b = addBuilding(s, 0, 'tower', 7, 6, 0, true); b.hp = 50;
+  const o = holdAll(s); o[0].squads.q1 = plan([{ kind: 'work', x: 7, z: 6, ap: 40 }]);
+  const r = resolveRound(s, o);
+  eq(r.state.buildings.find(x => x.id === b.id).hp, 94, '40 AP x 110/100 HP');
+});
+
+test('builders cost no command points; the HQ trains builders, barracks soldiers', () => {
   const s = createGame(1);
-  const r1 = resolveRound(s, [ob([{ type: 'barracks', x: 5, z: 9 }]), ob()]);
-  const b = r1.state.buildings.find(x => x.type === 'barracks');
-  ok(b, 'built'); eq(b.build, 0, 'finished at the end of the round');
-  const held1 = r1.state.shrines.filter(x => x.owner === 0).length;
-  eq(r1.state.supply[0], RULES.startSupply - 30 + RULES.hqIncome + held1 * RULES.shrineIncome, 'paid 30, earned income');
-  ok(events(r1.log).some(e => e.type === 'construct') && events(r1.log).some(e => e.type === 'built'));
-});
-
-test('too expensive or invalid builds are dropped', () => {
-  const s = createGame(1); s.supply[0] = 10;
-  const r = resolveRound(s, [ob([{ type: 'barracks', x: 5, z: 9 }, { type: 'wall', x: 30, z: 9 }]), ob()]);
-  eq(r.state.buildings.filter(b => b.owner === 0).length, 1, 'only the HQ');
+  const sq = {}; for (const q of s.squads.filter(q => q.owner === 0)) sq[q.id] = plan([]);
+  const u = cpUsage(s, 0, { squads: sq });
+  eq(u.accepted.length, 5, 'hero + builder + 3');
+  const hq = s.buildings.find(b => b.owner === 0 && b.type === 'hq');
+  const v = validateOrders(s, 0, ob([], [{ bid: hq.id, role: 'builder' }]));
+  eq(v.trains.length, 1);
+  eq(validateOrders(s, 0, ob([], [{ bid: hq.id, role: 'fighter' }])).trains.length, 0, 'no soldiers from the HQ');
 });
 
 test('a barracks trains a squad that appears at the end of the round', () => {
-  const s = createGame(1);
-  const b = addBuilding(s, 0, 'barracks', 5, 9, 0, true);
+  const s = k();
+  const b = addBuilding(s, 0, 'barracks', 6, 4, 0, true);
   const n0 = s.squads.filter(q => q.owner === 0).length;
   const r = resolveRound(s, [ob([], [{ bid: b.id, role: 'fighter' }]), ob()]);
   eq(r.state.squads.filter(q => q.owner === 0).length, n0 + 1);
   ok(events(r.log).some(e => e.type === 'spawn' && e.role === 'fighter'));
-  eq(r.state.supply[0], RULES.startSupply - TRAIN_COST.fighter + RULES.hqIncome + r.state.shrines.filter(x => x.owner === 0).length * RULES.shrineIncome);
+  eq(r.state.supply[0], FACTIONS.kingdom.eco.start - trainCost('kingdom', 'fighter') + incomeOf(r.state, 0));
 });
 
-test('shrines: held when only your squads are near; contested shrines stay', () => {
-  const s = arena([[0, 'fighter', 16.5, 19.5], [0, 'fighter', 31.5, 15.5], [1, 'fighter', 31.5, 9.5]]);
+test('gold: a finished mine owns its site and pays every round', () => {
+  const s = k();
+  addBuilding(s, 0, 'mine', 16.5, 19.5, 0, true);
   const r = resolveRound(s, holdAll(s));
-  eq(r.state.shrines[0].owner, 0, 'held');
-  eq(r.state.shrines[1].owner, -1, 'contested');
-  eq(r.state.supply[0], RULES.startSupply + RULES.hqIncome + RULES.shrineIncome);
+  eq(r.state.shrines[0].owner, 0);
+  eq(r.state.supply[0], FACTIONS.kingdom.eco.start + FACTIONS.kingdom.eco.hq + BUILDINGS.mine.income);
+  ok(placeError(r.state, 1, 'well', 16.5, 19.5), 'the site is taken');
+});
+
+test('souls: models dying near undead pay souls (either side); far away they do not', () => {
+  // a kingdom model dies next to the warband (souls); another dies to a kingdom volley far from any undead (none)
+  const s = arena([[1, 'fighter', 24, 9], [0, 'fighter', 25.9, 9, { hp: 5, models: 1 }], [1, 'builder', 8, 29, { hp: 3, models: 1 }], [0, 'ranged', 4, 29]]);
+  for (const b of s.buildings) b.z = 4;   // keep the crypt far away
+  const o = holdAll(s);
+  o[1].squads.q1 = plan([{ kind: 'swing', x: 25.9, z: 9 }]);
+  o[0].squads.q4 = plan([{ kind: 'volley', x: 8, z: 29 }]);
+  const r = resolveRound(s, o);
+  const souls = events(r.log).filter(e => e.type === 'souls');
+  ok(events(r.log).filter(e => e.type === 'hit' && e.lost).length === 2, 'two models fell');
+  ok(souls.length === 1 && souls[0].owner === 1 && souls[0].amount === RULES.soulPerModel, 'only the one near the warband: ' + JSON.stringify(souls));
+  eq(r.state.supply[1], FACTIONS.undead.eco.start + RULES.soulPerModel + FACTIONS.undead.eco.hq);
+});
+
+test('the enemy HQ is unknown until seen, then remembered', () => {
+  const s = arena([[0, 'fast', 20, 16]]);
+  let r = resolveRound(s, holdAll(s));
+  ok(!knownEnemyHq(r.state, 0), 'not seen from the middle');
+  const s2 = arena([[0, 'fast', 36, 16]]);
+  r = resolveRound(s2, holdAll(s2));
+  ok(knownEnemyHq(r.state, 0), 'scouted');
+  const t = r.state; t.squads = [];
+  ok(knownEnemyHq(resolveRound(t, holdAll(t)).state, 0), 'remembered after the scout is gone');
 });
 
 test('watchtowers fire in a Buildings segment after the tiers', () => {

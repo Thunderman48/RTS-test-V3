@@ -4,6 +4,7 @@
 //  - cool shadows: unlit areas drift toward blue-violet instead of plain dark
 // Programs are shared per preset through customProgramCacheKey.
 import * as THREE from 'three';
+import { fogPatch } from './fog.js';
 
 export const PRESETS = {
   mini:    { edge: 0.22, rim: 0.32, wash: 1.0, cool: 0.55, rough: 0.56, metal: 0.06 },
@@ -33,6 +34,7 @@ export function miniMaterial(preset = 'mini', extra = {}) {
           outgoingLight += diffuseColor.rgb * (upT * ${f(P.edge)} + rimT * ${f(P.rim)}) * vec3(1.0, 0.94, 0.82);
         }
         #include <opaque_fragment>`);
+    fogPatch(sh);
   };
   m.customProgramCacheKey = () => 'mini-' + preset;
   return m;

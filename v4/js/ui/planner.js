@@ -4,7 +4,8 @@ import { emptyOrders, emptyPlan, defOf, radiusOf, apFor } from '../sim/state.js'
 import { planCost, actionCost, cpUsage, SKILL_KINDS } from '../sim/orders.js';
 import { clampAim, engagedWith } from '../sim/resolve.js';
 import { Nav, pathAP, walkAP } from '../sim/nav.js';
-import { obstacles, navKey, placeError, footprint, armySize, BUILDINGS, TRAIN_COST } from '../sim/base.js';
+import { obstacles, navKey, placeError, footprint, armySize, builderCount, BUILDINGS, trainCost, bdef } from '../sim/base.js';
+import { builderPlan } from '../sim/builders.js';
 import { norm, segCircle, dist } from '../sim/geom.js';
 
 export class Planner {
@@ -88,6 +89,8 @@ export class Planner {
         if (d.l > 0.01) { fx = d.x; fz = d.z; }
         legs.push({ kind: a.kind, ox: x, oz: z, cx: c2.x, cz: c2.z, range: sk.range, t0: t, t1: t + c });
         x = c2.x; z = c2.z;
+      } else if (a.kind === 'work') {
+        legs.push({ kind: 'work', ox: x, oz: z, cx: a.x, cz: a.z, t0: t, t1: t + c });
       } else if (a.kind === 'charge') {
         const ln = this.chargeLane(q, x, z, a.x, a.z);
         fx = ln.dx; fz = ln.dz;
@@ -216,10 +219,11 @@ export class Planner {
     else if (h === 'parry') plan.parry = false;
     else if (h === 'overwatch') plan.overwatch = null;
     else if (h) plan[h]--;
-    if (!plan.hist.length) delete this.draft.squads[id];
+    if (!plan.hist.length) this.clear(id);
     this.g.changed();
   }
-  clear(id) { delete this.draft.squads[id]; this.g.changed(); }
+  // clearing a builder's orders also cancels the building it was sent to put up
+  clear(id) { delete this.draft.squads[id]; this.draft.builds = this.draft.builds.filter(b => b.by !== id); this.g.changed(); }
 
   setStance(id, st) {
     const q = this.squad(id);
@@ -228,35 +232,68 @@ export class Planner {
   }
   stanceOf(q) { return this.draft.stances[q.id] || q.stance; }
 
-  // ---- base: queued builds and training ----------------------------------------------
+  // ---- base: builders, queued builds and training ---------------------------------------
+  get fac() { return this.s.players[this.g.me].faction; }
   supplyLeft() {
     let v = (this.s.supply || [0, 0])[this.g.me];
     for (const b of this.draft.builds) v -= BUILDINGS[b.type].cost;
-    for (const t of this.draft.trains) v -= TRAIN_COST[t.role] || 0;
+    for (const t of this.draft.trains) v -= trainCost(this.fac, t.role);
     return v;
   }
   queued(except = -1) { return this.draft.builds.filter((_, i) => i !== except).map(b => ({ ...b, owner: this.g.me, ...footprint(b.type, b.x, b.z, b.rot) })); }
-  buildError(type, x, z, rot = 0) {
-    if (BUILDINGS[type].cost > this.supplyLeft()) return `Needs ${BUILDINGS[type].cost} supply (you have ${this.supplyLeft()})`;
-    if (this.draft.builds.length >= 6) return 'At most 6 builds per round';
-    return placeError(this.s, this.g.me, type, x, z, rot, this.queued());
+  buildError(type, x, z, rot = 0, by = null) {
+    const own = by ? this.draft.builds.find(b => b.by === by) : null;   // re-placing replaces this builder's build
+    const left = this.supplyLeft() + (own ? BUILDINGS[own.type].cost : 0);
+    if (BUILDINGS[type].cost > left) return `Needs ${BUILDINGS[type].cost} ${this.g.ecoName()} (you have ${left})`;
+    return placeError(this.s, this.g.me, type, x, z, rot, this.queued(own ? this.draft.builds.indexOf(own) : -1));
   }
-  addBuild(type, x, z, rot = 0) {
-    const err = this.buildError(type, x, z, rot);
+  // what builder q would do for a building at footprint f: walk, then work with the AP left
+  builderPreview(q, f) {
+    const bp = builderPlan(this.s, q, f, apFor(q));
+    const need = f.build !== undefined ? f.build : BUILDINGS[f.type].work;
+    const rounds = bp.work >= need ? 1 : 1 + Math.ceil((need - bp.work) / RULES.ap);
+    return { ...bp, need, rounds: bp.actions.length ? rounds : 0 };
+  }
+  // send builder q to put up a new building (replacing whatever it was told before)
+  addBuild(id, type, x, z, rot = 0) {
+    const q = this.squad(id);
+    const err = this.buildError(type, x, z, rot, id);
     if (err) { this.g.toast(err, true); return false; }
-    this.draft.builds.push({ type, x: Math.round(x * 100) / 100, z: Math.round(z * 100) / 100, rot: rot ? 1 : 0 });
-    this.g.changed();
+    const f = { type, x, z, rot, ...footprint(type, x, z, rot) };
+    const bp = builderPlan(this.s, q, f, apFor(q));
+    if (!bp.actions.length) { this.g.toast('The builder can\'t reach that spot', true); return false; }
+    this.draft.builds = this.draft.builds.filter(b => b.by !== id);
+    this.draft.builds.push({ type, x: Math.round(x * 100) / 100, z: Math.round(z * 100) / 100, rot: rot ? 1 : 0, by: id });
+    this.setBuilderPlan(id, bp.actions);
     return true;
   }
-  removeBuild(i) { this.draft.builds.splice(i, 1); this.g.changed(); }
+  // send builder q to keep building / repair an existing building of ours
+  addWork(id, b) {
+    const q = this.squad(id);
+    const bp = builderPlan(this.s, q, b, apFor(q));
+    if (!bp.actions.length) { this.g.toast('The builder can\'t reach it', true); return false; }
+    this.draft.builds = this.draft.builds.filter(x => x.by !== id);
+    this.setBuilderPlan(id, bp.actions);
+    this.g.confirm(q, b.build ? 'Building' : 'Repairing');
+    return true;
+  }
+  setBuilderPlan(id, actions) {
+    const p = emptyPlan(); p.hist = actions.map(() => 'a');
+    p.actions = actions;
+    this.draft.squads[id] = p;
+    this.g.changed();
+  }
+  removeBuild(i) { const b = this.draft.builds[i]; this.draft.builds.splice(i, 1); if (b?.by) delete this.draft.squads[b.by]; this.g.changed(); }
   trainOf(bid) { return this.draft.trains.find(t => t.bid === bid) || null; }
   trainError(b, role) {
     const cur = this.trainOf(b.id);
     if (b.build) return 'Still under construction';
     if (b.train) return 'Already training';
-    const left = this.supplyLeft() + (cur ? TRAIN_COST[cur.role] : 0);
-    if (TRAIN_COST[role] > left) return `Needs ${TRAIN_COST[role]} supply`;
+    const cost = trainCost(this.fac, role);
+    const left = this.supplyLeft() + (cur ? trainCost(this.fac, cur.role) : 0);
+    if (cost > left) return `Needs ${cost} ${this.g.ecoName()}`;
     if (!cur && armySize(this.s, this.g.me) + this.draft.trains.length >= RULES.armyCap) return `Army cap reached (${RULES.armyCap} squads)`;
+    if (role === 'builder' && builderCount(this.s, this.g.me) + this.draft.trains.filter(t => t.role === 'builder').length >= RULES.maxBuilders) return `At most ${RULES.maxBuilders} builders`;
     return '';
   }
   addTrain(b, role) {
@@ -273,6 +310,7 @@ export class Planner {
   final() {
     const o = JSON.parse(JSON.stringify(this.draft));
     for (const p of Object.values(o.squads)) { delete p.hist; for (const a of p.actions) delete a.disengage; }
+    for (const b of o.builds) delete b.by;
     return o;
   }
 }

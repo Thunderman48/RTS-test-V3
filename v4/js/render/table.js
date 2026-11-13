@@ -1,5 +1,6 @@
 // The diorama: a wooden table, a painted battle mat and terrain pieces.
 import * as THREE from 'three';
+import { fogPatch } from './fog.js';
 import { RULES } from '../data/units.js';
 import { DEPLOY } from '../data/map.js';
 import { rng } from '../sim/rng.js';
@@ -243,7 +244,9 @@ export function buildTable(view, terrain) {
     const g = new THREE.PlaneGeometry(t.w + 0.7, t.d - 0.02, 5, Math.round(t.d * 1.5));
     g.rotateX(-Math.PI / 2);
     kw.geo(g, 0x4fa3c4, { x: t.x, y: 0.012, z: t.z, j: 0.025, sh: 0.14 });
-    const water = kw.mesh(new THREE.MeshStandardMaterial({ vertexColors: true, flatShading: true, transparent: true, opacity: 0.8, roughness: 0.12, metalness: 0.2 }));
+    const wmat = new THREE.MeshStandardMaterial({ vertexColors: true, flatShading: true, transparent: true, opacity: 0.8, roughness: 0.12, metalness: 0.2 });
+    wmat.onBeforeCompile = fogPatch;
+    const water = kw.mesh(wmat);
     water.castShadow = false;
     L.add(water);
   }

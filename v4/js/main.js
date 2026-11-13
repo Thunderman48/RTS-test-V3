@@ -20,6 +20,9 @@ import { BaseUI } from './ui/baseui.js';
 import { BUILDINGS } from './data/units.js';
 import { hitRadius } from './sim/base.js';
 import { BuildingView } from './render/buildings.js';
+import { FogLayer } from './render/fog.js';
+import { FogMap } from './ui/fogmap.js';
+import { observers } from './sim/vision.js';
 
 const $ = id => document.getElementById(id);
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
@@ -33,6 +36,7 @@ class Game {
     this.texts = new FloatTexts($('fx-layer'), this.view);
     this.tele = new Telegraphs(this.view);
     this.shots = new Projectiles(this.view);
+    this.fogLayer = new FogLayer(this.view);
     this.planner = new Planner(this);
     this.views = new Map();
     this.labels = new Map();
@@ -66,18 +70,18 @@ class Game {
     if (this.view.lens) this.view.lens.enabled = /lens/.test(location.search);
     this.state = createGame(1);
     buildTable(this.view, this.state.terrain);
-    const looks = [['kingdom', 'lord'], ['kingdom', 'shield'], ['kingdom', 'sword'], ['kingdom', 'crossbow'], ['kingdom', 'rider'], ['undead', 'necro'], ['undead', 'graveguard'], ['undead', 'skeleton'], ['undead', 'archer'], ['undead', 'wraith']];
-    const minis = looks.map(([f, l], i) => { const m = makeMini(l, f, i + 1); m.position.set(5 + (i % 5) * 1.6, 0, 28 + Math.floor(i / 5) * 2.2); this.view.layers.units.add(m); return m; });
+    const looks = [['kingdom', 'lord'], ['kingdom', 'shield'], ['kingdom', 'sword'], ['kingdom', 'crossbow'], ['kingdom', 'rider'], ['kingdom', 'peasant'], ['undead', 'necro'], ['undead', 'graveguard'], ['undead', 'skeleton'], ['undead', 'archer'], ['undead', 'wraith'], ['undead', 'thrall']];
+    const minis = looks.map(([f, l], i) => { const m = makeMini(l, f, i + 1); m.position.set(5 + (i % 6) * 1.6, 0, 28 + Math.floor(i / 6) * 2.2); this.view.layers.units.add(m); return m; });
     const anim = /anim/.test(location.search);
-    this.view.cam = { x: 8.2, z: 29.6, dist: 9, yaw: 0, pitch: 0.42 };
+    this.view.cam = { x: 9, z: 29.6, dist: 10, yaw: 0, pitch: 0.42 };
     if (/build/.test(location.search)) {
       // ?gallery&build: every building of both factions
-      ['kingdom', 'undead'].forEach((f, fi) => ['hq', 'barracks', 'tower', 'banner', 'wall'].forEach((t, i) => {
+      ['kingdom', 'undead'].forEach((f, fi) => FACTIONS[f].buildings.concat(['hq']).forEach((t, i) => {
         const d = BUILDINGS[t];
         const v = new BuildingView({ id: f + t, type: t, rot: 0, x: 4 + i * 5.5, z: 6 + fi * 7, w: d.w, d: d.d, r: d.r }, f, this.view.layers.units);
         v.update({ build: /site/.test(location.search) && t !== 'hq' ? 1 : 0 });
       }));
-      this.view.cam = { x: 15, z: 9.5, dist: 26, yaw: 0, pitch: 0.55 };
+      this.view.cam = { x: 18, z: 9.5, dist: 30, yaw: 0, pitch: 0.55 };
     }
     const tick = () => {
       requestAnimationFrame(tick);
@@ -166,6 +170,7 @@ class Game {
     this.views.clear();
     this.syncViews(this.state.squads.map(q => ({ ...q })), true);
     this.knownB = new Map(); this.selB = null; this.buildOpen = false; this.buildMode = null;
+    this.fogMap = new FogMap(this.me); this.fogFresh = true;
     this.makeShrines(); this.syncBuildings([]);
     const portrait = innerHeight > innerWidth;
     const homeX = this.me === 0 ? 14 : 34;
@@ -182,6 +187,21 @@ class Game {
     for (const q of this.state.squads) if (this.vis.has(q.id)) this.seen[q.id] = { ...q, round: this.state.round };
     for (const id of Object.keys(this.seen)) if (!alive.has(id)) delete this.seen[id];
     this.updateBuildingFog();
+    if (this.fogMap) {
+      this.fogMap.compute(this.state.terrain, observers(this.state, this.me));
+      if (this.fogFresh) { this.fogFresh = false; this.fogLayer.enable(true, this.fogMap); }
+    }
+  }
+  // fog during the replay: what my squads and buildings see at time T
+  playbackFog(T, list) {
+    if (!this.fogMap) return;
+    const key = Math.floor(T / 3);
+    if (this.fogKey === key) return;
+    this.fogKey = key;
+    const obs = [];
+    for (const d of list) if (d.owner === this.me && d.dying === undefined) obs.push({ x: d.x, z: d.z, range: defOf(d).vision });
+    for (const b of this.tl.buildingsAt(T)) if (b.owner === this.me && b.dying === undefined) obs.push({ x: b.x, z: b.z, range: b.build ? 3 : BUILDINGS[b.type].vision });
+    this.fogMap.compute(this.tl.pre.terrain, obs);
   }
   canSeeEnemy(id) { return !this.vis || this.vis.has(id); }
 
@@ -203,6 +223,7 @@ class Game {
   // play my draft against enemies that stand still, without changing the game
   rehearse() {
     if (this.phase !== 'planning') return;
+    this.fogSaved = this.fogMap?.snapshot();
     const mine = this.planner.final();
     const hold = { squads: {}, stances: {} };
     for (const q of this.state.squads) if (q.owner === this.ai) hold.stances[q.id] = 'hold';
@@ -228,7 +249,7 @@ class Game {
     $('hintbar').classList.add('hidden');
     this.pre = pre; this.post = post; this.log = log;
     this.tl = new Timeline(pre, log, { me: this.me, terrain: pre.terrain });
-    this.T = 0; this.playing = true; this.lastT = 0;
+    this.T = 0; this.playing = true; this.lastT = 0; this.fogKey = null;
     this.shotList = [];
     for (const e of this.tl.events) if (e.type === 'release' && (e.kind === 'volley' || e.kind === 'lob' || e.kind === 'storm' || e.kind === 'pierce')) {
       if (e.building) {
@@ -274,6 +295,8 @@ class Game {
       // back to the same planning state, keeping the draft
       this.rehearsal = false;
       this.phase = 'planning';
+      if (this.fogSaved) { this.fogMap.restore(this.fogSaved); this.fogSaved = null; }
+      this.updateFog();
       this.tele.clear(); this.texts.clear(); this.shots.clear(); this.clearWatches();
       $('playbar').classList.add('hidden'); $('log').classList.add('hidden'); $('bottom').classList.remove('hidden');
       this.syncViews(this.state.squads.map(q => ({ ...q })), true);
@@ -345,6 +368,9 @@ class Game {
     } else if (leg.kind === 'charge') {
       L.add(lineShape(leg.ox, leg.oz, leg.dx, leg.dz, leg.len, leg.w, COL.charge, a * 0.7));
       if (leg.hit) { const m = ring(radiusOf(leg.hit) + 0.2, 0.12, COL.bad, sel ? 1 : 0.6, 0.08); m.position.x = leg.hit.x; m.position.z = leg.hit.z; L.add(m); }
+    } else if (leg.kind === 'work') {
+      // a builder at work: an amber ring on the building it works on
+      const r = ring(1.6, 0.12, 0xffb020, sel ? 0.9 : 0.5, 0.12, 40); r.position.x = leg.cx; r.position.z = leg.cz; L.add(r);
     } else if (leg.kind === 'overwatch') L.add(arcShape(leg.ox, leg.oz, leg.dx, leg.dz, leg.R, leg.ch, COL.watch, sel ? 0.22 : 0.12));
   }
 
@@ -400,7 +426,7 @@ class Game {
       for (const k of ['move', 'attack', 'skill0', 'skill1', 'skill2']) { const el = document.createElement('div'); el.className = 'knob ' + (k.startsWith('skill') ? 'skill' : k); $('labels').appendChild(el); this.knobs[k] = el; }
     }
     const q = this.selectedSquad();
-    const show = this.phase === 'planning' && q && q.owner === this.me;
+    const show = this.phase === 'planning' && q && q.owner === this.me && !this.buildOpen;
     if (!show) { for (const el of Object.values(this.knobs)) el.style.display = 'none'; this.knobPos = null; return; }
     const def = defOf(q), sks = skillsOf(def);
     const atkIc = def.attack.kind === 'swing' ? 'attack' : 'shoot';
@@ -474,7 +500,7 @@ class Game {
 
   select(id, focus = false) {
     this.selected = id;
-    if (id) { this.selB = null; this.buildMode = null; this.buildOpen = false; }
+    if (id) { this.selB = null; if (this.buildMode) this.view.clear('ghost'); this.buildMode = null; this.buildOpen = false; }
     const q = this.selectedSquad();
     this.mode = 'move';
     if (q && focus) this.focusOn(q);
@@ -509,7 +535,11 @@ class Game {
     const sel = this.selectedSquad();
     const aiming = this.mode !== 'move';
     if (q && (!sel || sel.owner !== this.me || !aiming || q.owner === this.me)) { this.select(q.id); return; }
-    if (!q && (!sel || sel.owner !== this.me || !aiming)) { const b = this.pickBuilding(cx, cy); if (b) { this.selectBuilding(b.id); return; } }
+    if (!q && (!sel || sel.owner !== this.me || !aiming)) {
+      const b = this.pickBuilding(cx, cy);
+      if (b && sel && sel.role === 'builder' && sel.owner === this.me && this.needsWork(b)) { this.planner.addWork(sel.id, b); return; }
+      if (b) { this.selectBuilding(b.id); return; }
+    }
     if (sel && sel.owner === this.me) { const t = aiming && q ? q : p; if (this.orderAt(this.mode, sel, t.x, t.z)) this.hint(2); return; }
     this.select(null); this.selB = null; this.changed();
   }
@@ -646,7 +676,7 @@ class Game {
     this.previewEnd = null;
     this.view.clear('ghost'); $('tape').classList.add('hidden');
     if (!d) return;
-    if (d.kind === 'place') { if (d.far && this.buildMode && !this.buildMode.err) this.confirmPlace(); else this.changed(); return; }
+    if (d.kind === 'place') { if (!moved) { const p = this.view.pick(cx, cy, 0); if (p) this.movePlace(p.x, p.z); } this.changed(); return; }
     const q = this.selectedSquad();
     if (!moved || !d.pt) {
       if (d.knob && q) {
@@ -703,6 +733,7 @@ class Game {
   renderDock() {
     const dock = $('dock'), info = $('info');
     const q = this.selectedSquad();
+    if (this.buildOpen) { dock.classList.add('hidden'); info.classList.add('hidden'); return; }
     const sb = this.phase === 'planning' && !q ? this.selectedBuilding() : null;
     if (sb) { this.renderBuildingDock(sb); return; }
     if (this.phase !== 'planning' || !q) { dock.classList.add('hidden'); info.classList.add('hidden'); return; }
@@ -723,7 +754,7 @@ class Game {
     const left = plan ? this.planner.apLeft(q) : apFor(q);
     const st = this.planner.stanceOf(q);
     const engaged = engagedWith(q, this.state.squads).length > 0;
-    const ctl = plan ? 'Your orders' : (q.role === 'hero' ? 'Hero: free to command' : 'Giving an order uses 1 command point');
+    const ctl = plan ? 'Your orders' : (q.role === 'hero' ? 'Hero: free to command' : q.role === 'builder' ? 'Builder: free to command' : 'Giving an order uses 1 command point');
     // every button is coloured by category: green = move/speed, red = attack, blue = defence/buffs
     const b = (act, ic, label, sub, on = false, dis = false, cat = 'move') => `<button class="act cat-${cat}${on ? ' on' : ''}" data-act="${act}" ${dis ? 'disabled' : ''}>${icon(ic, 20)}${label}<small>${sub}</small></button>`;
     const skBtn = sks.map(sk => { const cd = cdOf(q, sk.kind); return b('skill:' + sk.kind, SKILL_IC[sk.kind], sk.name, cd > 0 ? `recharging ${cd}` : this.planner.skillUsed(q.id, sk.kind) ? 'used' : `${sk.ap} AP`, this.mode === 'skill' && this.modeSkill === sk.kind, !this.planner.skillReady(q, sk.kind) || left < sk.ap, sk.cat); }).join('');
@@ -747,6 +778,7 @@ class Game {
         ${skBtn}
         ${prepBtn}
         ${b('defend', 'defend', 'Defend', `${RULES.defendCost} AP · ${plan?.defends || 0}`, false, left < RULES.defendCost, 'defense')}
+        ${q.role === 'builder' ? b('build', 'build', 'Build', this.planner.draft.builds.some(x => x.by === q.id) ? 'change' : 'pick a building', this.buildOpen, false, 'none') : ''}
         ${b('tier', 'tierup', 'Act earlier', plan?.upgrades >= RULES.maxUpgrades ? 'max' : `${RULES.tierCost[plan?.upgrades || 0]} AP`, false, (plan?.upgrades || 0) >= RULES.maxUpgrades || left < RULES.tierCost[plan?.upgrades || 0])}
         ${b('undo', 'undo', 'Undo', '', false, !plan, 'none')}
         ${b('clear', 'release', 'Clear', 'back to stance', false, !plan, 'none')}
@@ -770,6 +802,7 @@ class Game {
     else if (k === 'tier') this.planner.prepaid(q.id, 'upgrades');
     else if (k === 'undo') this.planner.undo(q.id);
     else if (k === 'clear') this.planner.clear(q.id);
+    else if (k === 'build') { this.openBuild(!this.buildOpen); return; }
     else if (k === 'stance') this.planner.setStance(q.id, arg);
     this.changed();
   }
@@ -896,8 +929,12 @@ class Game {
       else if (e.type === 'train' && e.owner === this.me) lines.push({ T: e.T, html: `${name(e.id)} starts training ${esc(FACTIONS[this.faction(e.owner)].units[e.role].name)}` });
       else if (e.type === 'spawn' && e.owner === this.me) lines.push({ T: e.T, html: `<b class="t${e.owner}">New ${esc(FACTIONS[this.faction(e.owner)].units[e.role].name)}</b> join your army` });
       else if (e.type === 'bdown') lines.push({ T: e.T, html: `${name(e.id)} is destroyed` });
-      else if (e.type === 'shrine') lines.push({ T: e.T, html: e.owner === this.me ? 'You take a shrine' : e.owner < 0 ? 'A shrine is freed' : 'The enemy takes a shrine' });
-      else if (e.type === 'income' && e.owner === this.me) lines.push({ T: e.T, html: `Income <span class="gain">+${e.amount}</span> supply (now ${e.supply})` });
+      else if (e.type === 'shrine') lines.push({ T: e.T, html: e.owner === this.me ? 'You claim a resource site' : e.owner < 0 ? 'A resource site is freed' : 'The enemy claims a resource site' });
+      else if (e.type === 'income' && e.owner === this.me) lines.push({ T: e.T, html: `Income <span class="gain">+${e.amount}</span> ${this.ecoName()} (now ${e.supply})` });
+      else if (e.type === 'souls' && e.owner === this.me) lines.push({ T: e.T, html: `The fallen give <span class="gain">+${e.amount}</span> souls` });
+      else if (e.type === 'work' && (tl.pre.squads.find(q => q.id === e.id)?.owner === this.me)) lines.push({ T: e.T, html: `${name(e.id)} ${e.repair ? 'start repairing' : 'get to work on'} ${name(e.bid)}` });
+      else if (e.type === 'workFail' && (tl.pre.squads.find(q => q.id === e.id)?.owner === this.me)) lines.push({ T: e.T, html: `${name(e.id)} can't reach the site` });
+      else if (e.type === 'repaired' && (bld(e.id)?.owner === this.me)) lines.push({ T: e.T, html: `${name(e.id)} is fully repaired` });
       else if (e.type === 'hit') lines.push({ T: e.T, html: `${name(e.src)} ${verb[e.kind] || 'hits'} ${name(e.dst)} <span class="dmg">−${e.dmg}</span>${e.walled ? ' (shield wall)' : ''}${e.cover ? ' (cover)' : ''}${e.defended ? ' (defended)' : ''}${e.lost ? ` · ${e.lost} model${e.lost > 1 ? 's' : ''} fall` : ''}` });
       else if (e.type === 'down') lines.push({ T: e.T, html: `${name(e.id)} is destroyed` });
       else if (e.type === 'parry') lines.push({ T: e.T, html: `${name(e.id)} parries ${name(e.src)}` });
@@ -931,8 +968,12 @@ class Game {
         else if (e.type === 'built') { const b = atB(e.id); if (b) { this.texts.add(b.x, b.z, 'Finished!', 'ok', 4.2, 1.8); this.pulse(b.x, b.z, hitRadius(b) + 0.6, 0x34c759); } }
         else if (e.type === 'train' && e.owner === this.me) { const b = atB(e.id); if (b) this.texts.add(b.x, b.z, `Training ${FACTIONS[this.faction(e.owner)].units[e.role].name}`, 'ok', 3.6, 1.8); }
         else if (e.type === 'spawn' && (e.owner === this.me || this.tl.pointSeen(e.x, e.z, e.T))) { this.texts.add(e.x, e.z, `+ ${FACTIONS[this.faction(e.owner)].units[e.role].name}`, 'ok', 2.4, 2); this.pulse(e.x, e.z, 1.2, TEAM_HEX[e.owner]); }
-        else if (e.type === 'shrine') { const was = this.tl.shrinesAt(e.T - 0.01).find(sh => sh.x === e.x && sh.z === e.z)?.owner; this.texts.add(e.x, e.z, e.owner === this.me ? 'Shrine taken' : was === this.me ? 'Shrine lost' : e.owner < 0 ? 'Shrine freed' : 'Enemy shrine', e.owner === this.me ? 'ok' : 'def', 2.6, 2); this.pulse(e.x, e.z, RULES.shrineRadius, e.owner < 0 ? 0xd8d2c0 : TEAM_HEX[e.owner]); }
-        else if (e.type === 'income' && e.owner === this.me) { const hq = (this.blist || []).find(b => b.owner === this.me && b.type === 'hq'); if (hq) this.texts.add(hq.x, hq.z, `+${e.amount} supply`, 'ok', 5.4, 2.2); }
+        else if (e.type === 'shrine' && (e.owner === this.me || this.tl.pointSeen(e.x, e.z, e.T))) { const was = this.tl.shrinesAt(e.T - 0.01).find(sh => sh.x === e.x && sh.z === e.z)?.owner; this.texts.add(e.x, e.z, e.owner === this.me ? 'Site claimed' : was === this.me ? 'Site lost' : e.owner < 0 ? 'Site freed' : 'Enemy site', e.owner === this.me ? 'ok' : 'def', 2.6, 2); this.pulse(e.x, e.z, RULES.shrineRadius, e.owner < 0 ? 0xd8d2c0 : TEAM_HEX[e.owner]); }
+        else if (e.type === 'income' && e.owner === this.me) { const hq = (this.blist || []).find(b => b.owner === this.me && b.type === 'hq'); if (hq) this.texts.add(hq.x, hq.z, `+${e.amount} ${this.ecoName()}`, 'ok', 5.4, 2.2); }
+        else if (e.type === 'souls' && e.owner === this.me) { this.texts.add(e.x, e.z, `+${e.amount} souls`, 'soul', 2.2, 1.8); }
+        else if (e.type === 'work') { const q = at(e.id); if (q) this.texts.add(q.x, q.z, e.repair ? 'Repairing' : 'Building', 'ok', 2, 1.2); }
+        else if (e.type === 'workFail') { const q = at(e.id); if (q && q.owner === this.me) this.texts.add(q.x, q.z, 'Can\'t reach the site', 'def', 2, 1.6); }
+        else if (e.type === 'repaired') { const b = atB(e.id); if (b) this.texts.add(b.x, b.z, 'Repaired', 'ok', 4, 1.6); }
         else if (e.type === 'hit') {
           const q = at(e.dst);
           if (q) {
@@ -962,6 +1003,7 @@ class Game {
     this.sampleCache = list;
     if (this.rehearsal) for (const d of list) if (d.owner === this.me) d.ghost = true;
     this.updateWatches(list, T);
+    this.playbackFog(T, list);
     this.syncViews(list, false, dt);
     this.syncBuildings(this.playbackBuildings(T));
     this.syncShrines(tl.shrinesAt(T));
@@ -1050,6 +1092,7 @@ class Game {
       this.updateGhost(dt);
     }
     this.texts.update(dt);
+    this.fogLayer.update(dt, this.view.time || 0);
     this.view.render(dt);
   }
 }
@@ -1057,7 +1100,7 @@ class Game {
 Object.assign(Game.prototype, BaseUI);
 
 const CAT_HEX = { move: '#34c759', attack: '#ff3b30', defense: '#3fa9ff' };
-const ACT_COL = { swing: 'var(--swing)', volley: 'var(--volley)', lob: 'var(--volley)', charge: CAT_HEX.move, leap: CAT_HEX.move, step: CAT_HEX.move, blast: CAT_HEX.attack, storm: CAT_HEX.attack, sweep: CAT_HEX.attack, pierce: CAT_HEX.attack, rally: CAT_HEX.defense, raise: CAT_HEX.defense, wall: CAT_HEX.defense, wait: '#8a857c' };
+const ACT_COL = { work: '#ffb020', swing: 'var(--swing)', volley: 'var(--volley)', lob: 'var(--volley)', charge: CAT_HEX.move, leap: CAT_HEX.move, step: CAT_HEX.move, blast: CAT_HEX.attack, storm: CAT_HEX.attack, sweep: CAT_HEX.attack, pierce: CAT_HEX.attack, rally: CAT_HEX.defense, raise: CAT_HEX.defense, wall: CAT_HEX.defense, wait: '#8a857c' };
 const SKILL_IC = { charge: 'dash', leap: 'shove', step: 'disrupt', blast: 'frag', storm: 'shoot', sweep: 'sweep', pierce: 'range', rally: 'rally', raise: 'heal', wall: 'fortify' };
 const SKILL_HELP = {
   charge: 'drag its knob to aim the lane: the squad rushes down it and slams into the first enemy squad.',
@@ -1102,15 +1145,16 @@ function helpHTML() {
 <li><b>Defend</b>: each defend halves one hit. <b>Parry</b> (fighters only): blocks the next melee hit and strikes back. <b>Overwatch</b> (shooters): fires once at the first enemy that moves inside the cone, even in another tier. <b>Act earlier</b>: moves the squad up a tier.</li>
 <li>You can command <b>${RULES.cp} squads</b> per round (the hero is free). The others follow their stance: <b>Guard</b> fights what comes close (shooters set overwatch), <b>Hold</b> stays and defends, <b>Advance</b> marches on the nearest enemy.</li>
 </ul>
-<h3>Your base</h3>
+<h3>Your base and economy</h3>
 <ul>
-<li><b>Supply</b> (top bar) pays for buildings and new squads. Your HQ earns <b>${RULES.hqIncome}</b> a round; each <b>shrine</b> you hold adds <b>${RULES.shrineIncome}</b>. Hold a shrine by having a squad within its ring and no enemy squad there at the end of a round.</li>
-<li>Press <b>Build</b>, pick a building and drag it into place (green = it fits, red = it doesn't; the status line says why). Build in your third of the table, within ${RULES.buildRange}″ of one of your buildings. <b>R</b> or ⟳ rotates walls. Buildings go up when the round starts and most take a round to finish.</li>
-<li><b>Barracks</b> train a new squad each round (tap the barracks). <b>Watchtowers</b> see far and shoot the nearest enemy after every round, like your HQ. <b>Banners</b> give +1 command point. <b>Palisades</b> block paths and volleys. Army cap: ${RULES.armyCap} squads.</li>
+<li><b>Kingdom: Gold.</b> A steady income: your Keep earns ${FACTIONS.kingdom.eco.hq} a round, every <b>Farm</b> ${BUILDINGS.farm.income}, every <b>Mine</b> (on a resource site) ${BUILDINGS.mine.income}.</li>
+<li><b>Undead: Souls.</b> Fed by death: your Crypt earns ${FACTIONS.undead.eco.hq} a round and each <b>Soul Well</b> (on a resource site) ${BUILDINGS.well.income}, but every model that dies (either side) within ${RULES.soulRange}″ of your squads, Crypt, Obelisks or Soul Wells gives <b>${RULES.soulPerModel} souls</b> (a hero ${RULES.soulPerHero}).</li>
+<li><b>Builders</b> (Peasants / Grave Thralls) put up every building. Select one and press <b>Build</b> (or the Build button at the bottom), pick a building, drag the see-through ghost to a spot (green = it fits, red = it doesn't, and why) and press <b>✓ Confirm</b>. The builder walks there and spends the rest of its AP as <b>work</b>; the building is finished when its work is done (two builders work twice as fast). Tap one of your damaged buildings with a builder selected to <b>repair</b> it. Builders cost no command points; train more at your HQ (max ${RULES.maxBuilders}).</li>
+<li><b>Barracks</b> train a new squad each round. <b>Watchtowers</b> see far and shoot the nearest enemy after every round, like your HQ. <b>Banners / Obelisks</b> give +1 command point. <b>Palisades</b> block paths and volleys. Army cap: ${RULES.armyCap} squads.</li>
 <li>Buildings can be attacked by any swing, volley or skill, and take extra damage from it.</li>
 </ul>
 <h3>Fog of war</h3>
-<p>You only see enemies your squads and buildings can see: within their vision range, not behind walls or rocks, and not deep in a forest (a squad inside a forest is only seen from close by). Hidden enemies show as faded <b>last seen</b> markers. The battle replay only shows what your squads saw.</p>
+<p>The table is covered in <b>fog</b>: thick mist where you have never been, a thin haze where you have been but can't see now. The enemy HQ starts at one of three spots along the far edge, so <b>scout</b> to find it. You only see enemies your squads and buildings can see: within their vision range, not behind walls or rocks, and not deep in a forest (a squad inside a forest is only seen from close by). Hidden enemies show as faded <b>last seen</b> markers. The battle replay only shows what your squads saw.</p>
 <h3>Engagement</h3>
 <p>Squads touching an enemy melee squad are <b>engaged</b> (red ring). Stepping away costs <b>30 AP</b> and gives that enemy a free <b>parting blow</b>. Wraiths ignore engagement.</p>
 <h3>Squads</h3>

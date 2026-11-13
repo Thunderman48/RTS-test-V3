@@ -216,6 +216,19 @@ function bowKit(P) {
   return k;
 }
 // shields are in hand space, facing forward when the off arm is raised about 0.6 rad
+// builders' tools: a mallet and a spade
+function hammerKit(P) {
+  const k = new Kit(9);
+  rod(k, -.12, .5, .035, .03, P.wood);
+  k.hull(jit(box(0, 0, .56, .2, .13, .13), .01), 0x7d7f86);
+  return k;
+}
+function shovelKit(P) {
+  const k = new Kit(9);
+  rod(k, -.12, .62, .032, .028, P.wood);
+  k.hull([[-.1, 0, .62], [.1, 0, .62], [-.1, .02, .62], [.1, .02, .62], [-.08, 0, .86], [.08, 0, .86], [0, .01, .92]], P.rust || 0x8a5a3a);
+  return k;
+}
 function roundShieldKit(P, face, rim, r = .27, emblem = null) {
   const k = new Kit(13);
   const o = { x: -.03, y: .1, z: .1, rx: .6 };
@@ -243,6 +256,7 @@ function towerShieldKit(P) {
 // ---------------------------------------------------------------- figures
 const STYLE = {
   sword: 'slash', lord: 'cleave', skeleton: 'slash', graveguard: 'slash',
+  peasant: 'cleave', thrall: 'cleave',
   shield: 'thrust', crossbow: 'shoot', archer: 'bow', rider: 'lance', wraith: 'scythe', necro: 'cast',
 };
 
@@ -392,6 +406,28 @@ function sculpt(look, faction, mode) {
       off = armKit(P.cloth, P.skin);
       glow = true;
       h = 1.95;
+      break;
+    }
+    case 'peasant': { // Kingdom builders: tunic, apron, straw hat, mallet
+      baseKit(kbase, P);
+      human(kb, P, { torsoCol: 0x9a7b4f, legCol: 0x5c4a36 });
+      kb.hull(jit([[-.17, Y0 + .78, .14], [.17, Y0 + .78, .14], [-.2, Y0 + .3, .15], [.2, Y0 + .3, .15], [-.17, Y0 + .78, .1], [.17, Y0 + .78, .1], [-.2, Y0 + .3, .1], [.2, Y0 + .3, .1]], .015), 0xd9cfb4);
+      head(kb, P, 0, Y0 + 1.12, .01, { hair: P.hair });
+      kb.hull(jit(rings(ring(0, Y0 + 1.2, .01, .5, .5, .2), ring(0, Y0 + 1.24, .01, .46, .46, .2)), .012), 0xe8c66a);
+      kb.hull(jit(rings(ring(0, Y0 + 1.22, .01, .26, .26, .3), ring(0, Y0 + 1.36, .01, .2, .2, .3)).concat([[0, Y0 + 1.42, .01]]), .012), 0xd9b257);
+      arm = armKit(0x9a7b4f, P.skin); weapon = hammerKit(P);
+      off = armKit(0x9a7b4f, P.skin);
+      off.merge((() => { const k = new Kit(3); k.hull(jit(box(0, -.45, .1, .18, .2, .14), .01), 0x8a5a34); return k; })());   // a bucket of nails
+      break;
+    }
+    case 'thrall': { // Undead builders: a hunched skeleton in rags with a spade
+      baseKit(kbase, P);
+      skeleton(kb, P);
+      kb.hull(jit([[-.2, Y0 + .88, .12], [.2, Y0 + .88, .12], [-.22, Y0 + .4, .14], [.22, Y0 + .4, .14], [-.2, Y0 + .88, -.14], [.2, Y0 + .88, -.14], [-.24, Y0 + .36, -.12], [.24, Y0 + .36, -.12], [0, Y0 + .3, .16]], .03), 0x5a5048);
+      skull(kb, P, 0, Y0 + 1.06, .1);
+      helm(kb, P, 'hood', 0, Y0 + 1.06, .1, .95);
+      arm = armKit(null, P.skin, { bone: true }); weapon = shovelKit(P);
+      off = armKit(null, P.skin, { bone: true });
       break;
     }
     default:

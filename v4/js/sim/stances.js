@@ -5,7 +5,8 @@
 //  advance : like guard, but walks toward the nearest enemy when nobody is in reach
 import { RULES, isMelee, isShooter } from '../data/units.js';
 import { defOf, radiusOf, emptyPlan, apFor } from './state.js';
-import { obstacles, navKey } from './base.js';
+import { obstacles, navKey, edgeDist, bdef } from './base.js';
+import { knownEnemyHq } from './vision.js';
 import { Nav, pathAP, walkAP } from './nav.js';
 import { dist } from './geom.js';
 
@@ -82,9 +83,16 @@ export function buildStancePlan(s, q, enemies) {
   const plan = emptyPlan();
   let left = apFor(q);
   const st = q.stance;
+  if (q.role === 'builder') {
+    // builders left alone keep working on a site (or damaged building) they stand next to
+    const b = (s.buildings || []).find(b => b.owner === q.owner && b.hp > 0 && (b.build > 0 || b.hp < bdef(b).hp) && edgeDist(b, q.x, q.z) - radiusOf(q) <= RULES.workReach);
+    if (b) plan.actions.push({ kind: 'work', x: b.x, z: b.z, ap: left });
+    return plan;
+  }
   if (!enemies.length && st === 'advance') {
-    // nobody in sight: march on the enemy HQ
-    const hq = (s.buildings || []).find(b => b.owner !== q.owner && b.type === 'hq');
+    // nobody in sight: march on the enemy HQ if we know where it is, else into the enemy half
+    const known = knownEnemyHq(s, q.owner);
+    const hq = known || { x: q.owner === 0 ? RULES.board.w - 8 : 8, z: RULES.board.h / 2 };
     if (hq) {
       const nav = Nav.for(obstacles(s), radiusOf(q), navKey(s));
       const pts = trimPath(q.x, q.z, nav.path(q.x, q.z, hq.x, hq.z), 3.2);
