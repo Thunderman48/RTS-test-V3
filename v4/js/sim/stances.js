@@ -5,6 +5,7 @@
 //  advance : like guard, but walks toward the nearest enemy when nobody is in reach
 import { RULES, isMelee, isShooter } from '../data/units.js';
 import { defOf, radiusOf, emptyPlan, apFor } from './state.js';
+import { obstacles, navKey } from './base.js';
 import { Nav, pathAP, walkAP } from './nav.js';
 import { dist } from './geom.js';
 
@@ -34,7 +35,7 @@ export function meleePlan(s, q, e, plan, left, lead = null) {
   const d = dist(q.x, q.z, e.x, e.z);
   let fromX = q.x, fromZ = q.z;
   if (d > want) {
-    const nav = Nav.for(s.terrain, r, 'r');
+    const nav = Nav.for(obstacles(s), r, navKey(s));
     const pts = nav.path(q.x, q.z, e.x, e.z);
     // stop `want` short of the target
     const full = pathAP(s.terrain, q.x, q.z, pts, def.tier);
@@ -92,7 +93,7 @@ export function buildStancePlan(s, q, enemies) {
     }
     const e = nearestEnemy(s, q, enemies);
     if (st === 'advance') {
-      const nav = Nav.for(s.terrain, radiusOf(q), 'r');
+      const nav = Nav.for(obstacles(s), radiusOf(q), navKey(s));
       const pts = trimPath(q.x, q.z, nav.path(q.x, q.z, e.x, e.z), range * 0.8);
       if (pts.length) { plan.actions.push({ kind: 'move', pts, ap: left }); return plan; }
     }

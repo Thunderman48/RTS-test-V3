@@ -35,7 +35,7 @@ export class Nav {
   // terrain: array of terrain pieces (+ buildings as {kind:'building', x, z, r})
   static for(terrain, radius, key = '') {
     const k = key + ':' + radius.toFixed(2);
-    if (!cache.has(k)) cache.set(k, new Nav(terrain, radius));
+    if (!cache.has(k)) { if (cache.size > 80) cache.clear(); cache.set(k, new Nav(terrain, radius)); }
     return cache.get(k);
   }
   static clear() { cache.clear(); }

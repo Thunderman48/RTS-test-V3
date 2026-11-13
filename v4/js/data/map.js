@@ -26,11 +26,14 @@ export function buildTerrain() {
   return out;
 }
 
-// Deployment for player 0 (left edge); player 1 is mirrored.
+// Deployment for player 0 (left edge); player 1 is mirrored. The HQ sits behind the army.
 export const DEPLOY = [
-  { role: 'hero', x: 6, z: 16 },
-  { role: 'tank', x: 9.5, z: 13 },
-  { role: 'fighter', x: 9.5, z: 19.5 },
-  { role: 'ranged', x: 5, z: 11 },
-  { role: 'fast', x: 5, z: 22 },
+  { role: 'hero', x: 9.5, z: 16 },
+  { role: 'tank', x: 12.5, z: 13 },
+  { role: 'fighter', x: 12.5, z: 19.5 },
+  { role: 'ranged', x: 9, z: 10.5 },
+  { role: 'fast', x: 9, z: 22 },
 ];
+export const HQ_POS = { x: 3.5, z: 16 };
+// shrine nodes: hold one (your squads within 3", no enemy squads) for extra supply each round
+export const SHRINES = [{ x: 16.5, z: 19.5 }, { x: 31.5, z: 12.5 }, { x: 24, z: 25 }, { x: 24, z: 7 }];

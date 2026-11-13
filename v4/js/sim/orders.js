@@ -1,6 +1,7 @@
 // Order costs and validation (shared by the planner UI, the AI and the resolver).
 import { RULES, isMelee, isShooter, skillOf, cdOf, SKILL_KINDS as SK } from '../data/units.js';
 import { defOf, emptyPlan, apFor } from './state.js';
+import { validateBase, bonusCp } from './base.js';
 
 export function upgradeCost(n) { let c = 0; for (let i = 0; i < n; i++) c += RULES.tierCost[i]; return c; }
 
@@ -54,7 +55,8 @@ export function sanitizePlan(q, plan) {
 
 // Direct control costs 1 CP per squad; the hero is free. Returns accepted ids.
 export function cpUsage(s, p, orders) {
-  let left = RULES.cp;
+  const total = RULES.cp + bonusCp(s, p);
+  let left = total;
   const accepted = [], rejected = [];
   for (const id of Object.keys(orders.squads || {})) {
     const q = s.squads.find(x => x.id === id);
@@ -62,12 +64,13 @@ export function cpUsage(s, p, orders) {
     if (q.role === 'hero') { accepted.push(id); continue; }
     if (left > 0) { left--; accepted.push(id); } else rejected.push(id);
   }
-  return { total: RULES.cp, left, accepted, rejected };
+  return { total, left, accepted, rejected };
 }
 
 export function validateOrders(s, p, orders0) {
   const orders = orders0 || {};
-  const out = { squads: {}, stances: {} };
+  const out = { squads: {}, stances: {}, builds: [], trains: [] };
+  if (s.buildings) Object.assign(out, validateBase(s, p, orders.builds || [], orders.trains || []));
   const plans = {};
   for (const [id, plan] of Object.entries(orders.squads || {})) {
     const q = s.squads.find(x => x.id === id);

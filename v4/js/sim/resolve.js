@@ -15,7 +15,10 @@ import { clone, defOf, radiusOf, modelsFor, speedOf } from './state.js';
 import { validateOrders, actionCost } from './orders.js';
 import { buildStancePlan } from './stances.js';
 import { terrainFactor, pointBlocked, blocks } from './nav.js';
-import { visibleTo } from './vision.js';
+import { visibleTo, canSee } from './vision.js';
+import { obstacles, hitRadius, bdef, addBuilding, spawnSpot, armyValue } from './base.js';
+import { BUILDINGS, FACTIONS, TRAIN_COST } from '../data/units.js';
+import { addSquad } from './state.js';
 
 const r3 = v => Math.round(v * 1000) / 1000;
 const MELEE_HITS = ['swing', 'charge', 'parting'];
@@ -81,7 +84,23 @@ export function resolveRound(state0, ordersIn) {
   for (const p of [0, 1]) for (const [id, st] of Object.entries(orders[p].stances)) {
     const q = s.squads.find(x => x.id === id); if (q) q.stance = st;
   }
-  // planning-time knowledge (everything visible until fog arrives in M3)
+  // base orders: pay, place construction sites, queue training
+  const baseEvents = [];
+  for (const p of [0, 1]) {
+    for (const b0 of orders[p].builds || []) {
+      const d = BUILDINGS[b0.type];
+      s.supply[p] -= d.cost;
+      const b = addBuilding(s, p, b0.type, b0.x, b0.z, b0.rot, d.build === 0);
+      baseEvents.push({ type: 'construct', id: b.id, btype: b.type, owner: p, x: b.x, z: b.z, done: !b.build });
+    }
+    for (const t0 of orders[p].trains || []) {
+      const b = s.buildings.find(x => x.id === t0.bid);
+      s.supply[p] -= TRAIN_COST[t0.role] || 0;
+      b.train = { role: t0.role, left: RULES.trainRounds };
+      baseEvents.push({ type: 'train', id: b.id, role: t0.role, owner: p });
+    }
+  }
+  // planning-time knowledge
   const snapshot = s.squads.filter(q => q.hp > 0).map(q => ({ ...q }));
   // fog: stance squads only react to enemies their side can see
   const seenBy = [visibleTo(s, 0), visibleTo(s, 1)];
@@ -117,10 +136,18 @@ export function resolveRound(state0, ordersIn) {
     if (last && last[0] === row[0]) tr[tr.length - 1] = row; else tr.push(row);
   };
   const living = () => s.squads.filter(q => q.hp > 0);
+  s.buildings = s.buildings || [];
+  const obs = () => obstacles(s);
+  const rad = e => e.type ? hitRadius(e) : radiusOf(e);
+  // enemy squads and buildings (allBuildings: own buildings too, for things that block shots)
+  const targets = (q, allBuildings = false) => s.squads.filter(e => e.hp > 0 && e.owner !== q.owner)
+    .concat(s.buildings.filter(b => b.hp > 0 && (allBuildings || b.owner !== q.owner)));
+  const unitAt = id => s.squads.find(x => x.id === id) || s.buildings.find(x => x.id === id);
   const atkDmg = (r, base) => base * r.q.models * r.mult;
 
   // ---- start: reveal tiers and what each squad prepared --------------------------
   seg = { kind: 'start', len: 0, tracks: {}, events: [] };
+  for (const e of baseEvents) ev(e);
   for (const r of rts) {
     if (r.plan.overwatch) {
       const d = norm(r.plan.overwatch.x - r.q.x, r.plan.overwatch.z - r.q.z);
@@ -139,6 +166,13 @@ export function resolveRound(state0, ordersIn) {
   function hitOne(h) {
     const q = h.dst, r = rtById.get(q.id);
     if (q.hp <= 0) return;
+    if (q.type) {          // a building
+      const dmg = damageAfter(h.dmg, bdef(q).armor, false);
+      q.hp = Math.max(0, q.hp - dmg);
+      ev({ type: 'hit', src: h.src, dst: q.id, dmg, raw: Math.round(h.dmg), kind: h.kind, hp: q.hp, building: true });
+      if (q.hp <= 0) ev({ type: 'bdown', id: q.id, btype: q.type, owner: q.owner });
+      return;
+    }
     if (r && r.parry && MELEE_HITS.includes(h.kind)) {
       r.parry = false;
       ev({ type: 'parry', id: q.id, src: h.src });
@@ -149,7 +183,7 @@ export function resolveRound(state0, ordersIn) {
     // locked shields: hits from the front arc are blunted
     let walled = false;
     if (r && r.wall) {
-      const src = rtById.get(h.src)?.q;
+      const src = unitAt(h.src);
       if (src) { const d = norm(src.x - q.x, src.z - q.z); if (d.l > 1e-4 && d.x * q.fx + d.z * q.fz >= r.wall.cosHalf) walled = true; }
     }
     let defended = false;
@@ -183,22 +217,21 @@ export function resolveRound(state0, ordersIn) {
     const bx = ox + dx * at.range, bz = oz + dz * at.range;
     const tCut = losCut(s.terrain, ox, oz, bx, bz);
     let best = null, bt = tCut;
-    for (const e of living()) {
-      if (e.owner === q.owner) continue;
-      const tt = segCircle(ox, oz, bx, bz, e.x, e.z, radiusOf(e) + at.width / 2);
+    for (const e of targets(q, true)) {
+      const tt = segCircle(ox, oz, bx, bz, e.x, e.z, rad(e) + at.width / 2);
       if (tt >= 0 && tt < bt) { bt = tt; best = e; }
     }
+    if (best && best.owner === q.owner) best = null;     // its own building is in the way
     const ex = ox + (bx - ox) * bt, ez = oz + (bz - oz) * bt;
-    const cover = best ? inCover(s.terrain, ox, oz, best.x, best.z) : false;
+    const cover = best && !best.type ? inCover(s.terrain, ox, oz, best.x, best.z) : false;
     if (best) hits.push({ src: q.id, dst: best, dmg: atkDmg(r, at.dmg), kind: 'volley', cover });
-    ev({ type: 'release', id: q.id, kind: 'volley', hit: best ? [best.id] : [], ex: r3(ex), ez: r3(ez), blocked: !best && tCut < 1, cover, overwatch });
+    ev({ type: 'release', id: q.id, kind: 'volley', hit: best ? [best.id] : [], ex: r3(ex), ez: r3(ez), blocked: !best && bt < 1, cover, overwatch });
   }
   // a lobbed circle (or bone blast) at (cx,cz): everyone inside, walls don't matter
   function circleHit(r, kind, cx, cz, R, dmg, overwatch = false) {
     const q = r.q, struck = [];
-    for (const e of living()) {
-      if (e.owner === q.owner) continue;
-      if (dist(cx, cz, e.x, e.z) <= R + radiusOf(e) * 0.6) { hits.push({ src: q.id, dst: e, dmg, kind }); struck.push(e.id); }
+    for (const e of targets(q)) {
+      if (dist(cx, cz, e.x, e.z) <= R + rad(e) * 0.6) { hits.push({ src: q.id, dst: e, dmg, kind }); struck.push(e.id); }
     }
     ev({ type: 'release', id: q.id, kind, hit: struck, ex: r3(cx), ez: r3(cz), overwatch });
   }
@@ -206,7 +239,7 @@ export function resolveRound(state0, ordersIn) {
   // put a jumping/teleporting squad down on the nearest free spot back along its line
   function land(q, ox, oz) {
     const rq = radiusOf(q);
-    const free = (x, z) => !pointBlocked(s.terrain, x, z, rq * 0.85) && !living().some(o => o !== q && dist(x, z, o.x, o.z) < rq + radiusOf(o) - 0.05);
+    const free = (x, z) => !pointBlocked(obs(), x, z, rq * 0.85) && !living().some(o => o !== q && dist(x, z, o.x, o.z) < rq + radiusOf(o) - 0.05);
     if (free(q.x, q.z)) return;
     const d = norm(ox - q.x, oz - q.z);
     for (let k = 1; k <= 40; k++) {
@@ -222,10 +255,9 @@ export function resolveRound(state0, ordersIn) {
     const q = r.q;
     const bx = ox + dx * sk.range, bz = oz + dz * sk.range;
     const tCut = losCut(s.terrain, ox, oz, bx, bz), struck = [];
-    for (const e of living()) {
-      if (e.owner === q.owner) continue;
-      const tt = segCircle(ox, oz, bx, bz, e.x, e.z, radiusOf(e) + sk.width / 2);
-      if (tt >= 0 && tt < tCut) { hits.push({ src: q.id, dst: e, dmg: atkDmg(r, sk.dmg), kind: 'pierce', cover: inCover(s.terrain, ox, oz, e.x, e.z) }); struck.push(e.id); }
+    for (const e of targets(q)) {
+      const tt = segCircle(ox, oz, bx, bz, e.x, e.z, rad(e) + sk.width / 2);
+      if (tt >= 0 && tt < tCut) { hits.push({ src: q.id, dst: e, dmg: atkDmg(r, sk.dmg), kind: 'pierce', cover: !e.type && inCover(s.terrain, ox, oz, e.x, e.z) }); struck.push(e.id); }
     }
     ev({ type: 'release', id: q.id, kind: 'pierce', hit: struck, ex: r3(ox + (bx - ox) * tCut), ez: r3(oz + (bz - oz) * tCut), blocked: !struck.length && tCut < 1 });
   }
@@ -300,13 +332,12 @@ export function resolveRound(state0, ordersIn) {
         const nx = q.x + st.dx * step, nz = q.z + st.dz * step;
         // first enemy squad in the way takes the impact
         let hit = null, ht = 2;
-        for (const e of living()) {
-          if (e.owner === q.owner) continue;
-          const tt = segCircle(q.x, q.z, nx, nz, e.x, e.z, rq + radiusOf(e));
+        for (const e of targets(q)) {
+          const tt = segCircle(q.x, q.z, nx, nz, e.x, e.z, rq + rad(e));
           if (tt >= 0 && tt < ht) { ht = tt; hit = e; }
         }
         // riders and wraiths weave through their own lines; only walls, rocks and the edge stop them
-        const bump = (x, z) => pointBlocked(s.terrain, x, z, rq * 0.85);
+        const bump = (x, z) => pointBlocked(obs(), x, z, rq * 0.85);
         // when the charge ends on top of a friend, step aside to the nearest free spot
         const settle = () => {
           for (const o of living()) {
@@ -315,7 +346,7 @@ export function resolveRound(state0, ordersIn) {
             if (d >= need - 0.02) continue;
             const v = d > 1e-4 ? norm(q.x - o.x, q.z - o.z) : { x: -st.dz, z: st.dx };
             const tx = o.x + v.x * need, tz = o.z + v.z * need;
-            if (!pointBlocked(s.terrain, tx, tz, rq * 0.85)) { q.x = tx; q.z = tz; }
+            if (!pointBlocked(obs(), tx, tz, rq * 0.85)) { q.x = tx; q.z = tz; }
           }
         };
         rec(q, T);
@@ -354,7 +385,7 @@ export function resolveRound(state0, ordersIn) {
             if (d >= need) continue;
             const v = d > 1e-4 ? norm(e.x - q.x, e.z - q.z) : { x: q.fx, z: q.fz };
             const tx = e.x + v.x * sk.shove, tz = e.z + v.z * sk.shove;
-            if (!pointBlocked(s.terrain, tx, tz, radiusOf(e) * 0.85)) { rec(e, T); e.x = tx; e.z = tz; rec(e, T + 1); pushed.push(e.id); moved.add(e.id); }
+            if (!pointBlocked(obs(), tx, tz, radiusOf(e) * 0.85)) { rec(e, T); e.x = tx; e.z = tz; rec(e, T + 1); pushed.push(e.id); moved.add(e.id); }
           }
           ev({ type: 'land', id: q.id, kind: 'leap', ex: r3(q.x), ez: r3(q.z), pushed });
           st.phase = 'done';
@@ -366,9 +397,8 @@ export function resolveRound(state0, ordersIn) {
       if (a.kind === 'swing') {
         const R = radiusOf(q) + at.reach;
         const struck = [];
-        for (const e of living()) {
-          if (e.owner === q.owner) continue;
-          if (arcHits(st.ox, st.oz, st.dx, st.dz, R, at.cosHalf, e.x, e.z, radiusOf(e))) { hits.push({ src: q.id, dst: e, dmg: atkDmg(r, at.dmg), kind: 'swing' }); struck.push(e.id); }
+        for (const e of targets(q)) {
+          if (arcHits(st.ox, st.oz, st.dx, st.dz, R, at.cosHalf, e.x, e.z, rad(e))) { hits.push({ src: q.id, dst: e, dmg: atkDmg(r, at.dmg), kind: 'swing' }); struck.push(e.id); }
         }
         ev({ type: 'release', id: q.id, kind: 'swing', hit: struck });
       } else if (a.kind === 'volley') volley(r, st.ox, st.oz, st.dx, st.dz);
@@ -377,9 +407,8 @@ export function resolveRound(state0, ordersIn) {
       else if (a.kind === 'pierce') pierce(r, st.ox, st.oz, st.dx, st.dz, sk);
       else if (a.kind === 'sweep') {
         const R = radiusOf(q) + sk.reach, struck = [];
-        for (const e of living()) {
-          if (e.owner === q.owner) continue;
-          if (dist(q.x, q.z, e.x, e.z) <= R + radiusOf(e)) { hits.push({ src: q.id, dst: e, dmg: atkDmg(r, sk.dmg), kind: 'sweep' }); struck.push(e.id); }
+        for (const e of targets(q)) {
+          if (dist(q.x, q.z, e.x, e.z) <= R + rad(e)) { hits.push({ src: q.id, dst: e, dmg: atkDmg(r, sk.dmg), kind: 'sweep' }); struck.push(e.id); }
         }
         ev({ type: 'release', id: q.id, kind: 'sweep', hit: struck });
       } else if (a.kind === 'step') {
@@ -427,7 +456,7 @@ export function resolveRound(state0, ordersIn) {
       const rq = radiusOf(q);
       const ethereal = !!defOf(q).ghost;
       const clear = (x, z) => {
-        if (pointBlocked(s.terrain, x, z, rq * 0.85)) return false;
+        if (pointBlocked(obs(), x, z, rq * 0.85)) return false;
         if (ethereal) return true;          // wraiths drift through squads
         for (const o of all) if (o !== q && dist(x, z, o.x, o.z) < rq + radiusOf(o) - 0.02 && dist(x, z, o.x, o.z) < dist(q.x, q.z, o.x, o.z)) return false;
         return true;
@@ -466,7 +495,7 @@ export function resolveRound(state0, ordersIn) {
         const d = dist(q.x, q.z, e.x, e.z);
         if (d - radiusOf(e) > at.range || d < 1e-6) continue;
         if (((e.x - q.x) * q.fx + (e.z - q.z) * q.fz) / d < RULES.overwatchCos) continue;
-        if (at.kind === 'volley' && losCut(s.terrain, q.x, q.z, e.x, e.z) < 1) continue;
+        if (at.kind === 'volley' && losCut(obs(), q.x, q.z, e.x, e.z) < 1) continue;
         if (d < bd) { bd = d; best = e; }
       }
       if (!best) continue;
@@ -503,22 +532,83 @@ export function resolveRound(state0, ordersIn) {
     log.segments.push(seg);
   }
 
+  // ---- buildings act last: towers and keeps fire at the nearest enemy squad they see ----
+  const shooters = s.buildings.filter(b => b.hp > 0 && !b.build && bdef(b).fire);
+  if (shooters.length && living().length) {
+    seg = { kind: 'tier', tier: 0, len: 8, tracks: {}, events: [], squads: [] };
+    T = 0; hits = [];
+    const shots = [];
+    for (const b of shooters) {
+      const f = bdef(b).fire;
+      let best = null, bd = 1e9;
+      for (const e of living()) {
+        if (e.owner === b.owner) continue;
+        const d = dist(b.x, b.z, e.x, e.z) - radiusOf(e);
+        if (d <= f.range && d < bd && canSee(obstacles(s).filter(t => t.x !== b.x || t.z !== b.z), b.x, b.z, f.range + radiusOf(e), e.x, e.z)) { bd = d; best = e; }
+      }
+      if (!best) continue;
+      const dd = norm(best.x - b.x, best.z - b.z);
+      ev({ type: 'tele', id: b.id, kind: 'volley', ox: r3(b.x), oz: r3(b.z), dx: r3(dd.x), dz: r3(dd.z), t1: 4, shape: 'line', len: f.range, w: 0.7 });
+      shots.push({ b, e: best, dmg: f.dmg * 4 });
+    }
+    T = 4;
+    for (const sh of shots) {
+      if (sh.e.hp <= 0) continue;
+      hits.push({ src: sh.b.id, dst: sh.e, dmg: sh.dmg, kind: 'volley', cover: inCover(s.terrain, sh.b.x, sh.b.z, sh.e.x, sh.e.z) });
+      ev({ type: 'release', id: sh.b.id, kind: 'volley', hit: [sh.e.id], ex: r3(sh.e.x), ez: r3(sh.e.z), building: true });
+    }
+    const batch = hits; hits = [];
+    applyHits(batch); checkDeaths();
+    if (shots.length) log.segments.push(seg);
+  }
+
   // ---- end of round ----------------------------------------------------------------
   seg = { kind: 'end', len: 0, tracks: {}, events: [] };
   s.squads = s.squads.filter(q => q.hp > 0);
+  s.buildings = s.buildings.filter(b => b.hp > 0);
+  // construction and training
+  for (const b of s.buildings) {
+    const d = bdef(b);
+    if (b.build > 0 && --b.build === 0) { b.hp = Math.min(d.hp, b.hp + Math.round(d.hp * (1 - RULES.siteHp))); b.vision = d.vision; ev({ type: 'built', id: b.id, btype: b.type, owner: b.owner }); }
+  }
+  for (const b of s.buildings) {
+    if (!b.train || --b.train.left > 0) continue;
+    const role = b.train.role; b.train = null;
+    const def = FACTIONS[s.players[b.owner].faction].units[role];
+    const spot = spawnSpot(s, b, 0.5 + 0.42 * Math.sqrt(def.models) + (def.look === 'rider' || def.look === 'wraith' ? 0.12 : 0));
+    if (!spot) { ev({ type: 'spawnFail', id: b.id, role }); continue; }
+    const q = addSquad(s, b.owner, role, spot.x, spot.z);
+    ev({ type: 'spawn', id: q.id, bid: b.id, role, owner: b.owner, x: r3(q.x), z: r3(q.z) });
+  }
+  // shrines and income
+  for (const sh of s.shrines || []) {
+    const near = [0, 1].map(p => s.squads.some(q => q.owner === p && dist(q.x, q.z, sh.x, sh.z) <= RULES.shrineRadius + radiusOf(q) * 0.5));
+    const owner = near[0] && !near[1] ? 0 : near[1] && !near[0] ? 1 : sh.owner;
+    if (owner !== sh.owner) { sh.owner = owner; ev({ type: 'shrine', x: sh.x, z: sh.z, owner }); }
+  }
+  for (const p of [0, 1]) {
+    const hq = s.buildings.some(b => b.owner === p && b.type === 'hq');
+    const inc = (hq ? RULES.hqIncome : 0) + (s.shrines || []).filter(sh => sh.owner === p).length * RULES.shrineIncome;
+    s.supply[p] += inc;
+    ev({ type: 'income', owner: p, amount: inc, supply: s.supply[p] });
+  }
   for (const q of s.squads) {
     delete q.dead;
     const cd = {};
     for (const [k, v] of Object.entries(q.cd || {})) if (v > 1) cd[k] = v - 1;
     q.cd = cd;
   }
-  const aliveBy = [0, 1].map(p => s.squads.some(q => q.owner === p));
-  if (!aliveBy[0] && !aliveBy[1]) s.winner = -1;
-  else if (!aliveBy[0]) s.winner = 1;
-  else if (!aliveBy[1]) s.winner = 0;
+  // win: destroy the enemy HQ, or leave it with no squads and no barracks
+  const hasBase = s.buildings.some(b => b.type === 'hq');
+  const lost = [0, 1].map(p => hasBase
+    ? !s.buildings.some(b => b.owner === p && b.type === 'hq') || (!s.squads.some(q => q.owner === p) && !s.buildings.some(b => b.owner === p && b.type === 'barracks' && !b.build))
+    : !s.squads.some(q => q.owner === p));
+  if (lost[0] && lost[1]) s.winner = -1;
+  else if (lost[0]) s.winner = 1;
+  else if (lost[1]) s.winner = 0;
   else if (round >= RULES.roundLimit) {
-    const hp = [0, 1].map(p => s.squads.filter(q => q.owner === p).reduce((n, q) => n + q.hp, 0));
-    s.winner = hp[0] === hp[1] ? -1 : hp[0] > hp[1] ? 0 : 1;
+    const v = [0, 1].map(p => armyValue(s, p));
+    s.winner = v[0] === v[1] ? -1 : v[0] > v[1] ? 0 : 1;
   }
   log.segments.push(seg);
   s.round++;

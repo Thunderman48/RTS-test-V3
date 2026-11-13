@@ -4,6 +4,7 @@ import { RULES, isMelee, isShooter, skillOf, cdOf } from '../data/units.js';
 import { losCut, engagedWith } from '../sim/resolve.js';
 import { emptyOrders, emptyPlan, defOf, radiusOf, apFor } from '../sim/state.js';
 import { nearestEnemy, meleePlan, trimPath } from '../sim/stances.js';
+import { obstacles, navKey } from '../sim/base.js';
 import { Nav } from '../sim/nav.js';
 import { dist } from '../sim/geom.js';
 import { visibleTo } from '../sim/vision.js';
@@ -97,7 +98,7 @@ export function aiOrders(s, p, memory = aiMemory()) {
       const rgap = dist(q.x, q.z, t.x, t.z) - radiusOf(t);
       const blocked = def.attack.kind === 'volley' && losCut(s.terrain, q.x, q.z, t.x, t.z) < 1;
       if (rgap > def.attack.range * 0.9 || blocked) {
-        const nav = Nav.for(s.terrain, radiusOf(q), 'r');
+        const nav = Nav.for(obstacles(s), radiusOf(q), navKey(s));
         const pts = trimPath(q.x, q.z, nav.path(q.x, q.z, t.x, t.z), def.attack.range * (blocked ? 0.45 : 0.75));
         const ap = Math.min(left, 45);
         if (pts.length) { plan.actions.push({ kind: 'move', pts, ap }); left -= ap; }

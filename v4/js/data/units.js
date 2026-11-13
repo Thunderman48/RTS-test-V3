@@ -23,6 +23,17 @@ export const RULES = {
   overwatchCos: 0.5,            // overwatch fires at enemies moving inside this front cone
   coverMult: 0.5,               // volleys through a forest deal half damage
   roundLimit: 40,
+  // M3 base & economy
+  startSupply: 40,
+  hqIncome: 10,
+  shrineIncome: 4,
+  shrineRadius: 3,
+  armyCap: 10,
+  buildZone: 16,                // own third of the board (inches from your edge)
+  buildRange: 9,                // new buildings within this distance of one of yours
+  maxBannerCp: 2,
+  trainRounds: 1,
+  siteHp: 0.4,                  // a construction site starts with this share of its HP
   planningTimerSec: 120,
 };
 
@@ -87,6 +98,19 @@ export const FACTIONS = {
     },
   },
 };
+
+// Buildings (both factions share the rules; names and looks differ).
+//  shape: 'rect' (w x d, rotated by rot 0/90) or 'circle' (r). fire: { dmg (x4 shots), range }
+export const BUILDINGS = {
+  hq:       { name: { kingdom: 'Keep', undead: 'Crypt' }, icon: 'goal', cost: 0, build: 0, hp: 320, armor: 12, shape: 'rect', w: 4, d: 4, vision: 10, fire: { dmg: 3, range: 8 } },
+  barracks: { name: { kingdom: 'Barracks', undead: 'Ossuary' }, icon: 'spawn', cost: 30, build: 1, hp: 150, armor: 8, shape: 'rect', w: 3.5, d: 2.5, vision: 6 },
+  tower:    { name: { kingdom: 'Watchtower', undead: 'Bone Spire' }, icon: 'range', cost: 25, build: 1, hp: 110, armor: 6, shape: 'circle', r: 0.9, vision: 13, fire: { dmg: 4, range: 11 } },
+  banner:   { name: { kingdom: 'Banner', undead: 'Obelisk' }, icon: 'cp', cost: 20, build: 1, hp: 60, armor: 4, shape: 'circle', r: 0.55, vision: 6, cp: 1 },
+  wall:     { name: { kingdom: 'Palisade', undead: 'Bone Fence' }, icon: 'fortify', cost: 8, build: 0, hp: 80, armor: 6, shape: 'rect', w: 3, d: 0.5, vision: 0 },
+};
+export const BUILD_ORDER = ['barracks', 'tower', 'banner', 'wall'];
+// what a barracks can train (supply cost); heroes can't be trained
+export const TRAIN_COST = { tank: 25, fighter: 20, ranged: 22, fast: 26 };
 
 export const ROLE_ORDER = ['hero', 'tank', 'fighter', 'ranged', 'fast'];
 

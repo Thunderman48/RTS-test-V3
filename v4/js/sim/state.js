@@ -1,6 +1,7 @@
 // V4 game state: squads of miniatures on a terrain board.
 import { RULES, FACTIONS, squadRadius, unitDef } from '../data/units.js';
-import { buildTerrain, DEPLOY, mirror } from '../data/map.js';
+import { buildTerrain, DEPLOY, mirror, HQ_POS, SHRINES } from '../data/map.js';
+import { addBuilding } from './base.js';
 import { rng } from './rng.js';
 
 export function createGame(seed = 1, factions = ['kingdom', 'undead']) {
@@ -9,7 +10,11 @@ export function createGame(seed = 1, factions = ['kingdom', 'undead']) {
     terrain: buildTerrain(),
     players: factions.map((f, i) => ({ id: i, faction: f })),
     squads: [],
+    buildings: [],
+    supply: [RULES.startSupply, RULES.startSupply],
+    shrines: SHRINES.map(p => ({ x: p.x, z: p.z, owner: -1 })),
   };
+  for (const p of [0, 1]) { const h = p === 0 ? HQ_POS : mirror(HQ_POS); addBuilding(s, p, 'hq', h.x, h.z, 0, true); }
   // each side deploys in the same spots with a small seeded shuffle, so games differ
   const R = rng(seed);
   for (const p of [0, 1]) {
@@ -42,7 +47,7 @@ export const alive = q => q.hp > 0;
 export const modelsFor = (q, hp) => Math.max(0, Math.ceil(hp / defOf(q).hpPer - 1e-9));
 export const speedOf = q => defOf(q).tier * RULES.moveFactor;
 export const apFor = () => RULES.ap;
-export function emptyOrders() { return { squads: {}, stances: {} }; }
+export function emptyOrders() { return { squads: {}, stances: {}, builds: [], trains: [] }; }
 export function emptyPlan() { return { actions: [], upgrades: 0, defends: 0, parry: false, overwatch: null }; }
 export const clone = o => JSON.parse(JSON.stringify(o));
 export const findSquad = (s, id) => s.squads.find(q => q.id === id) || null;

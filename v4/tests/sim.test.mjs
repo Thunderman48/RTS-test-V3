@@ -5,6 +5,7 @@ import { resolveRound, damageAfter, engagedWith } from '../js/sim/resolve.js';
 import { cpUsage, validateOrders } from '../js/sim/orders.js';
 import { aiOrders, aiMemory } from '../js/ai/ai.js';
 import { canSee, visibleTo } from '../js/sim/vision.js';
+import { placeError, addBuilding } from '../js/sim/base.js';
 import { Nav, walkAP } from '../js/sim/nav.js';
 
 let pass = 0, fail = 0;
@@ -438,6 +439,88 @@ test('the AI only targets what it sees or remembers', () => {
   const mem = aiMemory();
   aiOrders(s, 1, mem);
   ok(!mem.seen.q1, 'nothing seen across the board');
+});
+
+console.log('M3 base & economy');
+
+const ob = (builds = [], trains = []) => ({ squads: {}, stances: {}, builds, trains });
+
+test('a new game has an HQ each, starting supply and four unowned shrines', () => {
+  const s = createGame(1);
+  eq(s.buildings.filter(b => b.type === 'hq').length, 2);
+  eq(s.supply.join(), RULES.startSupply + ',' + RULES.startSupply);
+  eq(s.shrines.length, 4); ok(s.shrines.every(x => x.owner === -1));
+});
+
+test('placement: only in your third, near your buildings, not on terrain or squads', () => {
+  const s = createGame(1);
+  eq(placeError(s, 0, 'barracks', 5, 9), '', 'a valid spot');
+  ok(placeError(s, 0, 'barracks', 30, 9), 'outside your third');
+  ok(placeError(s, 0, 'barracks', 14, 3), 'too far from your buildings');
+  ok(placeError(s, 0, 'barracks', 3.5, 16), 'on top of the HQ');
+  ok(placeError(s, 0, 'barracks', 9.5, 16), 'on a squad');
+});
+
+test('construction: paid at once, a site this round, finished the next', () => {
+  const s = createGame(1);
+  const r1 = resolveRound(s, [ob([{ type: 'barracks', x: 5, z: 9 }]), ob()]);
+  const b = r1.state.buildings.find(x => x.type === 'barracks');
+  ok(b, 'built'); eq(b.build, 0, 'finished at the end of the round');
+  const held1 = r1.state.shrines.filter(x => x.owner === 0).length;
+  eq(r1.state.supply[0], RULES.startSupply - 30 + RULES.hqIncome + held1 * RULES.shrineIncome, 'paid 30, earned income');
+  ok(events(r1.log).some(e => e.type === 'construct') && events(r1.log).some(e => e.type === 'built'));
+});
+
+test('too expensive or invalid builds are dropped', () => {
+  const s = createGame(1); s.supply[0] = 10;
+  const r = resolveRound(s, [ob([{ type: 'barracks', x: 5, z: 9 }, { type: 'wall', x: 30, z: 9 }]), ob()]);
+  eq(r.state.buildings.filter(b => b.owner === 0).length, 1, 'only the HQ');
+});
+
+test('a barracks trains a squad that appears at the end of the round', () => {
+  const s = createGame(1);
+  const b = addBuilding(s, 0, 'barracks', 5, 9, 0, true);
+  const n0 = s.squads.filter(q => q.owner === 0).length;
+  const r = resolveRound(s, [ob([], [{ bid: b.id, role: 'fighter' }]), ob()]);
+  eq(r.state.squads.filter(q => q.owner === 0).length, n0 + 1);
+  ok(events(r.log).some(e => e.type === 'spawn' && e.role === 'fighter'));
+  eq(r.state.supply[0], RULES.startSupply - 20 + RULES.hqIncome + r.state.shrines.filter(x => x.owner === 0).length * RULES.shrineIncome);
+});
+
+test('shrines: held when only your squads are near; contested shrines stay', () => {
+  const s = arena([[0, 'fighter', 16.5, 19.5], [0, 'fighter', 31.5, 15.5], [1, 'fighter', 31.5, 9.5]]);
+  const r = resolveRound(s, holdAll(s));
+  eq(r.state.shrines[0].owner, 0, 'held');
+  eq(r.state.shrines[1].owner, -1, 'contested');
+  eq(r.state.supply[0], RULES.startSupply + RULES.hqIncome + RULES.shrineIncome);
+});
+
+test('watchtowers fire in a Buildings segment after the tiers', () => {
+  const s = arena([[1, 'fighter', 10, 8]]);
+  addBuilding(s, 0, 'tower', 5, 8, 0, true);
+  const { log } = resolveRound(s, holdAll(s));
+  const seg = log.segments.find(g => g.kind === 'tier' && g.tier === 0);
+  ok(seg, 'buildings segment');
+  ok(seg.events.some(e => e.type === 'hit' && e.dst === 'q1'), 'tower hits');
+});
+
+test('buildings block movement and shots, and can be attacked', () => {
+  const s = arena([[0, 'fighter', 6, 5], [1, 'ranged', 14, 5]]);
+  const w = addBuilding(s, 0, 'wall', 10, 5, 1, true);   // a palisade across the line
+  const o = holdAll(s);
+  o[1].squads.q2 = plan([{ kind: 'volley', x: 6, z: 5 }]);
+  const { log } = resolveRound(s, o);
+  const rel = events(log).find(e => e.type === 'release' && e.id === 'q2');
+  eq(rel.hit.join(), w.id, 'the volley hits the palisade');
+});
+
+test('destroying the enemy HQ wins', () => {
+  const s = arena([[0, 'fighter', 42.4, 16]]);
+  const hq = s.buildings.find(b => b.owner === 1 && b.type === 'hq'); hq.hp = 5;
+  const o = holdAll(s);
+  o[0].squads.q1 = plan([{ kind: 'swing', x: 44.5, z: 16 }]);
+  const r = resolveRound(s, o);
+  eq(r.state.winner, 0);
 });
 
 console.log(`\n${pass} passed, ${fail} failed`);

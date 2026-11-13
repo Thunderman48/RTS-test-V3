@@ -4,6 +4,7 @@ import { emptyOrders, emptyPlan, defOf, radiusOf, apFor } from '../sim/state.js'
 import { planCost, actionCost, cpUsage, SKILL_KINDS } from '../sim/orders.js';
 import { clampAim, engagedWith } from '../sim/resolve.js';
 import { Nav, pathAP, walkAP } from '../sim/nav.js';
+import { obstacles, navKey } from '../sim/base.js';
 import { norm, segCircle, dist } from '../sim/geom.js';
 
 export class Planner {
@@ -105,7 +106,7 @@ export class Planner {
   previewMove(q, tx, tz) {
     const def = defOf(q);
     const from = this.predict(q);
-    const nav = Nav.for(this.s.terrain, radiusOf(q), 'r');
+    const nav = Nav.for(obstacles(this.s), radiusOf(q), navKey(this.s));
     const pts = nav.path(from.x, from.z, tx, tz);
     // stepping away from an engaged enemy: 30 AP to disengage first
     let disengage = false;
