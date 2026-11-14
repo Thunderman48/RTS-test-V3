@@ -2,7 +2,8 @@
 import * as THREE from 'three';
 import { fogPatch } from './fog.js';
 import { RULES } from '../data/units.js';
-import { DEPLOY } from '../data/map.js';
+import { DEPLOY, mapDef, HQ_X } from '../data/maps.js';
+import { boardOf } from '../sim/nav.js';
 import { rng } from '../sim/rng.js';
 import { Kit, paintMat } from './kit.js';
 import { buildRoom } from './props.js';
@@ -21,15 +22,16 @@ function vnoise(seed) {
   };
 }
 const N1 = vnoise(1), N2 = vnoise(2), N3 = vnoise(3);
-// the worn dirt road: a cubic bezier across the board, sampled as a polyline
-const ROAD = (() => {
-  const P = [[0, 16], [14, 12], [34, 20], [48, 16]], pts = [];
+// the worn dirt road: a cubic bezier across the board (per map), sampled as a polyline
+let ROAD = [];
+function setRoad(P) {
+  ROAD = [];
   for (let i = 0; i <= 48; i++) {
     const t = i / 48, u = 1 - t;
-    pts.push([u * u * u * P[0][0] + 3 * u * u * t * P[1][0] + 3 * u * t * t * P[2][0] + t * t * t * P[3][0], u * u * u * P[0][1] + 3 * u * u * t * P[1][1] + 3 * u * t * t * P[2][1] + t * t * t * P[3][1]]);
+    ROAD.push([u * u * u * P[0][0] + 3 * u * u * t * P[1][0] + 3 * u * t * t * P[2][0] + t * t * t * P[3][0], u * u * u * P[0][1] + 3 * u * u * t * P[1][1] + 3 * u * t * t * P[2][1] + t * t * t * P[3][1]]);
   }
-  return pts;
-})();
+}
+let BW = RULES.board.w, BH = RULES.board.h;
 function roadDist(x, z) {
   let best = 1e9;
   for (let i = 0; i < ROAD.length - 1; i++) {
@@ -47,18 +49,23 @@ const lerpHex = (a, b, t) => {
   return (Math.round(r) << 16) | (Math.round(g) << 8) | Math.round(c);
 };
 function makeGround(terrain) {
-  const river = terrain.find(t => t.kind === 'river');
+  const rivers = terrain.filter(t => t.kind === 'river');
+  const lakes = terrain.filter(t => t.kind === 'lake');
   const ruins = terrain.filter(t => t.kind === 'ruin');
-  const W = RULES.board.w, H = RULES.board.h;
-  const inRiver = (x, z) => river && Math.abs(x - river.x) < river.w / 2 + 0.05 && !(river.fords || []).some(f => Math.abs(z - f.z) < f.d / 2 - 0.2);
+  const W = BW, H = BH;
+  // nearest stream to x (most maps have one or two)
+  const riverAt = x => { let best = null, bd = 1e9; for (const r of rivers) { const d = Math.abs(x - r.x); if (d < bd) { bd = d; best = r; } } return best; };
+  const inRiver = (x, z) => { const river = riverAt(x); return (river && Math.abs(x - river.x) < river.w / 2 + 0.05 && !(river.fords || []).some(f => Math.abs(z - f.z) < f.d / 2 - 0.2)) || lakes.some(l => (x - l.x) ** 2 + (z - l.z) ** 2 < (l.r + 0.2) ** 2); };
   const height = (x, z) => {
     if (x <= 0.01 || z <= 0.01 || x >= W - 0.01 || z >= H - 0.01) return 0;
     let y = (N1(x / 4, z / 4) - 0.5) * 0.07 + (N2(x * 0.9, z * 0.9) - 0.5) * 0.03;
+    const river = riverAt(x);
     if (river) {
       const dx = Math.abs(x - river.x) - river.w / 2;
       const ford = (river.fords || []).some(f => Math.abs(z - f.z) < f.d / 2);
       if (dx < 0.5) y = Math.min(y, ford ? -0.05 : -0.05 + Math.max(-0.14, dx * 0.2));
     }
+    for (const l of lakes) { const dl = Math.sqrt((x - l.x) ** 2 + (z - l.z) ** 2) - l.r; if (dl < 0.5) y = Math.min(y, -0.05 + Math.max(-0.16, dl * 0.22)); }
     return y;
   };
   const color = (x, y, z) => {
@@ -69,10 +76,12 @@ function makeGround(terrain) {
     if (rd < 1.6) c = lerpHex(c, 0x9c8258, rd < 1.0 ? 0.85 : (1.6 - rd) / 0.6 * 0.6);
     for (const t of ruins) if (Math.abs(x - t.x) < t.w / 2 + 1.1 && Math.abs(z - t.z) < t.d / 2 + 1.1) c = lerpHex(c, 0x9a9566, 0.35);
     if (x < 11) c = lerpHex(c, 0x5d86c8, 0.07); else if (x > W - 11) c = lerpHex(c, 0x9b6fc4, 0.07);
+    const river = riverAt(x);
     if (river) {
       const dx = Math.abs(x - river.x) - river.w / 2;
       if (dx < 0.7) c = lerpHex(c, y < -0.03 ? 0x5c513d : 0x6e5a3e, dx < 0.1 ? 0.95 : 0.6);
     }
+    for (const l of lakes) { const dl = Math.sqrt((x - l.x) ** 2 + (z - l.z) ** 2) - l.r; if (dl < 0.8) c = lerpHex(c, y < -0.03 ? 0x5c513d : 0x6e5a3e, dl < 0.15 ? 0.95 : 0.6); }
     return c;
   };
   // jittered triangle grid, alternating diagonals
@@ -99,7 +108,7 @@ function makeGround(terrain) {
 
 // layered earth/rock sides of the diorama board (top at y = 0, bottom at y = -1)
 function boardSides(k, R) {
-  const W = RULES.board.w, H = RULES.board.h;
+  const W = BW, H = BH;
   const bands = [[0, -0.22, 0x5b4630], [-0.22, -0.55, 0x8a8174], [-0.55, -0.68, 0xc9bfa8], [-0.68, -1.0, 0x6b5238]];
   const edge = (len, place) => {
     const n = Math.round(len / 1.1);
@@ -116,15 +125,17 @@ function boardSides(k, R) {
 }
 
 // grass tufts, pebbles and flowers, kept away from where squads deploy
-function scatter(k, R, terrain, ground) {
-  const W = RULES.board.w, H = RULES.board.h;
+function scatter(k, R, terrain, ground, hqSpots) {
+  const W = BW, H = BH;
   const deploy = [];
-  for (const d of DEPLOY) { deploy.push(d); deploy.push({ x: W - d.x, z: H - d.z }); }
+  for (const hz of hqSpots) for (const d of DEPLOY) { deploy.push({ x: d.x, z: hz + d.dz }); deploy.push({ x: W - d.x, z: H - hz - d.dz }); }
+  for (const hz of hqSpots) { deploy.push({ x: HQ_X, z: hz }); deploy.push({ x: W - HQ_X, z: H - hz }); }
   const busy = (x, z) => deploy.some(d => (d.x - x) ** 2 + (d.z - z) ** 2 < 9) || ground.inRiver(x, z) || roadDist(x, z) < 1.2
-    || terrain.some(t => t.kind !== 'river' && (t.r ? (t.x - x) ** 2 + (t.z - z) ** 2 < (t.r + 0.4) ** 2 : Math.abs(t.x - x) < t.w / 2 + 0.6 && Math.abs(t.z - z) < t.d / 2 + 0.6));
+    || terrain.some(t => t.kind !== 'river' && t.kind !== 'board' && (t.r ? (t.x - x) ** 2 + (t.z - z) ** 2 < (t.r + 0.4) ** 2 : Math.abs(t.x - x) < t.w / 2 + 0.6 && Math.abs(t.z - z) < t.d / 2 + 0.6));
   const greens = [0x5f8a43, 0x739e4c, 0x4f7a39];
   let tufts = 0;
-  for (let n = 0; n < 900 && tufts < 260; n++) {
+  const area = W * H / (48 * 32);
+  for (let n = 0; n < 900 * area && tufts < 260 * area; n++) {
     const x = 0.6 + R() * (W - 1.2), z = 0.6 + R() * (H - 1.2);
     if (busy(x, z)) continue;
     tufts++;
@@ -135,7 +146,7 @@ function scatter(k, R, terrain, ground) {
     }
     if (R() < 0.12) k.ball(0.045, [0xf5f0e0, 0xf2cf4a, 0xe98bb0][n % 3], { x: x + 0.08, y: y + 0.2, z, sh: 0 });
   }
-  for (let n = 0; n < 160; n++) {
+  for (let n = 0; n < 160 * area; n++) {
     const x = 0.5 + R() * (W - 1), z = 0.5 + R() * (H - 1);
     if (busy(x, z) && !(roadDist(x, z) < 1.2 && !ground.inRiver(x, z))) continue;
     k.ball(0.05 + R() * 0.07, [0x9c9282, 0xb4ab98, 0x857c70][n % 3], { x, y: ground.height(x, z) + 0.02, z, sy: 0.6, j: 0.02 });
@@ -170,11 +181,16 @@ function rockPile(k, R, x, z, r, cols = [0x8a8072, 0x9c9282, 0x7a7266]) {
   k.ball(r * 0.25, cols[2], { x: x - r * 0.8, y: r * 0.1, z: z + r * 0.4, j: r * 0.06, sy: 0.6 });
 }
 
-export function buildTable(view, terrain) {
-  const W = RULES.board.w, H = RULES.board.h;
+export function buildTable(view, terrain, mapId = 'crossing') {
+  const bd = boardOf(terrain), def = mapDef(mapId);
+  BW = bd.w; BH = bd.h;
+  const W = BW, H = BH;
+  setRoad(def.road);
   const L = view.layers.table;
+  view.clearTable?.();
+  view.setBoard?.(W, H);
   // the games table, props and the room around it
-  buildRoom(view);
+  buildRoom(view, W, H);
   // the board: faceted ground on top, layered sides
   const ground = makeGround(terrain);
   const kg = new Kit(17);
@@ -183,7 +199,7 @@ export function buildTable(view, terrain) {
   const ks = new Kit(19);
   boardSides(ks, rng(23));
   ks.box(W - 0.2, 0.96, H - 0.2, 0x4a3828, { x: W / 2, y: -0.52, z: H / 2, sh: 0 });   // board core
-  scatter(ks, rng(29), terrain, ground);
+  scatter(ks, rng(29), terrain, ground, def.hqSpots);
   L.add(ks.mesh(paintMat('board')));
   const R = rng(11);
   const k = new Kit(3);
@@ -216,6 +232,16 @@ export function buildTable(view, terrain) {
       for (let i = 0; i < 7; i++) k.ball(0.14 + R() * 0.16, stones[i % 4], { x: t.x + (R() - 0.5) * (t.w + 1.2), y: 0.08, z: t.z + (R() - 0.5) * (t.d + 1.2), sy: 0.7, j: 0.03 });
     } else if (t.kind === 'rock') {
       rockPile(k, R, t.x, t.z, t.r * 1.05);
+    } else if (t.kind === 'lake') {
+      // a mountain lake / pond: water disc, bank stones, reeds and lily pads
+      waters.push(t);
+      const n = Math.round(t.r * 9);
+      for (let i = 0; i < n; i++) { const a = i / n * Math.PI * 2 + R() * 0.3, rr = t.r + 0.1 + R() * 0.25; k.ball(0.16 + R() * 0.18, [0x9c9282, 0xb4ab98, 0x8a8072][i % 3], { x: t.x + Math.cos(a) * rr, y: 0.05, z: t.z + Math.sin(a) * rr, sy: 0.55, j: 0.04 }); }
+      for (let i = 0; i < Math.round(t.r * 3); i++) {
+        const a = R() * Math.PI * 2, bx = t.x + Math.cos(a) * (t.r + 0.35), bz = t.z + Math.sin(a) * (t.r + 0.35);
+        for (let j = 0; j < 4; j++) { const h = 0.5 + R() * 0.45, ox = (R() - 0.5) * 0.35, oz = (R() - 0.5) * 0.35; k.cone(0.045, h, 0x6f8a3a, { x: bx + ox, y: h / 2, z: bz + oz, rz: (R() - 0.5) * 0.3 }, 3); }
+      }
+      for (let i = 0; i < Math.round(t.r * 2.5); i++) { const a = R() * Math.PI * 2, rr = Math.sqrt(R()) * (t.r - 0.4); k.cyl(0.16, 0.16, 0.02, 0x5f9a4a, { x: t.x + Math.cos(a) * rr, y: -0.01, z: t.z + Math.sin(a) * rr, sh: 0.1 }, 7); }
     } else if (t.kind === 'river') {
       waters.push(t);
       for (const f of t.fords || []) {
@@ -241,7 +267,7 @@ export function buildTable(view, terrain) {
   L.add(terrainMesh);
   for (const t of waters) {
     const kw = new Kit(21);
-    const g = new THREE.PlaneGeometry(t.w + 0.7, t.d - 0.02, 5, Math.round(t.d * 1.5));
+    const g = t.kind === 'lake' ? new THREE.CircleGeometry(t.r + 0.3, 18) : new THREE.PlaneGeometry(t.w + 0.7, t.d - 0.02, 5, Math.round(t.d * 1.5));
     g.rotateX(-Math.PI / 2);
     kw.geo(g, 0x4fa3c4, { x: t.x, y: 0.012, z: t.z, j: 0.025, sh: 0.14 });
     const wmat = new THREE.MeshStandardMaterial({ vertexColors: true, flatShading: true, transparent: true, opacity: 0.8, roughness: 0.12, metalness: 0.2 });

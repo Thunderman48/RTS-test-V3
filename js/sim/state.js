@@ -1,31 +1,35 @@
 // V4 game state: squads of miniatures on a terrain board.
 import { RULES, FACTIONS, squadRadius, unitDef } from '../data/units.js';
-import { buildTerrain, DEPLOY, mirror, HQ_X, HQ_SPOTS, SHRINES } from '../data/map.js';
+import { DEPLOY, HQ_X, mapDef, buildMapTerrain, mapSites, mirrorOn, boardOf } from '../data/maps.js';
 import { addBuilding, obstacles } from './base.js';
 import { pointBlocked } from './nav.js';
 import { rng } from './rng.js';
 
-export function createGame(seed = 1, factions = ['kingdom', 'undead']) {
+export function createGame(seed = 1, factions = ['kingdom', 'undead'], mapId = 'crossing', opts = {}) {
   const R = rng(seed);
+  const def = mapDef(mapId), mirror = mirrorOn(def.w, def.h);
   const s = {
     v: 4, seed, round: 1, winner: null, nextId: 1,
-    terrain: buildTerrain(),
+    map: def.id,
+    board: boardOf(def),
+    hqSpots: def.hqSpots.slice(),
+    terrain: buildMapTerrain(def),
     // paint: which colour scheme the army uses (the second player gets the alternate one in a mirror match)
-    players: factions.map((f, i) => ({ id: i, faction: f, paint: i === 1 && factions[0] === factions[1] ? f + 'Alt' : f })),
+    players: factions.map((f, i) => ({ id: i, faction: f, paint: i === 1 && factions[0] === factions[1] ? f + 'Alt' : f, incomeMult: (opts.incomeMult && opts.incomeMult[i]) || 1 })),
     squads: [],
     buildings: [],
     supply: factions.map(f => FACTIONS[f].eco.start),
-    shrines: SHRINES.map(p => ({ x: p.x, z: p.z, owner: -1 })),
+    shrines: mapSites(def).map(p => ({ x: p.x, z: p.z, owner: -1 })),
     // what each side knows about enemy buildings: id -> last seen snapshot
     intel: [{ known: {} }, { known: {} }],
   };
   // each HQ starts at one of three spots along its back edge (so it has to be scouted)
-  const hqz = [0, 1].map(() => HQ_SPOTS[Math.floor(R() * HQ_SPOTS.length) % HQ_SPOTS.length]);
+  const hqz = [0, 1].map(() => def.hqSpots[Math.floor(R() * def.hqSpots.length) % def.hqSpots.length]);
   for (const p of [0, 1]) { const h = p === 0 ? { x: HQ_X, z: hqz[0] } : mirror({ x: HQ_X, z: hqz[1] }); addBuilding(s, p, 'hq', h.x, h.z, 0, true); }
   // the army deploys in front of its HQ with a small seeded shuffle, so games differ
   for (const p of [0, 1]) {
     for (const d of DEPLOY) {
-      const z0 = Math.max(2.5, Math.min(RULES.board.h - 2.5, hqz[p] + d.dz));
+      const z0 = Math.max(2.5, Math.min(def.h - 2.5, hqz[p] + d.dz));
       const pos = p === 0 ? { x: d.x, z: z0 } : mirror({ x: d.x, z: z0 });
       const jit = d.role === 'builder' ? 0 : 16;
       const jx = Math.round((R() - 0.5) * jit) / 10, jz = Math.round((R() - 0.5) * jit) / 10;

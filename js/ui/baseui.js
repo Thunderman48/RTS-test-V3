@@ -258,7 +258,7 @@ export const BaseUI = {
     const army = armySize(this.state, this.me) + (this.phase === 'planning' ? this.planner.draft.trains.length : 0);
     const tip = eco.res === 'gold' ? 'Gold: your keep, farms and mines earn it every round' : `Souls: your crypt and soul wells earn a few each round; models dying within ${RULES.soulRange}″ of your squads, crypt, obelisks and soul wells give more`;
     return `<span class="ec ${eco.res}" title="${tip}">${icon(eco.icon, 16)}<b>${left}</b><small>+${this.income()}${eco.res === 'souls' ? ' +☠' : ''}</small></span>`
-      + `<span class="ec" title="Army size / cap">${icon('army', 16)}<b>${army}</b><small>/${RULES.armyCap}</small></span>`;
+      + `<span class="ec" title="Army size / cap">${icon('army', 16)}<b>${army}</b><small>/${this.state.board.cap}</small></span>`;
   },
 
   renderBuildBar() {
@@ -355,7 +355,7 @@ export const BaseUI = {
     const cur = this.planner.trainOf(b.id);
     const units = FACTIONS[fac].units;
     const status = b.build ? `Under construction (${Math.round(d.work - b.build)}/${d.work} work): it can train once it is finished.` : b.train ? `Training ${esc(units[b.train.role].name)}: it arrives at the end of this round.` : cur ? `${esc(units[cur.role].name)} will train this round and arrive at the end of the next.` : `Pick a squad to train. It takes a round and appears next to the ${esc(d.name[fac].toLowerCase())}.`;
-    dock.innerHTML = `<div class="dk-head"><div><div class="nm">${esc(d.name[fac])}</div><div class="sub">${hpTxt} · ${icon(eco.icon, 12)} ${this.planner.supplyLeft()} left · army ${armySize(this.state, this.me) + this.planner.draft.trains.length}/${RULES.armyCap}</div></div><button class="ib x" data-tr="close">✕</button></div>
+    dock.innerHTML = `<div class="dk-head"><div><div class="nm">${esc(d.name[fac])}</div><div class="sub">${hpTxt} · ${icon(eco.icon, 12)} ${this.planner.supplyLeft()} left · army ${armySize(this.state, this.me) + this.planner.draft.trains.length}/${this.state.board.cap}</div></div><button class="ib x" data-tr="close">✕</button></div>
       <div class="dk-btns">${roles.map(role => {
         const u = units[role], on = cur?.role === role;
         const err = on ? '' : this.planner.trainError(b, role);
@@ -372,11 +372,11 @@ export const BaseUI = {
   // while placing: your build zone, or the free resource sites for mines / wells
   drawBuildZone(L) {
     if (!this.buildMode) return;
-    const W = RULES.board.w, H = RULES.board.h;
+    const W = this.state.board.w, H = this.state.board.h;
     if (BUILDINGS[this.buildMode.type].site) {
       for (const sh of this.state.shrines) if (!siteTaken(this.state, sh, this.planner.queued())) { const r = ring(1.4, 0.1, 0xffc400, 0.7, 0.1, 48); r.position.x = sh.x; r.position.z = sh.z; L.add(r); }
     } else {
-      const x = this.me === 0 ? RULES.buildZone : W - RULES.buildZone;
+      const x = this.me === 0 ? this.state.board.zone : W - this.state.board.zone;
       L.add(ribbon([{ x, z: 0.3 }, { x, z: H - 0.3 }], 0.08, 0xffc400, 0.6));
     }
   },
@@ -408,7 +408,7 @@ export const BaseUI = {
       }
       const t = v.top();
       const p = this.view.project(t.x, t.y, t.z);
-      const hide = p.behind || b.dying > 0.6 || (zoomedOut && b.type === 'wall' && !sel);
+      const hide = p.behind || b.dying > 0.6 || (zoomedOut && b.type === 'wall' && !sel) || (this.platesOnlySel && this.phase !== 'playback' && !sel);
       el.style.display = hide ? 'none' : '';
       if (!hide) items.push({ el, x: p.x, y: p.y, sel });
     }

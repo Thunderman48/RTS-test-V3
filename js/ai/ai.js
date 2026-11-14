@@ -9,10 +9,12 @@ import { builderPlan } from '../sim/builders.js';
 import { Nav } from '../sim/nav.js';
 import { dist } from '../sim/geom.js';
 import { visibleTo, knownEnemyHq, observers, canSee } from '../sim/vision.js';
-import { HQ_X, HQ_SPOTS, mirror } from '../data/map.js';
+import { HQ_X, mirrorOn } from '../data/maps.js';
 
 // memory (per side, updated in place): seen = last-seen enemy squads, prev = positions seen last round
-export function aiOrders(s, p, memory = aiMemory()) {
+// opts.level: 'easy' (one less command point, no aiming ahead) | 'normal' | 'hard' (one more command point)
+export function aiOrders(s, p, memory = aiMemory(), opts = {}) {
+  const level = opts.level || 'normal';
   const o = emptyOrders();
   memory.seen = memory.seen || {}; memory.prev = memory.prev || {};
   const mine = s.squads.filter(q => q.owner === p && q.hp > 0 && q.role !== 'builder');
@@ -26,14 +28,15 @@ export function aiOrders(s, p, memory = aiMemory()) {
   const hqE = knownEnemyHq(s, p);
   const hqTarget = hqE ? { id: hqE.id, owner: 1 - p, faction: s.players[1 - p].faction, role: 'fighter', x: hqE.x, z: hqE.z, fx: 1, fz: 0, models: 4, hp: hqE.hp, cd: {}, isHq: true } : null;
   memory.cleared = memory.cleared || {};
-  const spots = HQ_SPOTS.map(z => p === 0 ? mirror({ x: HQ_X, z }) : { x: HQ_X, z });
+  const mirror = mirrorOn(s.board.w, s.board.h);
+  const spots = s.hqSpots.map(z => p === 0 ? mirror({ x: HQ_X, z }) : { x: HQ_X, z });
   const obsv = observers(s, p);
   for (const sp of spots) if (obsv.some(o => canSee(s.terrain, o.x, o.z, o.range, sp.x, sp.z))) memory.cleared[sp.x + ',' + sp.z] = true;
   const scoutSpot = q => spots.filter(sp => !memory.cleared[sp.x + ',' + sp.z]).sort((a, b) => dist(q.x, q.z, a.x, a.z) - dist(q.x, q.z, b.x, b.z))[0] || null;
   if (!enemies.length) {
     if (hqTarget) enemies = [hqTarget];
     else {
-      const sp = scoutSpot({ x: RULES.board.w / 2, z: RULES.board.h / 2 }) || spots[1];
+      const sp = scoutSpot({ x: s.board.w / 2, z: s.board.h / 2 }) || spots[1];
       enemies = [{ id: '?', owner: 1 - p, faction: s.players[1 - p].faction, role: 'fighter', x: sp.x, z: sp.z, fx: 1, fz: 0, models: 4, hp: 80, cd: {} }];
     }
   } else if (hqTarget) enemies.push(hqTarget);
@@ -44,6 +47,7 @@ export function aiOrders(s, p, memory = aiMemory()) {
   memory.prev = {};
   for (const e of s.squads) if (vis.has(e.id)) memory.prev[e.id] = { x: e.x, z: e.z };
   const lead = e => {
+    if (level === 'easy') return null;
     const m = prev[e.id];
     if (!m || !vis.has(e.id)) return null;
     const vx = (e.x - m.x) * 0.5, vz = (e.z - m.z) * 0.5;
@@ -54,7 +58,7 @@ export function aiOrders(s, p, memory = aiMemory()) {
     const db = Math.min(...enemies.map(e => dist(b.x, b.z, e.x, e.z)));
     return (a.role === 'hero' ? -1e9 : da) - (b.role === 'hero' ? -1e9 : db);
   });
-  let cp = RULES.cp + bonusCp(s, p);
+  let cp = RULES.cp + bonusCp(s, p) + (level === 'easy' ? -1 : level === 'hard' ? 1 : 0);
   const myVal = mine.reduce((n, q) => n + q.hp, 0), theirVal = enemies.filter(e => !e.isHq).reduce((n, e) => n + (e.hp || 0), 0);
   const assault = s.round >= 6 && (myVal >= theirVal * 1.15 || s.round >= 12);
   for (const q of ranked) {
@@ -68,8 +72,11 @@ export function aiOrders(s, p, memory = aiMemory()) {
     if (t.isHq && squadsOnly.length && dist(q.x, q.z, t.x, t.z) > 9) t = nearestEnemy(s, q, squadsOnly);
     // assault: when clearly ahead (or the game drags on) ordered squads go for the HQ unless engaged
     if (assault && hqTarget && !engagedWith(q, squadsOnly).length) t = hqTarget;
+    // rich and stalled (a long front, army at its cap): all in, past the fighting, for the HQ
+    const allIn = s.round >= 15 && s.supply[p] >= 150;
+    if (allIn && hqTarget && !engagedWith(q, squadsOnly).length) t = hqTarget;
     // the enemy HQ still unknown after a while: ordered squads go looking for it
-    if (!hqTarget && s.round >= 8 && !engagedWith(q, squadsOnly).length && !squadsOnly.some(e => dist(e.x, e.z, q.x, q.z) < 8)) {
+    if (!hqTarget && s.round >= 8 && !engagedWith(q, squadsOnly).length && (allIn || !squadsOnly.some(e => dist(e.x, e.z, q.x, q.z) < 8))) {
       const sp = scoutSpot(q);
       if (sp) t = { id: '?', owner: 1 - p, faction: s.players[1 - p].faction, role: 'fighter', x: sp.x, z: sp.z, fx: 1, fz: 0, models: 4, hp: 80, cd: {} };
     }
@@ -228,12 +235,12 @@ function economy(s, p, known, orders) {
   // idle builders stay home (hold), next to the HQ
   // training: a second builder early, then soldiers from the barracks
   let army = armySize(s, p), nb = builderCount(s, p);
-  if (nb < 2 && s.round >= 2 && !hq.train && supply >= trainCost(fac, 'builder') + 10 && army < RULES.armyCap) {
+  if (nb < 2 && s.round >= 2 && !hq.train && supply >= trainCost(fac, 'builder') + 10 && army < s.board.cap) {
     out.trains.push({ bid: hq.id, role: 'builder' }); supply -= trainCost(fac, 'builder'); army++;
   }
   const shooters = known.filter(e => isShooter(defOf(e))).length;
   for (const b of mine.filter(b => b.type === 'barracks' && !b.build && !b.train)) {
-    if (army >= RULES.armyCap) break;
+    if (army >= s.board.cap) break;
     const myRoles = s.squads.filter(q => q.owner === p).map(q => q.role);
     const n = r => myRoles.filter(x => x === r).length;
     const role = shooters >= 2 && n('fast') < 2 ? 'fast' : n('tank') < 1 ? 'tank' : n('ranged') < n('fighter') ? 'ranged' : 'fighter';

@@ -1,14 +1,15 @@
 // Headless tests for the V4 simulation. Run: node v4/tests/sim.test.mjs
 import { RULES, FACTIONS, BUILDINGS, trainCost } from '../js/data/units.js';
 import { createGame, addSquad, defOf, radiusOf, emptyOrders, emptyPlan } from '../js/sim/state.js';
-import { resolveRound, damageAfter, engagedWith } from '../js/sim/resolve.js';
+import { resolveRound, damageAfter, engagedWith, losCut } from '../js/sim/resolve.js';
 import { cpUsage, validateOrders } from '../js/sim/orders.js';
 import { aiOrders, aiMemory } from '../js/ai/ai.js';
 import { canSee, visibleTo } from '../js/sim/vision.js';
-import { placeError, addBuilding, incomeOf } from '../js/sim/base.js';
+import { placeError, addBuilding, incomeOf, obstacles } from '../js/sim/base.js';
 import { builderPlan } from '../js/sim/builders.js';
 import { knownEnemyHq } from '../js/sim/vision.js';
-import { Nav, walkAP } from '../js/sim/nav.js';
+import { Nav, walkAP, pointBlocked } from '../js/sim/nav.js';
+import { MAPS, MAP_ORDER } from '../js/data/maps.js';
 
 let pass = 0, fail = 0;
 function test(name, fn) {
@@ -675,6 +676,54 @@ test('mirror match: the second army gets the alternate paint scheme', () => {
   eq(s.players[1].paint, 'kingdomAlt');
   ok(s.squads.filter(q => q.owner === 1).every(q => q.paint === 'kingdomAlt') && s.squads.filter(q => q.owner === 0).every(q => q.paint === 'kingdom'));
   eq(createGame(3, ['kingdom', 'undead']).players[1].paint, 'undead');
+});
+
+console.log('M5 maps');
+
+test('every map: point-symmetric terrain, deployments clear of obstacles, HQ spots on the board', () => {
+  for (const id of MAP_ORDER) {
+    const s = createGame(5, ['kingdom', 'undead'], id), W = s.board.w, H = s.board.h;
+    eq(s.map, id);
+    const key = t => t.kind + Math.round(t.x * 10) + ',' + Math.round(t.z * 10);
+    const set = new Set(s.terrain.filter(t => t.kind !== 'board').map(key));
+    for (const t of s.terrain) if (t.kind !== 'board') ok(set.has(key({ ...t, x: W - t.x, z: H - t.z })), id + ': mirror of ' + key(t));
+    for (const q of s.squads) ok(!pointBlocked(obstacles(s), q.x, q.z, radiusOf(q) * 0.9), id + ': ' + q.role + ' deploys clear');
+    for (const b of s.buildings) ok(b.x > 0 && b.x < W && b.z > 0 && b.z < H, id + ': HQ on the board');
+    eq(s.shrines.length, MAPS[id].sites.length * 2);
+  }
+});
+
+test('lakes block movement but not sight or shots', () => {
+  const s = createGame(2, ['kingdom', 'undead'], 'highland');
+  const lake = s.terrain.find(t => t.kind === 'lake');
+  ok(pointBlocked(s.terrain, lake.x, lake.z, 0.5), 'cannot stand in the lake');
+  ok(canSee(s.terrain, lake.x - lake.r - 1, lake.z, 12, lake.x + lake.r + 1, lake.z), 'can see across');
+  ok(losCut(s.terrain, lake.x - lake.r - 1, lake.z, lake.x + lake.r + 1, lake.z) === 1, 'can shoot across');
+});
+
+test('big maps: build zone, army cap and pathing follow the map', () => {
+  const s = createGame(3, ['kingdom', 'undead'], 'greatfield');
+  eq(s.board.zone, Math.round(80 / 3)); eq(s.board.cap, RULES.armyCap + 2);
+  const nav = Nav.for(obstacles(s), 1, 'gf');
+  ok(nav.path(5, 5, 75, 47).length > 0, 'a path across the great field');
+  ok(!placeError(s, 0, 'farm', 22, 20) || placeError(s, 0, 'farm', 22, 20) !== 'Only in your third of the table', 'x 22 is in your third on an 80 wide table');
+});
+
+test('AI difficulty: the AI income multiplier', () => {
+  const s = createGame(1, ['kingdom', 'undead'], 'crossing', { incomeMult: [1, 1.25] });
+  eq(incomeOf(s, 1), Math.round(FACTIONS.undead.eco.hq * 1.25));
+  eq(incomeOf(s, 0), FACTIONS.kingdom.eco.hq);
+});
+
+test('online sync on the biggest map', () => {
+  let host = createGame(77, ['undead', 'kingdom'], 'greatfield'), guest = createGame(77, ['undead', 'kingdom'], 'greatfield');
+  const mem = [aiMemory(), aiMemory()];
+  for (let r = 0; r < 4; r++) {
+    const orders = JSON.parse(JSON.stringify([aiOrders(host, 0, mem[0]), aiOrders(guest, 1, mem[1])]));
+    const h = resolveRound(host, orders), g = resolveRound(guest, orders);
+    eq(JSON.stringify(g.state), JSON.stringify(h.state), 'round ' + host.round);
+    host = h.state; guest = JSON.parse(JSON.stringify(h.state));
+  }
 });
 
 console.log(`\n${pass} passed, ${fail} failed`);

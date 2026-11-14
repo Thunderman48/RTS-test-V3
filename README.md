@@ -12,6 +12,13 @@ It is a static site with no build step and no server, so it runs on GitHub Pages
   put up every building, finish over several rounds on their own, and gather resources when idle.
 * **Fog of war.** Low-poly mist covers what you have never seen and a haze covers what you can't
   see right now. The enemy HQ starts at one of three spots, so you have to scout. Destroy it to win.
+* **Four battlefields:** Crossing (48″×32″, small and quick), Twin Rivers (64×40), Highland Ruins
+  (64×44, a ruin maze around a lake) and Great Field (80×52, for big armies). Pick one on the
+  **Battle setup** screen, along with your army and the AI's strength (Easy / Normal / Hard). Online,
+  the host picks the map.
+* **Settings** (⚙ on the start screen, or in the in-game ≡ menu): graphics quality, miniature
+  lens, mini animation, fog mist, sound and volume, default replay speed, nameplates, ask before
+  Ready, pan and zoom speed, inverted zoom, Q / E rotation and a camera reset.
 * **Play vs the AI or online.** Online play uses a room code and connects peer to peer: both
   players pick an army (mirror matches are allowed), and the host picks a planning timer.
 * Scrubbable battle replay with a combat log, help with tabs and an icon legend, and generated
@@ -38,7 +45,7 @@ node v3/tests/sim.test.mjs       # V3 tests
 * `js/ui/`: the planner, base and builder UI, online lobby, icons and fog map.
 * `js/net/`: the PeerJS transport.
 * `js/audio/`: generated sound effects.
-* Every tunable number lives in `js/data/units.js`.
+* Every tunable number lives in `js/data/units.js`; the maps in `js/data/maps.js`.
 
 ## To do
 * Phone and tablet layout pass: dock size, crowded nameplates, and the builder panel covering

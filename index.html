@@ -62,22 +62,15 @@
 
 <div id="menu" class="overlay">
   <div class="card menu-card">
+    <button class="ib gear" id="m-settings" title="Settings">⚙</button>
     <div class="brand">
       <div class="brand-mark"><span></span><span></span></div>
       <h1>TIERS</h1>
       <p>Tabletop battles · simultaneous orders · speed tiers</p>
       <p class="tag">V4 · tabletop edition</p>
     </div>
-    <div class="m-sec">Play vs AI</div>
-    <div class="factions">
-      <button class="fac kingdom" id="m-kingdom"><b>Kingdom</b><small>Knights, shieldwalls and crossbows · gold economy</small></button>
-      <button class="fac undead" id="m-undead"><b>Undead Legion</b><small>Skeletons, wraiths and necromancy · souls economy</small></button>
-    </div>
+    <button class="ai-btn" id="m-ai"><b>Play vs AI</b><small>Pick your army, a battlefield and the AI's strength</small></button>
     <button class="online-btn" id="m-online"><b>Play online</b><small>Host a game or join with a 5-letter code</small></button>
-    <div class="m-sec">Settings</div>
-    <button class="opt" id="m-anim"><span><b>Mini animation: <em class="anim-v">Posable arms</em></b><small>Posable arms swing their weapons; solid statues lunge like minis moved by hand</small></span></button>
-    <button class="opt" id="m-lens"><span><b>Miniature lens</b><small>Tilt-shift blur, like a macro photo</small></span><i class="sw"></i></button>
-    <button class="opt" id="m-sound"><span><b>Sound</b><small>Clashes, volleys, hammers and coins</small></span><i class="sw"></i></button>
     <p class="fine">Older versions: <a href="v3/">V3</a> · <a href="v2/">V2</a> · <a href="v1/">V1</a></p>
   </div>
 </div>
@@ -95,8 +88,35 @@
       <p class="lb-status" id="lb-status"></p>
       <div id="lb-players"></div>
       <div class="lb-timer" id="lb-timer"></div>
+      <div class="mapcards compact" id="lb-maps"></div>
       <div class="lb-actions"><button class="rehearse" id="lb-ready">✓ Ready</button><button class="ready sm" id="lb-start" disabled>Start battle ▸</button></div>
     </div>
+  </div>
+</div>
+
+<div id="setup" class="overlay hidden">
+  <div class="card setup-card">
+    <div class="help-head"><h2>Battle setup</h2><button class="ib" id="su-back" title="Back">✕</button></div>
+    <div class="m-sec">Your army</div>
+    <div class="factions" id="su-armies"></div>
+    <div class="m-sec">Battlefield</div>
+    <div class="mapcards" id="su-maps"></div>
+    <div class="m-sec">AI strength</div>
+    <div class="seg" id="su-level"></div>
+    <div class="lb-actions"><button class="ready" id="su-start">Start battle ▸</button></div>
+  </div>
+</div>
+
+<div id="settings" class="overlay hidden">
+  <div class="card settings-card">
+    <div class="help-head"><h2>Settings</h2><button class="ib" id="st-close">✕</button></div>
+    <div class="help-body" id="st-body"></div>
+  </div>
+</div>
+
+<div id="ask" class="overlay hidden">
+  <div class="card ask-card"><h2>Ready?</h2><p id="ask-msg"></p>
+    <div class="lb-actions"><button class="rehearse" id="ask-no">Keep planning</button><button class="ready sm" id="ask-yes">Ready anyway ▸</button></div>
   </div>
 </div>
 
@@ -110,9 +130,8 @@
 <div id="opts" class="overlay hidden">
   <div class="card opts-card">
     <div class="help-head"><h2>Menu</h2><button class="ib" id="o-close">✕</button></div>
-    <button class="opt" id="o-lens"><span><b>Miniature lens</b><small>Soft tilt-shift blur at the top and bottom of the view, like a macro photo of a tabletop</small></span><i class="sw"></i></button>
-    <button class="opt" id="o-sound"><span><b>Sound</b><small>Clashes, volleys, hammers and coins</small></span><i class="sw"></i></button>
-    <button class="opt" id="o-anim"><span><b>Mini animation: <em class="anim-v">Posable arms</em></b><small>Posable arms swing their weapons; solid statues are one casting and lunge like minis moved by hand</small></span></button>
+    <button class="opt" id="o-settings"><span><b>⚙ Settings</b><small>Graphics, audio, gameplay, camera and controls</small></span></button>
+    <button class="opt" id="o-help"><span><b>How to play</b><small>Rules, economy, fog, online and the icon legend</small></span></button>
     <button class="opt" id="o-quit"><span><b>Quit to main menu</b><small>Ends this battle</small></span></button>
   </div>
 </div>

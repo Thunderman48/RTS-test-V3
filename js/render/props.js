@@ -9,8 +9,9 @@ import { makeMini } from './minis.js';
 
 const TOP = -1;                 // table top surface
 const FLOOR = -30;              // floor level
-const W = RULES.board.w, H = RULES.board.h;
-const TX0 = -7.5, TX1 = W + 7.5, TZ0 = -7.5, TZ1 = H + 7.5;   // table top extents (board + 7.5" a side)
+// board size (set per map by buildRoom) and the table top extents (board + 7.5" a side)
+let W = RULES.board.w, H = RULES.board.h;
+let TX0 = -7.5, TX1 = W + 7.5, TZ0 = -7.5, TZ1 = H + 7.5;
 
 let R = Math.random;
 const j = (v, a) => v + (R() - 0.5) * 2 * a;
@@ -209,7 +210,8 @@ function room(k) {
   k.box(2, 22, 18, 0x6b462a, { x: chx + 8, y: FLOOR + 30, z: chz });
 }
 
-export function buildRoom(view) {
+export function buildRoom(view, w = RULES.board.w, h = RULES.board.h) {
+  W = w; H = h; TX1 = W + 7.5; TZ1 = H + 7.5;
   const L = view.layers.table;
   R = rng(41);
   const kt = new Kit(31);

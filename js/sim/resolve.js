@@ -14,7 +14,7 @@ import { dist, norm, segRect, segCircle } from './geom.js';
 import { clone, defOf, radiusOf, modelsFor, speedOf } from './state.js';
 import { validateOrders, actionCost } from './orders.js';
 import { buildStancePlan } from './stances.js';
-import { terrainFactor, pointBlocked, blocks } from './nav.js';
+import { terrainFactor, pointBlocked, blocks, blocksMove, boardOf } from './nav.js';
 import { visibleTo, canSee, updateIntel } from './vision.js';
 import { obstacles, navKey, hitRadius, bdef, addBuilding, spawnSpot, armyValue, incomeOf, edgeDist, gatherRate } from './base.js';
 import { approachSpot } from './builders.js';
@@ -531,12 +531,12 @@ export function resolveRound(state0, ordersIn) {
       const rq = radiusOf(q);
       const ethereal = !!defOf(q).ghost;
       const O = obs();
-      const depth = (x, z) => { let d = 0; for (const t of O) { if (!blocks(t)) continue; const v = t.r !== undefined ? t.r + rq * 0.85 - dist(x, z, t.x, t.z) : Math.min(t.w / 2 + rq * 0.85 - Math.abs(x - t.x), t.d / 2 + rq * 0.85 - Math.abs(z - t.z)); if (v > d) d = v; } return d; };
+      const depth = (x, z) => { let d = 0; for (const t of O) { if (!blocksMove(t)) continue; const v = t.r !== undefined ? t.r + rq * 0.85 - dist(x, z, t.x, t.z) : Math.min(t.w / 2 + rq * 0.85 - Math.abs(x - t.x), t.d / 2 + rq * 0.85 - Math.abs(z - t.z)); if (v > d) d = v; } return d; };
       const stuckIn = pointBlocked(O, q.x, q.z, rq * 0.85);
       const d0 = stuckIn ? depth(q.x, q.z) : 0;
       const clear = (x, z) => {
         if (pointBlocked(O, x, z, rq * 0.85)) {
-          const W = RULES.board.w, H = RULES.board.h;
+          const { w: W, h: H } = boardOf(O);
           if (!stuckIn || x < rq * 0.5 || z < rq * 0.5 || x > W - rq * 0.5 || z > H - rq * 0.5 || depth(x, z) >= d0 - 1e-3) return false;
         }
         if (ethereal) return true;          // wraiths drift through squads

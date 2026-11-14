@@ -36,9 +36,11 @@ export class View {
     const sc = key.shadow.camera; sc.left = -34; sc.right = 34; sc.top = 26; sc.bottom = -26; sc.near = 1; sc.far = 100;
     key.shadow.bias = -0.0006; key.shadow.normalBias = 0.02;
     this.scene.add(key, key.target);
+    this.key = key;
     const fill = new THREE.DirectionalLight(0xb8d0ff, 0.6);
     fill.position.set(W / 2 + 20, 18, H / 2 - 20);
     this.scene.add(fill);
+    this.fill = fill;
 
     this.layers = {};
     for (const n of ['table', 'units', 'plan', 'fx', 'ghost']) { this.layers[n] = new THREE.Group(); this.scene.add(this.layers[n]); }
@@ -62,7 +64,7 @@ export class View {
     const c = this.cam;
     c.x = Math.max(-10, Math.min(this.W + 10, c.x));
     c.z = Math.max(-10, Math.min(this.H + 10, c.z));
-    c.dist = Math.max(10, Math.min(95, c.dist));
+    c.dist = Math.max(10, Math.min(95 * (this.scale || 1), c.dist));
     c.pitch = Math.max(0.45, Math.min(1.35, c.pitch));
     const horiz = Math.cos(c.pitch) * c.dist;
     this.camera.position.set(c.x - Math.sin(c.yaw) * horiz, Math.sin(c.pitch) * c.dist, c.z + Math.cos(c.yaw) * horiz);
@@ -70,13 +72,45 @@ export class View {
   }
   panPixels(dx, dy) {
     this.camAnim = null;
+    dx *= this.panMul || 1; dy *= this.panMul || 1;
     const h = this.canvas.clientHeight || 600;
     const k = (this.cam.dist * Math.tan((this.camera.fov * Math.PI) / 360) * 2) / h;
     const cy = Math.cos(this.cam.yaw), sy = Math.sin(this.cam.yaw), sp = Math.sin(this.cam.pitch);
     this.cam.x -= (dx * cy - dy * sy / sp) * k;
     this.cam.z -= (dx * sy + dy * cy / sp) * k;
   }
-  zoom(f) { this.camAnim = null; this.cam.dist *= f; }
+  // a different table size (bigger maps): camera limits, lights and the shadow area follow it
+  setBoard(w, h) {
+    this.W = w; this.H = h;
+    this.scale = Math.max(1, w / 48, h / 32);
+    const k = this.key, sc = k.shadow.camera;
+    k.position.set(w / 2 - 22 * this.scale, 28 * this.scale, h / 2 + 20 * this.scale);
+    k.target.position.set(w / 2, 0, h / 2);
+    sc.left = -w * 0.72; sc.right = w * 0.72; sc.top = h * 0.82; sc.bottom = -h * 0.82; sc.far = 100 * this.scale;
+    sc.updateProjectionMatrix();
+    this.fill.position.set(w / 2 + 20, 18, h / 2 - 20);
+    this.scene.fog.near = 120 * this.scale; this.scene.fog.far = 330 * this.scale;
+  }
+  // remove the table, props and room (before building another map's)
+  clearTable() {
+    const L = this.layers.table;
+    for (const o of [...L.children]) {
+      L.remove(o);
+      o.traverse(m => { if (m.material) (Array.isArray(m.material) ? m.material : [m.material]).forEach(x => x.dispose()); if (m.isLight) m.dispose?.(); });
+    }
+  }
+  // Settings: pan / zoom speed and inverted zoom (input calls panPixels / zoom)
+  zoom(f) { this.camAnim = null; let k = Math.pow(f, this.zoomMul || 1); if (this.invertZoom) k = 1 / k; this.cam.dist *= k; }
+  // Settings: quality preset (resolution, shadows)
+  setQuality(q) {
+    const r = this.renderer, cap = { low: 1, medium: 1.5, high: 2 }[q] || 2;
+    r.setPixelRatio(Math.min(window.devicePixelRatio || 1, cap));
+    const sh = q !== 'low', size = q === 'high' ? 4096 : 2048;
+    r.shadowMap.enabled = sh; this.key.castShadow = sh;
+    if (this.key.shadow.mapSize.x !== size) { this.key.shadow.mapSize.set(size, size); this.key.shadow.map?.dispose(); this.key.shadow.map = null; }
+    this.scene.traverse(o => { if (o.material) (Array.isArray(o.material) ? o.material : [o.material]).forEach(m => { m.needsUpdate = true; }); });
+    this.resize();
+  }
   rotate(da) { this.camAnim = null; this.cam.yaw += da; }
   tilt(dp) { this.camAnim = null; this.cam.pitch += dp; }
   frame(points, dur = 0.6, minDist = 18) {
@@ -85,7 +119,7 @@ export class View {
     for (const p of points) { a = Math.min(a, p.x); b = Math.max(b, p.x); c = Math.min(c, p.z); d = Math.max(d, p.z); }
     const span = Math.max(b - a, d - c);
     const portrait = this.canvas.clientHeight > this.canvas.clientWidth;
-    const dist = Math.max(minDist, Math.min(60, span * (portrait ? 1.9 : 1.5) + 10));
+    const dist = Math.max(minDist, Math.min(60 * (this.scale || 1), span * (portrait ? 1.9 : 1.5) + 10));
     this.camAnim = { t: 0, dur, from: { ...this.cam }, to: { x: (a + b) / 2, z: (c + d) / 2, dist } };
   }
 

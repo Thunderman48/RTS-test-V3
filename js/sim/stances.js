@@ -8,7 +8,7 @@ import { defOf, radiusOf, emptyPlan, apFor } from './state.js';
 import { obstacles, navKey } from './base.js';
 import { builderIdleTarget } from './builders.js';
 import { knownEnemyHq, observers, canSee } from './vision.js';
-import { HQ_X, HQ_SPOTS, mirror } from '../data/map.js';
+import { HQ_X, mirrorOn } from '../data/maps.js';
 import { Nav, pathAP, walkAP } from './nav.js';
 import { dist } from './geom.js';
 
@@ -121,10 +121,11 @@ export function buildStancePlan(s, q, enemies) {
     let hq = known;
     if (!hq) {
       const obs = observers(s, q.owner);
-      const spots = HQ_SPOTS.map(z => q.owner === 0 ? mirror({ x: HQ_X, z }) : { x: HQ_X, z })
+      const mirror = mirrorOn(s.board.w, s.board.h);
+      const spots = s.hqSpots.map(z => q.owner === 0 ? mirror({ x: HQ_X, z }) : { x: HQ_X, z })
         .filter(sp => !obs.some(o => canSee(s.terrain, o.x, o.z, o.range, sp.x, sp.z)))
         .sort((a, b) => dist(q.x, q.z, a.x, a.z) - dist(q.x, q.z, b.x, b.z));
-      hq = spots[0] || { x: q.owner === 0 ? RULES.board.w - 8 : 8, z: RULES.board.h / 2 };
+      hq = spots[0] || { x: q.owner === 0 ? s.board.w - 8 : 8, z: s.board.h / 2 };
     }
     if (hq) {
       const nav = Nav.for(obstacles(s), radiusOf(q), navKey(s));

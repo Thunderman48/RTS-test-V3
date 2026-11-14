@@ -338,7 +338,7 @@ export class Planner {
     const cost = trainCost(this.fac, role);
     const left = this.supplyLeft() + (cur ? trainCost(this.fac, cur.role) : 0);
     if (cost > left) return `Needs ${cost} ${this.g.ecoName()}`;
-    if (!cur && armySize(this.s, this.g.me) + this.draft.trains.length >= RULES.armyCap) return `Army cap reached (${RULES.armyCap} squads)`;
+    if (!cur && armySize(this.s, this.g.me) + this.draft.trains.length >= this.s.board.cap) return `Army cap reached (${this.s.board.cap} squads)`;
     if (role === 'builder' && builderCount(this.s, this.g.me) + this.draft.trains.filter(t => t.role === 'builder').length >= RULES.maxBuilders) return `At most ${RULES.maxBuilders} builders`;
     return '';
   }

@@ -10,7 +10,7 @@ function init() {
   if (!AC) return null;
   ctx = new AC();
   const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 7000;
-  master = ctx.createGain(); master.gain.value = 0.55;
+  master = ctx.createGain(); master.gain.value = 0.7 * masterVol;
   master.connect(lp); lp.connect(ctx.destination);
   noiseBuf = ctx.createBuffer(1, ctx.sampleRate * 1.2, ctx.sampleRate);
   const d = noiseBuf.getChannelData(0);
@@ -21,8 +21,10 @@ function init() {
 export function unlockAudio() { if (!on) return; const c = init(); if (c && c.state === 'suspended') c.resume(); }
 export function soundOn() { return on; }
 export function setSound(v) { on = v; try { localStorage.setItem('tiers-v4-sound', v ? '1' : '0'); } catch {} if (v) unlockAudio(); }
-let volume = 1;
+let volume = 1, masterVol = 0.8;
 export function setVolume(v) { volume = v; }
+// the Settings volume slider (0..1)
+export function setMaster(v) { masterVol = v; if (master) master.gain.value = 0.7 * v; }
 
 const R = (a, b) => a + Math.random() * (b - a);
 function env(g, t, a, peak, d) { g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(peak, t + a); g.gain.exponentialRampToValueAtTime(0.0001, t + a + d); }

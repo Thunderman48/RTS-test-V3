@@ -27,7 +27,7 @@ export function approachSpot(s, f, fromX, fromZ, rq, selfId = null) {
     const e = closestOn(f, px, pz);
     const v = norm(px - e.x, pz - e.z);
     const x = e.x + v.x * gap, z = e.z + v.z * gap;
-    if (x < rq || z < rq || x > RULES.board.w - rq || z > RULES.board.h - rq) continue;
+    if (x < rq || z < rq || x > s.board.w - rq || z > s.board.h - rq) continue;
     if (pointBlocked(obs, x, z, rq * 0.85)) continue;
     if (s.squads.some(o => o.hp > 0 && o.id !== selfId && dist(o.x, o.z, x, z) < rq + radiusOf(o) - 0.1)) continue;
     return { x, z };

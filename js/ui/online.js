@@ -8,6 +8,7 @@
 import { Net, BcNet, randomCode } from '../net/net.js';
 import { resolveRound } from '../sim/resolve.js';
 import { FACTIONS } from '../data/units.js';
+import { MAPS } from '../data/maps.js';
 
 const $ = id => document.getElementById(id);
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
@@ -39,7 +40,7 @@ export const OnlineUI = {
   async hostGame() {
     const Cls = NetCls(), net = this.net = new Cls();
     this.code = randomCode();
-    this.lobby = { picks: ['kingdom', 'undead'], ready: [false, false], timer: 90, joined: false };
+    this.lobby = { picks: ['kingdom', 'undead'], ready: [false, false], timer: 90, map: 'crossing', joined: false };
     this.netRole = 'host';
     this.showLobby('room');
     $('lb-status').textContent = 'Connecting to matchmaking…';
@@ -56,7 +57,7 @@ export const OnlineUI = {
     if (!/^[A-Z0-9]{5}$/.test(code)) { this.toast('Enter the 5-letter code from the host', true); return; }
     const Cls = NetCls(), net = this.net = new Cls();
     this.code = code; this.netRole = 'guest';
-    this.lobby = { picks: ['kingdom', 'undead'], ready: [false, false], timer: 90, joined: true };
+    this.lobby = { picks: ['kingdom', 'undead'], ready: [false, false], timer: 90, map: 'crossing', joined: true };
     this.showLobby('room');
     $('lb-status').textContent = 'Connecting…';
     net.on('msg', m => this.onNet(m));
@@ -84,6 +85,14 @@ export const OnlineUI = {
     };
     $('lb-players').innerHTML = row(0) + row(1);
     $('lb-timer').innerHTML = 'Planning timer: ' + TIMERS.map(t => `<button class="chip${L.timer === t ? ' on' : ''}" data-t="${t}" ${host ? '' : 'disabled'}>${t ? t + ' s' : 'Off'}</button>`).join('');
+    // the battlefield: the host picks, the guest sees it
+    if ($('lb-maps').dataset.sel !== L.map + host) {
+      $('lb-maps').dataset.sel = L.map + host;
+      $('lb-maps').innerHTML = this.mapCards(L.map, true);
+      if (!host) $('lb-maps').querySelectorAll('button').forEach(b => { b.disabled = true; });
+      this.drawMapCards($('lb-maps'));
+      $('lb-maps').querySelectorAll('[data-map]').forEach(el => el.onclick = () => { if (!host) return; L.map = el.dataset.map; this.sendLobby(); this.renderLobby(); });
+    }
     const both = L.joined && L.ready[0] && L.ready[1];
     $('lb-ready').textContent = L.ready[me] ? 'Not ready' : '✓ Ready';
     $('lb-ready').disabled = !L.joined;
@@ -104,14 +113,14 @@ export const OnlineUI = {
     const L = this.lobby;
     if (!(L.joined && L.ready[0] && L.ready[1])) return;
     const seed = (Math.random() * 1e9) | 0;
-    const msg = { t: 'start', seed, factions: L.picks.slice(), timer: L.timer };
+    const msg = { t: 'start', seed, factions: L.picks.slice(), timer: L.timer, map: L.map };
     this.net.send(msg);
     this.beginOnline(msg, 0);
   },
   beginOnline(m, me) {
     $('lobby').classList.add('hidden');
     this.hostOrders = {}; this.guestOrders = {}; this.timerRound = null; this.guestPlanning = null;
-    this.start({ mode: me === 0 ? 'host' : 'guest', factions: m.factions, me, seed: m.seed, timer: m.timer });
+    this.start({ mode: me === 0 ? 'host' : 'guest', factions: m.factions, me, seed: m.seed, timer: m.timer, map: MAPS[m.map] ? m.map : 'crossing' });
   },
 
   // ---------------------------------------------------------------- messages

@@ -18,6 +18,7 @@ import { Planner } from './ui/planner.js';
 import { icon } from './ui/iconset.js';
 import { BaseUI } from './ui/baseui.js';
 import { OnlineUI } from './ui/online.js';
+import { SettingsUI } from './ui/settings.js';
 import { sfx, unlockAudio, soundOn, setSound, setVolume } from './audio/sfx.js';
 import { TEAM, TEAM_HEX, setTeams } from './ui/teams.js';
 import { BUILDINGS } from './data/units.js';
@@ -58,7 +59,7 @@ class Game {
     if (/gallery/.test(location.search)) { this.gallery(); return; }
     // menu backdrop: the board with both armies
     this.state = createGame(1);
-    buildTable(this.view, this.state.terrain);
+    buildTable(this.view, this.state.terrain, this.state.map); this.tableMap = this.state.map;
     this.syncViews(this.state.squads.map(q => ({ ...q })), true);
     this.makeShrines(); this.syncBuildings(this.state.buildings.map(b => ({ ...b })));
     this.view.cam = { x: 24, z: 16, dist: 62, yaw: 0.6, pitch: 0.62 };
@@ -100,13 +101,10 @@ class Game {
   }
 
   bindDOM() {
-    $('m-kingdom').onclick = () => this.start({ mode: 'ai', factions: ['kingdom', 'undead'], me: 0 });
-    $('m-undead').onclick = () => this.start({ mode: 'ai', factions: ['undead', 'kingdom'], me: 0 });
+    $('m-ai').onclick = () => this.openSetup();
     this.bindOnline();
     window.addEventListener('pointerdown', () => unlockAudio(), true);
     window.addEventListener('click', e => { if (e.target.closest('button')) sfx('click', 0.03); }, true);
-    $('o-sound').onclick = $('m-sound').onclick = () => { setSound(!soundOn()); this.soundUi(); };
-    this.soundUi();
     $('b-ready').onclick = () => this.ready();
     $('b-rehearse').onclick = () => this.rehearse();
     $('b-build').onclick = () => this.openBuild();
@@ -117,13 +115,8 @@ class Game {
     $('b-menu').onclick = () => $('opts').classList.remove('hidden');
     $('o-close').onclick = () => $('opts').classList.add('hidden');
     $('o-quit').onclick = () => { try { this.net?.send({ t: 'bye' }); } catch {} setTimeout(() => location.reload(), 150); };
-    $('o-lens').onclick = $('m-lens').onclick = () => this.setLens(!this.lensOn);
-    $('o-anim').onclick = $('m-anim').onclick = () => this.setAnim(MINI_MODE === 'statue' ? 'posable' : 'statue');
-    let am = null; try { am = localStorage.getItem('tiers-v4-anim'); } catch {}
-    if (/statue/.test(location.search)) am = 'statue';
-    this.setAnim(am || 'posable', false);
-    let saved = null; try { saved = localStorage.getItem('tiers-v4-lens'); } catch {}
-    this.setLens(saved !== '0', false);
+    this.initSettings();
+    if (/statue/.test(location.search)) this.setAnim('statue', false);
     $('pb-play').onclick = () => { this.playing = !this.playing; if (this.playing && this.T >= this.tl.total) this.T = 0; };
     $('pb-speed').onclick = () => { this.speed = this.speed === 1 ? 2 : this.speed === 2 ? 4 : this.speed === 4 ? 0.5 : 1; $('pb-speed').textContent = this.speed + '×'; setVolume(this.speed >= 4 ? 0.45 : this.speed >= 2 ? 0.7 : 1); };
     $('pb-next').onclick = () => this.finishPlayback();
@@ -193,7 +186,12 @@ class Game {
     this.match = opts.mode;
     this.me = opts.me;
     this.ai = 1 - this.me;            // the other side (the AI, or the online opponent)
-    this.state = createGame(opts.seed ?? ((Math.random() * 1e9) | 0), opts.factions);
+    // AI difficulty: the AI's income multiplier (and in aiOrders, its command points)
+    const lvl = opts.level || 'normal', aiMult = { easy: 0.8, normal: 1, hard: 1.25 }[lvl] || 1;
+    this.aiLevel = lvl;
+    const incomeMult = [1, 1]; if (this.match === 'ai') incomeMult[1 - this.me] = aiMult;
+    this.state = createGame(opts.seed ?? ((Math.random() * 1e9) | 0), opts.factions, opts.map || 'crossing', { incomeMult });
+    if (this.tableMap !== this.state.map) { buildTable(this.view, this.state.terrain, this.state.map); this.tableMap = this.state.map; }
     setTeams(this.state);
     document.documentElement.style.setProperty('--me', TEAM[this.me]);
     $('crest').style.background = TEAM[this.me];
@@ -207,11 +205,13 @@ class Game {
     this.views.clear();
     this.syncViews(this.state.squads.map(q => ({ ...q })), true);
     this.knownB = new Map(); this.selB = null; this.buildMode = null;
-    this.fogMap = new FogMap(this.me); this.fogFresh = true;
+    const bd = this.state.board;
+    this.fogMap = new FogMap(this.me, bd.w, bd.h, bd.zone); this.fogFresh = true;
     this.makeShrines(); this.syncBuildings([]);
     const portrait = innerHeight > innerWidth;
-    const homeX = this.me === 0 ? 14 : 34;
-    this.view.cam = { x: homeX, z: 16, dist: portrait ? 40 : 36, yaw: portrait ? (this.me === 0 ? Math.PI / 2 : -Math.PI / 2) : (this.me === 0 ? 0 : Math.PI), pitch: 0.92 };
+    this.homeCam = () => ({ x: this.me === 0 ? 14 : bd.w - 14, z: bd.h / 2, dist: portrait ? 40 : 36, yaw: portrait ? (this.me === 0 ? Math.PI / 2 : -Math.PI / 2) : (this.me === 0 ? 0 : Math.PI), pitch: 0.92 });
+    const homeX = this.me === 0 ? 14 : bd.w - 14;
+    this.view.cam = { x: homeX, z: bd.h / 2, dist: portrait ? 40 : 36, yaw: portrait ? (this.me === 0 ? Math.PI / 2 : -Math.PI / 2) : (this.me === 0 ? 0 : Math.PI), pitch: 0.92 };
     this.beginPlanning();
     let seenHelp = true; try { seenHelp = !!localStorage.getItem('tiers-v4-help'); localStorage.setItem('tiers-v4-help', '1'); } catch {}
     if (!seenHelp) showHelp('basics');
@@ -271,11 +271,20 @@ class Game {
     this.play(this.state, log, post, true);
   }
 
-  ready() {
+  ready(force = false) {
     if (this.phase !== 'planning') return;
+    // Settings: ask first when command points are left unused
+    const cpLeft = this.planner.cp().left;
+    if (!force && this.settings?.askReady && cpLeft > 0 && !(this.deadline && performance.now() >= this.deadline)) {
+      $('ask-msg').textContent = `You still have ${cpLeft} command point${cpLeft > 1 ? 's' : ''} left: ${cpLeft > 1 ? 'those squads' : 'that squad'} will just follow ${cpLeft > 1 ? 'their stances' : 'its stance'}.`;
+      $('ask').classList.remove('hidden');
+      $('ask-yes').onclick = () => { $('ask').classList.add('hidden'); this.ready(true); };
+      $('ask-no').onclick = () => $('ask').classList.add('hidden');
+      return;
+    }
     const mine = this.planner.final();
     if (this.match !== 'ai') { this.onlineReady(mine); return; }
-    const theirs = aiOrders(this.state, this.ai, this.memory);
+    const theirs = aiOrders(this.state, this.ai, this.memory, { level: this.aiLevel });
     const orders = []; orders[this.me] = mine; orders[this.ai] = theirs;
     const pre = this.state;
     const { state: post, log } = resolveRound(pre, orders);
@@ -289,6 +298,7 @@ class Game {
     $('hintbar').classList.add('hidden');
     this.pre = pre; this.post = post; this.log = log;
     sfx('drum');
+    this.speed = this.settings?.speed || 1; $('pb-speed').textContent = this.speed + '×'; setVolume(this.speed >= 4 ? 0.45 : this.speed >= 2 ? 0.7 : 1);
     this.tl = new Timeline(pre, log, { me: this.me, terrain: pre.terrain });
     this.T = 0; this.playing = true; this.lastT = 0; this.fogKey = null;
     this.shotList = [];
@@ -764,6 +774,7 @@ class Game {
     if (e.key === 'Enter' && this.buildMode) this.confirmPlace();
     if (e.key === 'Escape') { if (this.buildMode) { this.buildMode = null; this.view.clear('ghost'); this.changed(); } else { this.select(null); this.selB = null; this.changed(); } }
     if (e.key === 'b' && this.phase === 'planning') this.openBuild();
+    if (this.settings?.keysRotate && (e.key === 'q' || e.key === 'e')) this.view.rotate(e.key === 'q' ? 0.18 : -0.18);
     if (e.key === 'g' && this.phase === 'planning' && this.selectedSquad()?.role === 'builder') this.planner.gatherAuto(this.selected);
     if (e.key === 'Backspace' && this.selected) { e.preventDefault(); this.planner.undo(this.selected); }
   }
@@ -895,7 +906,10 @@ class Game {
     const layer = $('labels');
     const seen = new Set();
     const placed = [];
-    const zoomedOut = this.view.cam.dist > (innerWidth < 700 || innerHeight < 520 ? 30 : 52);
+    // Settings: nameplates always / compact / only for the selected squad or building
+    const plates = this.settings?.plates || 'always';
+    const zoomedOut = plates === 'compact' || this.view.cam.dist > (innerWidth < 700 || innerHeight < 520 ? 30 : 52) * (this.view.scale || 1);
+    this.platesOnlySel = plates === 'selected';
     const items = [];
     for (const d of list) {
       const v = this.views.get(d.id); if (!v) continue;
@@ -947,7 +961,7 @@ class Game {
       }
       const t = v.top();
       const p = this.view.project(t.x, t.y, t.z);
-      const hide = p.behind || (d.dying !== undefined && d.dying > 0.6);
+      const hide = p.behind || (d.dying !== undefined && d.dying > 0.6) || (this.platesOnlySel && this.phase !== 'playback' && !sel);
       el.style.display = hide ? 'none' : '';
       if (!hide) items.push({ el, x: p.x, y: p.y, sel });
     }
@@ -1166,7 +1180,7 @@ class Game {
   }
 }
 
-Object.assign(Game.prototype, BaseUI, OnlineUI);
+Object.assign(Game.prototype, BaseUI, OnlineUI, SettingsUI);
 
 const CAT_HEX = { move: '#34c759', attack: '#ff3b30', defense: '#3fa9ff' };
 const ACT_COL = { work: '#ffb020', swing: 'var(--swing)', volley: 'var(--volley)', lob: 'var(--volley)', charge: CAT_HEX.move, leap: CAT_HEX.move, step: CAT_HEX.move, blast: CAT_HEX.attack, storm: CAT_HEX.attack, sweep: CAT_HEX.attack, pierce: CAT_HEX.attack, rally: CAT_HEX.defense, raise: CAT_HEX.defense, wall: CAT_HEX.defense, wait: '#8a857c' };
@@ -1215,6 +1229,7 @@ const LEGEND = [
 ];
 const HELP = {
   basics: () => `
+<p>Press <b>Play vs AI</b> to pick your army, one of four battlefields (from the small Crossing to the huge Great Field) and the AI's strength. <b>⚙ Settings</b> on the start screen (or in the ≡ menu during a battle) has graphics, sound, gameplay and camera options.</p>
 <p><b>Two armies of miniatures on a tabletop.</b> <b>Destroy the enemy HQ</b> (the Keep or the Crypt) to win, or wipe out its whole army and its barracks. There is no round limit.</p>
 <h3>A round</h3>
 <p>Both sides give orders at the same time, then press <b>Ready</b>. Squads act in <b>speed tiers</b>: fast squads (tier 6) first, then normal (5), then slow (4); squads in the same tier act <b>at the same time</b>. Every squad has <b>100 AP</b> a round and an action's AP cost is also how long it takes. Buildings fire last. <b>Rehearse</b> plays your plan with the enemy standing still, so you can check it.</p>
@@ -1244,7 +1259,7 @@ const HELP = {
 <li><b>Undead: Souls.</b> Fed by death: the Crypt earns ${FACTIONS.undead.eco.hq} a round and each <b>Soul Well</b> (on a resource site) ${BUILDINGS.well.income}, and every model that dies (either side) within ${RULES.soulRange}″ of your squads, Crypt, Obelisks or Soul Wells gives <b>${RULES.soulPerModel} souls</b> (a hero ${RULES.soulPerHero}).</li>
 <li><b>Builders</b> (Peasants / Grave Thralls) put up every building. Select one: its panel shows what it will do, its own buttons and the building cards. Pick a building, move the see-through ghost (green = it fits, red = it doesn't, and why) and press <b>✓ Confirm</b>. The builder walks there and spends its AP as <b>work</b>; two builders work twice as fast.</li>
 <li>With <b>no orders</b> a builder keeps at its job: it finishes its building over as many rounds as it takes, then <b>gathers</b> at the nearest farm or mine (Kingdom) or soul well or crypt (Undead) for extra income, two per building. Drag the <b>hammer</b> knob onto a site or damaged building, or the <b>gather</b> knob onto a farm, mine, well or crypt. <b>Hold</b> keeps it still. Train more builders at your HQ (max ${RULES.maxBuilders}).</li>
-<li><b>Barracks</b> train a squad each round. <b>Watchtowers</b> see far and shoot. <b>Banners / Obelisks</b>: +1 command point. <b>Palisades</b> block paths and volleys. Army cap: ${RULES.armyCap} squads.</li>
+<li><b>Barracks</b> train a squad each round. <b>Watchtowers</b> see far and shoot. <b>Banners / Obelisks</b>: +1 command point. <b>Palisades</b> block paths and volleys. Army cap: ${RULES.armyCap} squads (more on the big maps).</li>
 </ul>`,
   fog: () => `
 <p>The table is covered in <b>fog</b>: thick mist where you have never been, a thin haze where you have been but can't see right now. You only see enemies your squads and buildings can see: within their vision, not behind walls or rocks, and not deep in a forest (a squad inside a forest is only seen from close by). Hidden enemies show as faded <b>last seen</b> markers, and enemy buildings stay where you last saw them.</p>

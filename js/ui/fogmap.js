@@ -3,21 +3,21 @@
 import { RULES } from '../data/units.js';
 import { canSee } from '../sim/vision.js';
 
-export const FW = RULES.board.w, FH = RULES.board.h;
-
 export class FogMap {
-  constructor(me) {
-    this.me = me;
+  // w x h board (1" cells); your own third (zone) starts explored
+  constructor(me, w = RULES.board.w, h = RULES.board.h, zone = RULES.buildZone) {
+    this.me = me; this.w = w; this.h = h;
+    const FW = w, FH = h;
     this.explored = new Uint8Array(FW * FH);
     this.visible = new Uint8Array(FW * FH);
-    // your own third of the table starts explored
     for (let j = 0; j < FH; j++) for (let i = 0; i < FW; i++) {
       const x = i + 0.5;
-      if (me === 0 ? x < RULES.buildZone : x > FW - RULES.buildZone) this.explored[j * FW + i] = 1;
+      if (me === 0 ? x < zone : x > FW - zone) this.explored[j * FW + i] = 1;
     }
   }
   // obs: [{x, z, range}] -> visible cells (and they become explored)
   compute(terrain, obs) {
+    const FW = this.w, FH = this.h;
     this.visible.fill(0);
     for (const o of obs) {
       const r = o.range + 0.5;
@@ -31,7 +31,7 @@ export class FogMap {
     }
     this.version = (this.version || 0) + 1;
   }
-  cell(x, z) { const i = Math.floor(x), j = Math.floor(z); return i < 0 || j < 0 || i >= FW || j >= FH ? -1 : j * FW + i; }
+  cell(x, z) { const i = Math.floor(x), j = Math.floor(z); return i < 0 || j < 0 || i >= this.w || j >= this.h ? -1 : j * this.w + i; }
   isVisible(x, z) { const k = this.cell(x, z); return k < 0 || !!this.visible[k]; }
   isExplored(x, z) { const k = this.cell(x, z); return k < 0 || !!this.explored[k]; }
   snapshot() { return this.explored.slice(); }

@@ -19,13 +19,24 @@ export function terrainFactor(terrain, x, z) {
   return f;
 }
 
+// blocks sight and shots
 export function blocks(t) { return t.kind === 'ruin' || t.kind === 'rock' || t.kind === 'building'; }
+// blocks movement (lakes too: you can see and shoot across water, but not walk through it)
+export function blocksMove(t) { return t.kind === 'ruin' || t.kind === 'rock' || t.kind === 'building' || t.kind === 'lake'; }
+// the table size: from the 'board' piece in a terrain list (or the default board)
+const boards = new WeakMap();
+export function boardOf(terrain) {
+  if (!terrain) return RULES.board;
+  let b = boards.get(terrain);
+  if (!b) { const t = terrain.find(t => t.kind === 'board'); b = t ? { w: t.w, h: t.h } : RULES.board; boards.set(terrain, b); }
+  return b;
+}
 
 export function pointBlocked(terrain, x, z, r) {
-  const W = RULES.board.w, H = RULES.board.h;
+  const { w: W, h: H } = boardOf(terrain);
   if (x < r || z < r || x > W - r || z > H - r) return true;
   for (const t of terrain) {
-    if (!blocks(t)) continue;
+    if (!blocksMove(t)) continue;
     if (t.r !== undefined ? dist(x, z, t.x, t.z) < t.r + r : inRect(x, z, t, r)) return true;
   }
   return false;
@@ -34,14 +45,15 @@ export function pointBlocked(terrain, x, z, r) {
 export class Nav {
   // terrain: array of terrain pieces (+ buildings as {kind:'building', x, z, r})
   static for(terrain, radius, key = '') {
-    const k = key + ':' + radius.toFixed(2);
+    const bd = boardOf(terrain);
+    const k = key + ':' + radius.toFixed(2) + ':' + bd.w + 'x' + bd.h + ':' + terrain.length;
     if (!cache.has(k)) { if (cache.size > 80) cache.clear(); cache.set(k, new Nav(terrain, radius)); }
     return cache.get(k);
   }
   static clear() { cache.clear(); }
 
   constructor(terrain, radius) {
-    const W = RULES.board.w, H = RULES.board.h;
+    const { w: W, h: H } = boardOf(terrain);
     this.terrain = terrain; this.r = radius;
     this.cols = Math.round(W / CELL); this.rows = Math.round(H / CELL);
     const N = this.cols * this.rows;

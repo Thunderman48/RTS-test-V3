@@ -32,7 +32,7 @@ export function addBuilding(s, owner, type, x, z, rot = 0, built = true) {
 
 // terrain + standing buildings as one obstacle list (buildings use kind 'building' so nav blocks them)
 const obsCache = new Map();
-export function buildingSig(s) { return (s.buildings || []).filter(b => b.hp > 0).map(b => b.id + '@' + b.x + ',' + b.z + ',' + b.rot).join('|'); }
+export function buildingSig(s) { return (s.map || '') + '#' + (s.buildings || []).filter(b => b.hp > 0).map(b => b.id + '@' + b.x + ',' + b.z + ',' + b.rot).join('|'); }
 export function obstacles(s) {
   const sig = buildingSig(s);
   if (!sig) return s.terrain;
@@ -68,7 +68,7 @@ export const canBuild = (s, p, type) => FACTIONS[s.players[p].faction].buildings
 
 // can side p place `type` at (x,z,rot)? `extra` = buildings already queued this round. Returns '' or a reason.
 export function placeError(s, p, type, x, z, rot = 0, extra = []) {
-  const W = RULES.board.w, H = RULES.board.h, d = BUILDINGS[type];
+  const W = s.board.w, H = s.board.h, d = BUILDINGS[type];
   if (!d || !canBuild(s, p, type)) return 'Your side can\'t build that';
   const f = footprint(type, x, z, rot), half = f.r !== undefined ? f.r : Math.max(f.w, f.d) / 2;
   if (x - half < 0.3 || z - half < 0.3 || x + half > W - 0.3 || z + half > H - 0.3) return 'Off the board';
@@ -78,10 +78,11 @@ export function placeError(s, p, type, x, z, rot = 0, extra = []) {
     if (!sh) return 'Must stand on a resource site';
     if (siteTaken(s, sh, extra)) return 'That site is already taken';
   } else {
-    if (p === 0 ? x > RULES.buildZone : x < W - RULES.buildZone) return 'Only in your third of the table';
+    if (p === 0 ? x > s.board.zone : x < W - s.board.zone) return 'Only in your third of the table';
     for (const sh of s.shrines || []) if (overlaps(f, { x: sh.x, z: sh.z, r: RULES.shrineRadius * 0.6 }, 0)) return 'Too close to a resource site';
   }
   for (const t of s.terrain) {
+    if (t.kind === 'board') continue;
     if (t.kind === 'river') { if (Math.abs(x - t.x) < t.w / 2 + half) return 'Not in the stream'; continue; }
     const tf = t.r !== undefined ? { x: t.x, z: t.z, r: t.r } : { x: t.x, z: t.z, w: t.w, d: t.d };
     if (overlaps(f, tf, 0.2)) return 'Blocked by terrain';
@@ -107,7 +108,7 @@ export function incomeOf(s, p) {
     if (b.type === 'hq') v += eco.hq;
     else v += BUILDINGS[b.type].income || 0;
   }
-  return v;
+  return Math.round(v * (s.players[p].incomeMult || 1));   // AI difficulty
 }
 // AP of builder work per 1 resource when gathering at building b (0 = can't gather there)
 export function gatherRate(s, b) {
@@ -139,7 +140,7 @@ export function validateBase(s, p, builds0 = [], trains0 = []) {
     const b = (s.buildings || []).find(x => x.id === t0?.bid);
     const cost = trainCost(fac, t0?.role);
     if (!b || b.owner !== p || b.hp <= 0 || b.build || b.train || usedB.has(b.id) || !cost || !trainsRole(b, t0.role)) continue;
-    if (cost > supply || army >= RULES.armyCap) continue;
+    if (cost > supply || army >= s.board.cap) continue;
     if (t0.role === 'builder' && builders >= RULES.maxBuilders) continue;
     supply -= cost; army++; usedB.add(b.id);
     if (t0.role === 'builder') builders++;
