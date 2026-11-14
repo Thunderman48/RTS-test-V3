@@ -479,27 +479,29 @@ test('placement: own third only, sites only on resource sites, faction lists', (
 });
 
 const workOrder = (s, q, f) => ({ [q.id]: plan(builderPlan(s, q, f, 100).actions) });
-test('a builder walks to a new site and finishes it mid-round with its work', () => {
+test('a builder puts up a new building over its work (a farm takes it into a second round)', () => {
   const s = k();
   const q = s.squads[0], f = { type: 'farm', x: 6, z: 5, w: 2.6, d: 2.2 };
   const o = [ob([{ type: 'farm', x: 6, z: 5 }]), ob()];
   o[0].squads = workOrder(s, q, f);
-  const r = resolveRound(s, o);
-  const b = r.state.buildings.find(x => x.type === 'farm');
-  ok(b, 'site placed'); eq(b.build, 0, 'finished'); eq(b.hp, BUILDINGS.farm.hp, 'full hp');
-  const e = events(r.log);
-  ok(e.some(x => x.type === 'work') && e.some(x => x.type === 'built' && x.by === q.id), 'work then built');
-  eq(r.state.supply[0], FACTIONS.kingdom.eco.start - 20 + FACTIONS.kingdom.eco.hq + BUILDINGS.farm.income, 'paid, then the farm pays this round');
+  let r = resolveRound(s, o);
+  let b = r.state.buildings.find(x => x.type === 'farm');
+  ok(b && b.build > 0 && b.build < BUILDINGS.farm.work, 'site placed and worked on');
+  eq(r.state.supply[0], FACTIONS.kingdom.eco.start - BUILDINGS.farm.cost + FACTIONS.kingdom.eco.hq, 'paid; no farm income yet');
+  r = resolveRound(r.state, [ob(), ob()]);
+  b = r.state.buildings.find(x => x.type === 'farm');
+  eq(b.build, 0, 'finished in round 2 (the builder kept at it)'); eq(b.hp, BUILDINGS.farm.hp, 'full hp');
+  ok(events(r.log).some(x => x.type === 'built' && x.by === q.id), 'built by the builder');
 });
 
 test('two builders stack; a builder further away walks over and works when it arrives', () => {
   const s = arena([[0, 'builder', 7, 4], [0, 'builder', 7, 9.5], [0, 'builder', 10, 28]]);
-  const b = addBuilding(s, 0, 'barracks', 7, 6.8, 0, false);
+  const b = addBuilding(s, 0, 'tower', 7, 6.8, 0, false);
   const o = holdAll(s);
   for (const id of ['q1', 'q2']) o[0].squads[id] = plan([{ kind: 'work', x: b.x, z: b.z, ap: 100 }]);
   o[0].squads.q3 = plan([{ kind: 'work', x: b.x, z: b.z, ap: 100 }]);
   const r = resolveRound(s, o);
-  eq(r.state.buildings.find(x => x.id === b.id).build, 0, '2 x 100 AP of work finishes a 120-work barracks');
+  eq(r.state.buildings.find(x => x.id === b.id).build, 0, '2 x 100 AP of work finishes a 200-work tower');
   const q3 = r.state.squads.find(q => q.id === 'q3');
   ok(Math.hypot(q3.x - 10, q3.z - 28) > 5, 'the far builder walked toward it');
   ok(!events(r.log).some(e => e.type === 'workFail'), 'nobody failed');
@@ -520,7 +522,7 @@ test('a far-away site is reached and built even with squads in the way (no failu
       const r = resolveRound(s, o); tried++;
       if (events(r.log).some(e => e.type === 'workFail')) fails++;
       const q2 = r.state.squads.find(o => o.id === q.id);
-      if (r.state.buildings.some(b => b.type === 'barracks' && b.owner === 0 && b.build < 120) || Math.hypot(q2.x - q.x, q2.z - q.z) > 4) built++;
+      if (r.state.buildings.some(b => b.type === 'barracks' && b.owner === 0 && b.build < BUILDINGS.barracks.work) || Math.hypot(q2.x - q.x, q2.z - q.z) > 4) built++;
       break;
     }
   }
@@ -536,8 +538,8 @@ test('builders keep at their task next round without new orders, then go gatheri
   let r = resolveRound(s, o);
   ok(r.state.buildings.find(x => x.id === b.id).build > 0, 'not finished in round 1');
   eq(r.state.squads[0].task.kind, 'build');
-  r = resolveRound(r.state, [ob(), ob()]);
-  eq(r.state.buildings.find(x => x.id === b.id).build, 0, 'finished in round 2 with no orders');
+  for (let i = 0; i < 4 && r.state.buildings.find(x => x.id === b.id).build > 0; i++) r = resolveRound(r.state, [ob(), ob()]);
+  eq(r.state.buildings.find(x => x.id === b.id).build, 0, 'finished over the next rounds with no orders');
   r = resolveRound(r.state, [ob(), ob()]);
   eq(r.state.squads[0].task.kind, 'gather', 'walks to the farm');
   r = resolveRound(r.state, [ob(), ob()]);
@@ -570,7 +572,7 @@ test('builders repair damaged buildings', () => {
   const b = addBuilding(s, 0, 'tower', 7, 6, 0, true); b.hp = 50;
   const o = holdAll(s); o[0].squads.q1 = plan([{ kind: 'work', x: 7, z: 6, ap: 40 }]);
   const r = resolveRound(s, o);
-  eq(r.state.buildings.find(x => x.id === b.id).hp, 94, '40 AP x 110/100 HP');
+  eq(r.state.buildings.find(x => x.id === b.id).hp, 72, '40 AP x 110 HP / 200 work');
 });
 
 test('builders cost no command points; the HQ trains builders, barracks soldiers', () => {
@@ -584,14 +586,18 @@ test('builders cost no command points; the HQ trains builders, barracks soldiers
   eq(validateOrders(s, 0, ob([], [{ bid: hq.id, role: 'fighter' }])).trains.length, 0, 'no soldiers from the HQ');
 });
 
-test('a barracks trains a squad that appears at the end of the round', () => {
+test('training takes rounds: a fighter appears at the end of its second round', () => {
   const s = k();
   const b = addBuilding(s, 0, 'barracks', 6, 4, 0, true);
   const n0 = s.squads.filter(q => q.owner === 0).length;
-  const r = resolveRound(s, [ob([], [{ bid: b.id, role: 'fighter' }]), ob()]);
+  let r = resolveRound(s, [ob([], [{ bid: b.id, role: 'fighter' }]), ob()]);
+  eq(r.state.squads.filter(q => q.owner === 0).length, n0, 'not yet');
+  eq(r.state.buildings.find(x => x.id === b.id).train.left, 1, 'one round to go');
+  eq(r.state.supply[0], FACTIONS.kingdom.eco.start - trainCost('kingdom', 'fighter') + incomeOf(r.state, 0), 'paid up front');
+  r = resolveRound(r.state, [ob(), ob()]);
   eq(r.state.squads.filter(q => q.owner === 0).length, n0 + 1);
   ok(events(r.log).some(e => e.type === 'spawn' && e.role === 'fighter'));
-  eq(r.state.supply[0], FACTIONS.kingdom.eco.start - trainCost('kingdom', 'fighter') + incomeOf(r.state, 0));
+  eq(RULES.trainRounds.tank, 3); eq(RULES.trainRounds.builder, 1);
 });
 
 test('gold: a finished mine owns its site and pays every round', () => {

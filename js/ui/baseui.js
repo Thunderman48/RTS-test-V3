@@ -17,7 +17,7 @@ const FX = (type, fac) => {
   const eco = FACTIONS[fac].eco, d = BUILDINGS[type];
   return {
     hq: `Your base: lose it and you lose the battle. Earns ${eco.hq} ${eco.name.toLowerCase()} a round, trains builders, and shoots nearby enemies.` + (eco.res === 'souls' ? ` Collects souls from deaths within ${RULES.soulRange}″.` : ''),
-    barracks: 'Trains a new squad each round.',
+    barracks: 'Trains squads: one at a time, taking 2 or 3 rounds each.',
     tower: `Sees ${d.vision}″ and shoots the nearest enemy within ${d.fire?.range}″ after every round.`,
     banner: '+1 command point while it stands (max +2).' + (eco.res === 'souls' ? ` Collects souls from deaths within ${RULES.soulRange}″.` : ''),
     wall: 'Blocks movement and volleys.',
@@ -354,12 +354,12 @@ export const BaseUI = {
     info.classList.add('hidden'); dock.classList.remove('hidden');
     const cur = this.planner.trainOf(b.id);
     const units = FACTIONS[fac].units;
-    const status = b.build ? `Under construction (${Math.round(d.work - b.build)}/${d.work} work): it can train once it is finished.` : b.train ? `Training ${esc(units[b.train.role].name)}: it arrives at the end of this round.` : cur ? `${esc(units[cur.role].name)} will train this round and arrive at the end of the next.` : `Pick a squad to train. It takes a round and appears next to the ${esc(d.name[fac].toLowerCase())}.`;
+    const status = b.build ? `Under construction (${Math.round(d.work - b.build)}/${d.work} work): it can train once it is finished.` : b.train ? `Training ${esc(units[b.train.role].name)}: ${b.train.left > 1 ? `ready in ${b.train.left} rounds` : 'it arrives at the end of this round'}.` : cur ? `${esc(units[cur.role].name)} starts training this round: ${RULES.trainRounds[cur.role] > 1 ? `ready in ${RULES.trainRounds[cur.role]} rounds` : 'it arrives at the end of the round'}.` : `Pick a squad to train. It appears next to the ${esc(d.name[fac].toLowerCase())} when it's ready.`;
     dock.innerHTML = `<div class="dk-head"><div><div class="nm">${esc(d.name[fac])}</div><div class="sub">${hpTxt} · ${icon(eco.icon, 12)} ${this.planner.supplyLeft()} left · army ${armySize(this.state, this.me) + this.planner.draft.trains.length}/${this.state.board.cap}</div></div><button class="ib x" data-tr="close">✕</button></div>
       <div class="dk-btns">${roles.map(role => {
         const u = units[role], on = cur?.role === role;
         const err = on ? '' : this.planner.trainError(b, role);
-        return `<button class="act cat-none${on ? ' on' : ''}" data-tr="${role}" ${err ? 'disabled' : ''} title="${esc(err || `${u.models} models`)}">${icon(role, 20)}${esc(u.name)}<small>${on ? 'queued ✕' : `${trainCost(fac, role)} ${esc(eco.name.toLowerCase())}`}</small></button>`;
+        return `<button class="act cat-none${on ? ' on' : ''}" data-tr="${role}" ${err ? 'disabled' : ''} title="${esc(err || `${u.models} models`)}">${icon(role, 20)}${esc(u.name)}<small>${on ? 'queued ✕' : `${trainCost(fac, role)} ${esc(eco.name.toLowerCase())} · ${RULES.trainRounds[role]} rd`}</small></button>`;
       }).join('')}</div>
       <div class="hint">${status}</div>${work}`;
     dock.querySelectorAll('[data-tr]').forEach(el => el.onclick = () => {
@@ -394,7 +394,7 @@ export const BaseUI = {
       const d = BUILDINGS[b.type], fac = this.faction(b.owner);
       const train = this.phase === 'planning' && b.owner === this.me ? this.planner.trainOf(b.id) : null;
       const sel = b.id === this.selB;
-      const status = b.ghost ? 'planned' : b.stale ? 'last seen' : b.build ? `${Math.round(d.work - b.build)}/${d.work} work` : b.train ? `training ${FACTIONS[fac].units[b.train.role].name}` : train ? `queued: ${FACTIONS[fac].units[train.role].name}` : '';
+      const status = b.ghost ? 'planned' : b.stale ? 'last seen' : b.build ? `${Math.round(d.work - b.build)}/${d.work} work` : b.train ? `training ${FACTIONS[fac].units[b.train.role].name}${b.train.left > 1 ? ` · ${b.train.left} rd` : ''}` : train ? `queued: ${FACTIONS[fac].units[train.role].name}` : '';
       const key = `${Math.round(b.hp)}|${status}|${sel}|${zoomedOut}|${b.dying !== undefined}`;
       if (el.dataset.key !== key) {
         el.dataset.key = key;

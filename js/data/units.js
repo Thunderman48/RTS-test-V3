@@ -31,7 +31,8 @@ export const RULES = {
   buildZone: 16,                // own third of the board (inches from your edge)
   maxBannerCp: 2,
   maxFarms: 4,
-  trainRounds: 1,
+  // rounds a squad takes to train (it appears at the end of the last one)
+  trainRounds: { builder: 1, fighter: 2, ranged: 2, fast: 2, tank: 3 },
   siteHp: 0.3,                  // a construction site starts with this share of its HP; work fills the rest
   workReach: 1.0,               // a builder works on a site while its edge is this close to the footprint
   soulRange: 8,                 // undead: deaths within this of an undead squad / collector pay souls
@@ -120,13 +121,13 @@ export const FACTIONS = {
 //  income: per round once finished. site: must stand on a resource site. souls: collects souls nearby.
 export const BUILDINGS = {
   hq:       { name: { kingdom: 'Keep', undead: 'Crypt' }, icon: 'goal', cost: 0, work: 0, hp: 220, armor: 8, shape: 'rect', w: 4, d: 4, vision: 10, fire: { dmg: 3, range: 8 }, souls: true, trains: ['builder'] },
-  barracks: { name: { kingdom: 'Barracks', undead: 'Ossuary' }, icon: 'spawn', cost: 30, work: 120, hp: 150, armor: 8, shape: 'rect', w: 3.5, d: 2.5, vision: 6, trains: ['tank', 'fighter', 'ranged', 'fast'] },
-  tower:    { name: { kingdom: 'Watchtower', undead: 'Bone Spire' }, icon: 'range', cost: 25, work: 100, hp: 110, armor: 6, shape: 'circle', r: 0.9, vision: 13, fire: { dmg: 4, range: 11 } },
-  banner:   { name: { kingdom: 'Banner', undead: 'Obelisk' }, icon: 'cp', cost: 20, work: 60, hp: 60, armor: 4, shape: 'circle', r: 0.55, vision: 6, cp: 1, souls: true },
-  wall:     { name: { kingdom: 'Palisade', undead: 'Bone Fence' }, icon: 'fortify', cost: 6, work: 30, hp: 80, armor: 6, shape: 'rect', w: 3, d: 0.5, vision: 0 },
-  farm:     { name: { kingdom: 'Farm', undead: 'Farm' }, icon: 'farm', cost: 20, work: 60, hp: 70, armor: 3, shape: 'rect', w: 2.6, d: 2.2, vision: 5, income: 4 },
-  mine:     { name: { kingdom: 'Mine', undead: 'Mine' }, icon: 'node', cost: 30, work: 80, hp: 100, armor: 6, shape: 'circle', r: 1.1, vision: 7, income: 6, site: true },
-  well:     { name: { kingdom: 'Soul Well', undead: 'Soul Well' }, icon: 'souls', cost: 25, work: 80, hp: 90, armor: 5, shape: 'circle', r: 1.1, vision: 7, income: 4, site: true, souls: true },
+  barracks: { name: { kingdom: 'Barracks', undead: 'Ossuary' }, icon: 'spawn', cost: 30, work: 240, hp: 150, armor: 8, shape: 'rect', w: 3.5, d: 2.5, vision: 6, trains: ['tank', 'fighter', 'ranged', 'fast'] },
+  tower:    { name: { kingdom: 'Watchtower', undead: 'Bone Spire' }, icon: 'range', cost: 25, work: 200, hp: 110, armor: 6, shape: 'circle', r: 0.9, vision: 13, fire: { dmg: 4, range: 11 } },
+  banner:   { name: { kingdom: 'Banner', undead: 'Obelisk' }, icon: 'cp', cost: 20, work: 120, hp: 60, armor: 4, shape: 'circle', r: 0.55, vision: 6, cp: 1, souls: true },
+  wall:     { name: { kingdom: 'Palisade', undead: 'Bone Fence' }, icon: 'fortify', cost: 6, work: 60, hp: 80, armor: 6, shape: 'rect', w: 3, d: 0.5, vision: 0 },
+  farm:     { name: { kingdom: 'Farm', undead: 'Farm' }, icon: 'farm', cost: 20, work: 120, hp: 70, armor: 3, shape: 'rect', w: 2.6, d: 2.2, vision: 5, income: 4 },
+  mine:     { name: { kingdom: 'Mine', undead: 'Mine' }, icon: 'node', cost: 30, work: 160, hp: 100, armor: 6, shape: 'circle', r: 1.1, vision: 7, income: 6, site: true },
+  well:     { name: { kingdom: 'Soul Well', undead: 'Soul Well' }, icon: 'souls', cost: 25, work: 160, hp: 90, armor: 5, shape: 'circle', r: 1.1, vision: 7, income: 4, site: true, souls: true },
 };
 export const ecoOf = faction => FACTIONS[faction].eco;
 export const trainCost = (faction, role) => FACTIONS[faction].train[role] || 0;

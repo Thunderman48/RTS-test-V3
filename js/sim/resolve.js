@@ -99,7 +99,7 @@ export function resolveRound(state0, ordersIn) {
     for (const t0 of orders[p].trains || []) {
       const b = s.buildings.find(x => x.id === t0.bid);
       s.supply[p] -= trainCost(s.players[p].faction, t0.role);
-      b.train = { role: t0.role, left: RULES.trainRounds };
+      b.train = { role: t0.role, left: RULES.trainRounds[t0.role] || 2, total: RULES.trainRounds[t0.role] || 2 };
       baseEvents.push({ type: 'train', id: b.id, role: t0.role, owner: p });
     }
   }
