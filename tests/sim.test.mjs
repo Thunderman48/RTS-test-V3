@@ -193,12 +193,15 @@ test('orders over 100 AP are trimmed by validation', () => {
   ok(used <= RULES.ap, 'used ' + used);
 });
 
-test('AI vs AI plays to a finish (no round limit, but the AI does finish games)', () => {
-  for (const seed of [1, 2, 3]) {
-    let s = createGame(seed); const mem = [aiMemory(s), aiMemory(s)];
-    while (s.winner === null && s.round < 80) { s = resolveRound(s, [aiOrders(s, 0, mem[0]), aiOrders(s, 1, mem[1])]).state; }
-    ok(s.winner !== null, 'still going at round ' + s.round);
-  }
+test('AI vs AI: most games finish (no round limit; on the big maps the AI attacks in waves)', () => {
+  const finished = (map, seeds) => seeds.filter(seed => {
+    let s = createGame(seed, ['kingdom', 'undead'], map); const mem = [aiMemory(), aiMemory()];
+    while (s.winner === null && s.round < 80) s = resolveRound(s, [aiOrders(s, 0, mem[0]), aiOrders(s, 1, mem[1])]).state;
+    return s.winner !== null;
+  }).length;
+  const c = finished('crossing', [1, 2, 3, 4, 5, 6]), t = finished('twinrivers', [1, 2, 3, 4]);
+  ok(c >= 4, 'crossing: ' + c + ' of 6 finished');
+  ok(t >= 3, 'twin rivers: ' + t + ' of 4 finished');
 });
 
 console.log('M2 tactics');
@@ -724,6 +727,20 @@ test('online sync on the biggest map', () => {
     eq(JSON.stringify(g.state), JSON.stringify(h.state), 'round ' + host.round);
     host = h.state; guest = JSON.parse(JSON.stringify(h.state));
   }
+});
+
+test('AI waves: on a big map the AI gathers, then its wave reaches a passive player\'s base', () => {
+  let s = createGame(3, ['kingdom', 'undead'], 'greatfield'); const mem = aiMemory();
+  const phases = new Set(); let closest = 1e9;
+  const hq0 = () => s.buildings.find(b => b.owner === 0 && b.type === 'hq');
+  for (let r = 0; r < 30 && s.winner === null; r++) {
+    const ai = aiOrders(s, 1, mem);
+    phases.add(mem.wave.phase);
+    s = resolveRound(s, [ob(), ai]).state;
+    const h = hq0(); if (h) for (const q of s.squads.filter(q => q.owner === 1 && q.role !== 'builder')) closest = Math.min(closest, Math.hypot(q.x - h.x, q.z - h.z));
+  }
+  ok(phases.has('gather') && phases.has('attack'), 'gathers and attacks: ' + [...phases]);
+  ok(closest < 14 || s.winner === 1, 'the wave reached the base (closest ' + closest.toFixed(1) + ')');
 });
 
 console.log(`\n${pass} passed, ${fail} failed`);

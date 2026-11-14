@@ -6,7 +6,7 @@ import { emptyOrders, emptyPlan, defOf, radiusOf, apFor } from '../sim/state.js'
 import { nearestEnemy, meleePlan, trimPath } from '../sim/stances.js';
 import { obstacles, navKey, placeError, bonusCp, armySize, armyValue, BUILDINGS, trainCost, footprint, nearestFreeSite, builderCount, trainsRole, edgeDist, bdef } from '../sim/base.js';
 import { builderPlan } from '../sim/builders.js';
-import { Nav } from '../sim/nav.js';
+import { Nav, pointBlocked } from '../sim/nav.js';
 import { dist } from '../sim/geom.js';
 import { visibleTo, knownEnemyHq, observers, canSee } from '../sim/vision.js';
 import { HQ_X, mirrorOn } from '../data/maps.js';
@@ -41,7 +41,45 @@ export function aiOrders(s, p, memory = aiMemory(), opts = {}) {
     }
   } else if (hqTarget) enemies.push(hqTarget);
   if (s.buildings) Object.assign(o, economy(s, p, enemies.filter(e => !e.isHq), o));
-  for (const q of mine) if (q.stance !== 'advance') o.stances[q.id] = 'advance';
+
+  // ---- waves: gather the army at a rally point, attack together, fall back to regroup ----
+  const wave = memory.wave || (memory.wave = { phase: 'gather', since: s.round, size: 0, hqHp: 0 });
+  const myHq = s.buildings.find(b => b.owner === p && b.type === 'hq');
+  const goal = hqTarget || scoutSpot(myHq || { x: s.board.w / 2, z: s.board.h / 2 }) || spots[1];
+  // regroup in front (where the last wave stalled) unless it was broken; else just outside our base
+  const rally = wave.forward && wave.phase === 'gather' ? wave.forward : rallyPoint(s, p, myHq, goal);
+  const army = mine.filter(q => q.role !== 'fast' || hqTarget);
+  const atRally = army.filter(q => dist(q.x, q.z, rally.x, rally.z) < 6).length;
+  const frac = { easy: 0.75, normal: 0.6, hard: 0.5 }[level] || 0.6;
+  const atCap = s.squads.filter(q => q.owner === p && q.hp > 0).length >= s.board.cap;
+  if (wave.phase === 'gather') {
+    const enough = army.length >= 4 && atRally >= Math.ceil(army.length * frac);
+    if (s.round >= 3 && army.length >= 3 && (enough || atCap || s.round - wave.since >= (level === 'hard' ? 3 : 4))) {
+      Object.assign(wave, { phase: 'attack', since: s.round, size: army.length, hqHp: hqTarget ? hqTarget.hp : 1e9 });
+    }
+  } else {
+    const broken = army.length < wave.size * (level === 'easy' ? 0.5 : 0.4);
+    const stalled = s.round - wave.since >= 10 && !(hqTarget && hqTarget.hp < wave.hqHp);
+    if (hqTarget) wave.hqHp = Math.min(wave.hqHp, hqTarget.hp);
+    if (broken || stalled) {
+      let forward = null;
+      if (!broken && army.length) {
+        // the army's centre, pulled back a little toward home, clear of terrain
+        const cx = army.reduce((n, q) => n + q.x, 0) / army.length - (p === 0 ? 3 : -3), cz = army.reduce((n, q) => n + q.z, 0) / army.length;
+        forward = clearSpot(s, cx, cz);
+      }
+      Object.assign(wave, { phase: 'gather', since: s.round, size: 0, forward });
+    }
+  }
+  // waves pay off on the bigger tables; on a small one the AI keeps up the pressure instead
+  const useWaves = s.board.w >= 60;
+  const myVal0 = mine.reduce((n, q) => n + q.hp, 0), theirVal0 = enemies.filter(e => !e.isHq).reduce((n, e) => n + (e.hp || 0), 0);
+  const attacking = useWaves ? wave.phase === 'attack' : s.round >= 6 && (myVal0 >= theirVal0 * 1.15 || s.round >= 12);
+  memory.rally = rally;
+  // stances: everyone advances in a wave; while gathering, squads hold their ground (guard)
+  for (const q of mine) { const st = attacking || !useWaves ? 'advance' : 'guard'; if (q.stance !== st) o.stances[q.id] = st; }
+  // home defence: enemies close to our HQ get answered first, whatever the phase
+  const threatHome = myHq ? enemies.filter(e => !e.isHq && dist(e.x, e.z, myHq.x, myHq.z) < 12) : [];
   // lead targets by their last movement (only for squads seen both rounds)
   const prev = memory.prev;
   memory.prev = {};
@@ -53,10 +91,14 @@ export function aiOrders(s, p, memory = aiMemory(), opts = {}) {
     const vx = (e.x - m.x) * 0.5, vz = (e.z - m.z) * 0.5;
     return { x: vx, z: vz };
   };
+  const near = q => Math.min(...enemies.filter(e => !e.isHq).map(e => dist(q.x, q.z, e.x, e.z)), 1e9);
   const ranked = mine.slice().sort((a, b) => {
-    const da = Math.min(...enemies.map(e => dist(a.x, a.z, e.x, e.z)));
-    const db = Math.min(...enemies.map(e => dist(b.x, b.z, e.x, e.z)));
-    return (a.role === 'hero' ? -1e9 : da) - (b.role === 'hero' ? -1e9 : db);
+    // gathering: squads in a fight first, then the ones furthest from the rally point
+    const score = q => q.role === 'hero' ? -1e9
+      : threatHome.length && myHq && dist(q.x, q.z, myHq.x, myHq.z) < 16 ? -1e8 + near(q)
+      : useWaves && !attacking ? (near(q) < 8 ? -1e7 + near(q) : -dist(q.x, q.z, rally.x, rally.z))
+      : near(q);
+    return score(a) - score(b);
   });
   let cp = RULES.cp + bonusCp(s, p) + (level === 'easy' ? -1 : level === 'hard' ? 1 : 0);
   const myVal = mine.reduce((n, q) => n + q.hp, 0), theirVal = enemies.filter(e => !e.isHq).reduce((n, e) => n + (e.hp || 0), 0);
@@ -70,11 +112,26 @@ export function aiOrders(s, p, memory = aiMemory(), opts = {}) {
     const squadsOnly = enemies.filter(e => !e.isHq);
     let t = nearestEnemy(s, q, enemies);
     if (t.isHq && squadsOnly.length && dist(q.x, q.z, t.x, t.z) > 9) t = nearestEnemy(s, q, squadsOnly);
-    // assault: when clearly ahead (or the game drags on) ordered squads go for the HQ unless engaged
-    if (assault && hqTarget && !engagedWith(q, squadsOnly).length) t = hqTarget;
-    // rich and stalled (a long front, army at its cap): all in, past the fighting, for the HQ
-    const allIn = s.round >= 15 && s.supply[p] >= 150;
-    if (allIn && hqTarget && !engagedWith(q, squadsOnly).length) t = hqTarget;
+    const allIn = attacking;
+    // waves: attacking squads head for the HQ (or search for it) unless they are in a fight
+    const inFight = engagedWith(q, squadsOnly).length || squadsOnly.some(e => dist(e.x, e.z, q.x, q.z) - radiusOf(e) - radiusOf(q) < 3);
+    const defending = threatHome.length && myHq && dist(q.x, q.z, myHq.x, myHq.z) < 16;
+    // siege: in a wave, shooters near the known HQ shoot it from beyond its own range
+    if (attacking && hqTarget && isShooter(def) && !engagedWith(q, squadsOnly).length && !squadsOnly.some(e => dist(e.x, e.z, q.x, q.z) - radiusOf(e) - radiusOf(q) < 2)
+      && dist(q.x, q.z, hqTarget.x, hqTarget.z) - 2 <= def.attack.range + 8) t = hqTarget;
+    else if (attacking && !inFight && !defending) {
+      if (hqTarget) t = hqTarget;
+      else { const sp = scoutSpot(q); if (sp) t = { id: '?', owner: 1 - p, faction: s.players[1 - p].faction, role: 'fighter', x: sp.x, z: sp.z, fx: 1, fz: 0, models: 4, hp: 80, cd: {} }; }
+    }
+    // gathering: walk to the rally point unless there is a fight close by
+    if (useWaves && !attacking && !defending && q.role !== 'fast' && near(q) >= 8 && dist(q.x, q.z, rally.x, rally.z) > 4) {
+      const nav = Nav.for(obstacles(s), radiusOf(q), navKey(s));
+      const pts = nav.path(q.x, q.z, rally.x, rally.z);
+      if (pts.length) {
+        const gp = emptyPlan(); gp.actions.push({ kind: 'move', pts, ap: apFor(q) });
+        o.squads[q.id] = gp; continue;
+      }
+    }
     // the enemy HQ still unknown after a while: ordered squads go looking for it
     if (!hqTarget && s.round >= 8 && !engagedWith(q, squadsOnly).length && (allIn || !squadsOnly.some(e => dist(e.x, e.z, q.x, q.z) < 8))) {
       const sp = scoutSpot(q);
@@ -157,6 +214,24 @@ export function aiOrders(s, p, memory = aiMemory(), opts = {}) {
     o.squads[q.id] = plan;
   }
   return o;
+}
+
+// the rally point: just in front of our build zone, on the way to the target, clear of terrain
+function rallyPoint(s, p, myHq, goal) {
+  const W = s.board.w, H = s.board.h;
+  const hx = myHq ? myHq.x : (p === 0 ? HQ_X : W - HQ_X), hz = myHq ? myHq.z : H / 2;
+  const rx = p === 0 ? s.board.zone + 3 : W - s.board.zone - 3;
+  const k = Math.abs(goal.x - hx) > 1 ? (rx - hx) / (goal.x - hx) : 0.5;
+  const rz = Math.max(4, Math.min(H - 4, hz + (goal.z - hz) * k));
+  return clearSpot(s, rx, rz);
+}
+function clearSpot(s, x0, z0) {
+  const O = obstacles(s);
+  for (let r = 0; r < 8; r += 0.75) for (let i = 0; i < Math.max(1, Math.round(r * 4)); i++) {
+    const a = i / Math.max(1, Math.round(r * 4)) * Math.PI * 2, x = x0 + Math.cos(a) * r, z = z0 + Math.sin(a) * r;
+    if (!pointBlocked(O, x, z, 1.4)) return { x, z };
+  }
+  return { x: x0, z: z0 };
 }
 
 export function aiMemory() { return { seen: {}, prev: {} }; }
