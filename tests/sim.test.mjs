@@ -7,6 +7,7 @@ import { aiOrders, aiMemory } from '../js/ai/ai.js';
 import { canSee, visibleTo } from '../js/sim/vision.js';
 import { placeError, addBuilding, incomeOf, obstacles, startQueues, armySize } from '../js/sim/base.js';
 import { builderPlan } from '../js/sim/builders.js';
+import { buildStancePlan } from '../js/sim/stances.js';
 import { knownEnemyHq } from '../js/sim/vision.js';
 import { Nav, walkAP, pointBlocked } from '../js/sim/nav.js';
 import { MAPS, MAP_ORDER } from '../js/data/maps.js';
@@ -492,8 +493,78 @@ test('stance squads ignore enemies they cannot see', () => {
   // an enemy behind the ruin wall, inside guard range but out of sight
   const s = arena([[0, 'fighter', 22, 11], [1, 'fighter', 22, 16.4]]);
   ok(!visibleTo(s, 0).has('q2'), 'hidden behind the wall');
-  const { log } = resolveRound(s, [orders(), { squads: {}, stances: { q2: 'hold' } }]);
+  const { log } = resolveRound(s, [orders({}, { q1: 'guard' }), { squads: {}, stances: { q2: 'hold' } }]);
   ok(!events(log).some(e => e.type === 'act' && e.id === 'q1'), 'guard squad does not react');
+});
+
+console.log('Stances');
+test('squads start on Advance (builders on Guard)', () => {
+  const s = createGame(1);
+  ok(s.squads.filter(q => q.role !== 'builder').every(q => q.stance === 'advance'));
+  ok(s.squads.filter(q => q.role === 'builder').every(q => q.stance === 'guard'));
+});
+
+test('Advance with a target point marches there over the rounds, then guards it', () => {
+  const s = arena([[0, 'fighter', 6, 4]]);
+  let r = resolveRound(s, [{ squads: {}, stances: {}, goals: { q1: { x: 14, z: 6 } } }, orders()]);
+  let q = r.state.squads[0];
+  ok(q.goal && q.stance === 'advance', 'goal stored, stance advance');
+  ok(q.x > 9, 'walked toward it: ' + q.x);
+  r = resolveRound(r.state, [orders(), orders()]);
+  q = r.state.squads[0];
+  ok(Math.hypot(q.x - 14, q.z - 6) <= RULES.goalReach + 0.6, 'arrived');
+  const x1 = q.x;
+  r = resolveRound(r.state, [orders(), orders()]);
+  ok(Math.abs(r.state.squads[0].x - x1) < 0.3, 'and stays there');
+  r = resolveRound(r.state, [{ squads: {}, stances: {}, goals: { q1: null } }, orders()]);
+  ok(!r.state.squads[0].goal, 'cleared');
+});
+
+test('Advance treats squads, buildings and the HQ alike: the nearest one is attacked', () => {
+  // an enemy tower right next to the squad, an enemy squad further away (both seen)
+  const s = arena([[0, 'fighter', 30, 8], [1, 'fighter', 30, 17]]);
+  const tw = addBuilding(s, 1, 'tower', 33, 8, 0, true);
+  s.intel[0].known[tw.id] = { id: tw.id, owner: 1, type: 'tower', x: tw.x, z: tw.z, r: tw.r, hp: tw.hp, build: 0 };
+  const { log } = resolveRound(s, [orders(), { squads: {}, stances: { q2: 'hold' } }]);
+  ok(events(log).some(e => e.type === 'hit' && e.src === 'q1' && e.dst === tw.id), 'it attacks the nearer tower, not the squad');
+});
+
+test('Retreat falls back to the nearest own mine / soul well, else the HQ', () => {
+  const s = arena([[0, 'fighter', 24, 12], [0, 'tank', 24, 26]]);
+  addBuilding(s, 0, 'mine', 16.5, 19.5, 0, true);
+  s.squads[1].hp = 1; s.squads[1].models = 1;
+  const r = resolveRound(s, [orders({}, { q1: 'retreat', q2: 'retreat' }), orders()]);
+  const q1 = r.state.squads.find(q => q.id === 'q1'), q2 = r.state.squads.find(q => q.id === 'q2');
+  const pl = buildStancePlan(s, { ...s.squads[0], stance: 'retreat' }, []), end = pl.actions[0].pts.slice(-1)[0];
+  ok(Math.hypot(end.x - 16.5, end.z - 19.5) < 5, 'its path ends at the mine');
+  ok(Math.hypot(q1.x - 24, q1.z - 12) > 2, 'and it walks');
+  ok(Math.hypot(q2.x - 16.5, q2.z - 19.5) < Math.hypot(24 - 16.5, 26 - 19.5), 'the other too (nearest fallback)');
+  eq(r.state.squads[0].stance, 'retreat');
+});
+
+test('a building locked onto a squad keeps training it; queued squads go first', () => {
+  const s = arena([[0, 'builder', 7, 9], [1, 'fighter', 41, 23]]); s.supply[0] = 300;
+  const b = addBuilding(s, 0, 'barracks', 6, 4, 0, true);
+  const qo = (queue = {}) => ({ squads: {}, stances: {}, queue }), ob = () => ({ squads: {}, stances: {} });
+  let r = resolveRound(s, [qo({ repeat: { [b.id]: 'fighter' }, trains: { [b.id]: ['ranged'] } }), ob()]);
+  let B = r.state.buildings.find(x => x.id === b.id);
+  eq(B.repeat, 'fighter'); eq(B.train.role, 'ranged', 'the queue first');
+  for (let i = 0; i < 2; i++) r = resolveRound(r.state, [ob(), ob()]);
+  B = r.state.buildings.find(x => x.id === b.id);
+  eq(B.train?.role, 'fighter', 'then the locked squad, with no new orders');
+  for (let i = 0; i < 2; i++) r = resolveRound(r.state, [ob(), ob()]);
+  eq(r.state.buildings.find(x => x.id === b.id).train?.role, 'fighter', 'and again');
+  ok(r.state.squads.filter(q => q.owner === 0 && q.role === 'fighter').length >= 1, 'the first locked fighter is out');
+  r = resolveRound(r.state, [qo({ repeat: { [b.id]: null } }), ob()]);
+  ok(!r.state.buildings.find(x => x.id === b.id).repeat, 'unlocked');
+});
+
+test('fast squads hit hard but rarely (2 swings a round)', () => {
+  for (const f of ['kingdom', 'undead']) {
+    const a = FACTIONS[f].units.fast.attack;
+    eq(Math.floor(RULES.ap / a.ap), 2, f);
+    ok(a.dmg * FACTIONS[f].units.fast.models >= 30, f + ' strong per hit');
+  }
 });
 
 test('the AI only targets what it sees or remembers', () => {

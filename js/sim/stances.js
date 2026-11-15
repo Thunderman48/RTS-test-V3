@@ -2,10 +2,13 @@
 // knew during planning (enemy positions at the start of the round), then run like orders.
 //  guard   : strike enemies that come close (melee chases up to 8"); ranged volleys targets in range
 //  hold    : stay put, all AP into defends
-//  advance : like guard, but walks toward the nearest enemy when nobody is in reach
+//  advance : (the default) fight the nearest enemy - squad, building or HQ alike - within
+//            RULES.advanceEngage; otherwise march on: to its target point if it has one (then guard
+//            there), else on the enemy HQ (searching its possible spots while unknown)
+//  retreat : fall back to the nearest own Mine / Soul Well (else the HQ) and guard there
 import { RULES, isMelee, isShooter } from '../data/units.js';
 import { defOf, radiusOf, emptyPlan, apFor } from './state.js';
-import { obstacles, navKey } from './base.js';
+import { obstacles, navKey, hitRadius } from './base.js';
 import { builderIdleTarget } from './builders.js';
 import { knownEnemyHq, observers, canSee } from './vision.js';
 import { HQ_X, mirrorOn } from '../data/maps.js';
@@ -22,7 +25,7 @@ function fillDefends(plan, left) {
 export function nearestEnemy(s, q, enemies, maxGap = 1e9) {
   let best = null, bd = 1e9;
   for (const e of enemies) {
-    const gap = dist(q.x, q.z, e.x, e.z) - radiusOf(e) - radiusOf(q);
+    const gap = dist(q.x, q.z, e.x, e.z) - (e.r ?? radiusOf(e)) - radiusOf(q);
     if (gap <= maxGap && gap < bd) { bd = gap; best = e; }
   }
   return best;
@@ -32,7 +35,7 @@ export function nearestEnemy(s, q, enemies, maxGap = 1e9) {
 // lead: optional {x,z} offset to aim where it is expected to be.
 export function meleePlan(s, q, e, plan, left, lead = null) {
   const def = defOf(q);
-  const r = radiusOf(q), re = radiusOf(e);
+  const r = radiusOf(q), re = e.r ?? radiusOf(e);
   const strike = def.attack.ap;
   const want = r + re + def.attack.reach * 0.55; // stop well inside reach
   const d = dist(q.x, q.z, e.x, e.z);
@@ -92,33 +95,46 @@ export function buildStancePlan(s, q, enemies) {
     if (b) plan.actions.push({ kind: 'work', x: b.x, z: b.z, ap: left });
     return plan;
   }
-  // advance with the enemy HQ known and nobody close by: go and attack the HQ itself
-  if (st === 'advance') {
-    const hq = knownEnemyHq(s, q.owner);
-    if (hq && !nearestEnemy(s, q, enemies, 10)) {
-      const ht = { id: hq.id, owner: 1 - q.owner, faction: s.players[1 - q.owner].faction, role: 'fighter', x: hq.x, z: hq.z, fx: 1, fz: 0, models: 4, hp: hq.hp, cd: {} };
-      if (isShooter(def)) {
-        const range = def.attack.range, d = dist(q.x, q.z, hq.x, hq.z) - 2;
-        if (d > range - 0.5) {
-          const nav = Nav.for(obstacles(s), radiusOf(q), navKey(s));
-          const pts = trimPath(q.x, q.z, nav.path(q.x, q.z, hq.x, hq.z), range - 1);
-          if (pts.length) plan.actions.push({ kind: 'move', pts, ap: left });
-          return plan;
-        }
-        while (left >= def.attack.ap) { plan.actions.push({ kind: def.attack.kind, x: hq.x, z: hq.z }); left -= def.attack.ap; }
-        fillDefends(plan, left);
+  const walkTo = (x, z, stop = 0) => {
+    const nav = Nav.for(obstacles(s), radiusOf(q), navKey(s));
+    const pts = trimPath(q.x, q.z, nav.path(q.x, q.z, x, z), stop);
+    if (pts.length) plan.actions.push({ kind: 'move', pts, ap: left });
+    return pts.length > 0;
+  };
+  // attack target t (a squad or a building target) with everything
+  const attack = t => {
+    if (isShooter(def)) {
+      const range = def.attack.range, d = dist(q.x, q.z, t.x, t.z) - (t.r ?? radiusOf(t));
+      if (d > range - 0.3) {
+        // walk into range first (stopping inside it), then shoot with what is left
+        const nav = Nav.for(obstacles(s), radiusOf(q), navKey(s));
+        const pts = trimPath(q.x, q.z, nav.path(q.x, q.z, t.x, t.z), range * 0.8 + (t.r ?? radiusOf(t)));
+        if (pts.length) plan.actions.push({ kind: 'move', pts, ap: left });
         return plan;
       }
-      left = meleePlan(s, q, ht, plan, left);
+      while (left >= def.attack.ap) { plan.actions.push({ kind: def.attack.kind, x: t.x, z: t.z }); left -= def.attack.ap; }
       fillDefends(plan, left);
       return plan;
     }
-  }
-  if (!enemies.length && st === 'advance') {
-    // nobody in sight: march on the enemy HQ if we know where it is, else into the enemy half
-    // HQ unknown: try the possible HQ spots one by one (the nearest one we can't see right now)
-    const known = knownEnemyHq(s, q.owner);
-    let hq = known;
+    if (def.parry && !t.building && nearestEnemy(s, q, [t], RULES.engageGap)) { plan.parry = true; left -= RULES.parryCost; }
+    left = meleePlan(s, q, t, plan, left);
+    fillDefends(plan, left);
+    return plan;
+  };
+
+  if (st === 'advance') {
+    // every enemy it knows of is a target, squads and buildings alike (the HQ too): the nearest wins
+    const known = Object.values(s.intel?.[q.owner]?.known || {}).filter(b => b.hp > 0)
+      .map(b => ({ id: b.id, owner: b.owner, x: b.x, z: b.z, r: hitRadius(b), building: true }));
+    const t = nearestEnemy(s, q, enemies.concat(known), RULES.advanceEngage);
+    if (t) return attack(t);
+    if (q.goal) {
+      // march to its target point, then guard there (fight what comes close)
+      if (dist(q.x, q.z, q.goal.x, q.goal.z) > RULES.goalReach && walkTo(q.goal.x, q.goal.z)) return plan;
+      return guardPlan(s, q, enemies, plan, left);
+    }
+    // no target point: march on the enemy HQ if we know where it is, else search its possible spots
+    let hq = knownEnemyHq(s, q.owner);
     if (!hq) {
       const obs = observers(s, q.owner);
       const mirror = mirrorOn(s.board.w, s.board.h);
@@ -127,12 +143,25 @@ export function buildStancePlan(s, q, enemies) {
         .sort((a, b) => dist(q.x, q.z, a.x, a.z) - dist(q.x, q.z, b.x, b.z));
       hq = spots[0] || { x: q.owner === 0 ? s.board.w - 8 : 8, z: s.board.h / 2 };
     }
-    if (hq) {
-      const nav = Nav.for(obstacles(s), radiusOf(q), navKey(s));
-      const pts = trimPath(q.x, q.z, nav.path(q.x, q.z, hq.x, hq.z), 3.2);
-      if (pts.length) { plan.actions.push({ kind: 'move', pts, ap: left }); return plan; }
-    }
+    if (walkTo(hq.x, hq.z, 3.2)) return plan;
+    return guardPlan(s, q, enemies, plan, left);
   }
+  if (st === 'retreat') {
+    // fall back to the nearest own mine / soul well (resource site), else the HQ, and guard there
+    const home = (s.buildings || []).filter(b => b.owner === q.owner && b.hp > 0 && (b.type === 'mine' || b.type === 'well'))
+      .sort((a, b) => dist(q.x, q.z, a.x, a.z) - dist(q.x, q.z, b.x, b.z))[0]
+      || (s.buildings || []).find(b => b.owner === q.owner && b.type === 'hq' && b.hp > 0);
+    if (home && dist(q.x, q.z, home.x, home.z) - hitRadius(home) > RULES.retreatReach) {
+      if (walkTo(home.x, home.z, hitRadius(home) + radiusOf(q) + 0.6)) { const used = plan.actions.reduce((n, a) => n + a.ap, 0); fillDefends(plan, Math.max(0, apFor(q) - used)); return plan; }
+    }
+    return guardPlan(s, q, enemies, plan, left);
+  }
+  return guardPlan(s, q, enemies, plan, left);
+}
+
+// guard (and hold): fight what comes close; shooters volley what is in range or watch the nearest
+function guardPlan(s, q, enemies, plan, left) {
+  const def = defOf(q), st = q.stance;
   if (st === 'hold' || !enemies.length) { fillDefends(plan, left); return plan; }
   if (isShooter(def)) {
     const range = def.attack.range;
@@ -143,17 +172,12 @@ export function buildStancePlan(s, q, enemies) {
       return plan;
     }
     const e = nearestEnemy(s, q, enemies);
-    if (st === 'advance') {
-      const nav = Nav.for(obstacles(s), radiusOf(q), navKey(s));
-      const pts = trimPath(q.x, q.z, nav.path(q.x, q.z, e.x, e.z), range * 0.8);
-      if (pts.length) { plan.actions.push({ kind: 'move', pts, ap: left }); return plan; }
-    }
     // guard: watch the nearest enemy's approach
     plan.overwatch = { x: e.x, z: e.z }; left -= RULES.overwatchCost;
     fillDefends(plan, left);
     return plan;
   }
-  const t = nearestEnemy(s, q, enemies, st === 'advance' ? 1e9 : GUARD_RANGE);
+  const t = nearestEnemy(s, q, enemies, GUARD_RANGE);
   // already in contact: prepare a parry before trading blows
   if (t && def.parry && nearestEnemy(s, q, enemies, RULES.engageGap)) { plan.parry = true; left -= RULES.parryCost; }
   if (t) left = meleePlan(s, q, t, plan, left);

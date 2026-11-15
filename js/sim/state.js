@@ -52,7 +52,7 @@ export function addSquad(s, owner, role, x, z) {
     id: 'q' + (s.nextId++), owner, faction, paint: s.players[owner].paint || faction, role, x, z,
     fx: owner === 0 ? 1 : -1, fz: 0,   // facing (unit vector)
     models: def.models, hp: def.models * def.hpPer,
-    stance: 'guard',
+    stance: role === 'builder' ? 'guard' : 'advance',   // squads advance by default; builders work on their own
     cd: {},                            // skill cooldowns: kind -> rounds left
   };
   if (def.mana) q.mana = def.mana.start; // mages: mana left

@@ -87,6 +87,11 @@ export function resolveRound(state0, ordersIn) {
   for (const p of [0, 1]) for (const [id, st] of Object.entries(orders[p].stances)) {
     const q = s.squads.find(x => x.id === id); if (q) q.stance = st;
   }
+  // advance target points (setting one puts the squad on Advance)
+  for (const p of [0, 1]) for (const [id, g] of Object.entries(orders[p].goals || {})) {
+    const q = s.squads.find(x => x.id === id); if (!q) continue;
+    if (g) { q.goal = g; q.stance = 'advance'; } else delete q.goal;
+  }
   // production queues: apply this round's queue edits, then start what can start (paid now)
   const baseEvents = [];
   const bev = e => baseEvents.push(e);

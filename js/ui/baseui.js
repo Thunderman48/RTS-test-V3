@@ -396,7 +396,8 @@ export const BaseUI = {
     const status = b.build ? `Under construction (${Math.round(d.work - b.build)}/${d.work} work): it can train once it is finished.`
       : tr ? `Training ${esc(units[tr.role].name)}: ${tr.left > 1 ? `ready in ${tr.left} rounds` : 'it arrives at the end of this round'}.${list.length ? ` Next: ${esc(units[list[0]].name)} starts the round after.` : ''}`
       : list.length ? `${esc(units[list[0]].name)}: ${esc(this.waitText(fc[0]))}.`
-      : `Tap a squad to queue it (up to ${RULES.queueMax}). Each is paid when its training starts.`;
+      : P.repeatOf(b) ? `${esc(units[P.repeatOf(b)].name)} (repeat): ${esc(this.waitText(fc[0]))}.`
+      : `Tap a squad to queue it (up to ${RULES.queueMax}), or lock it onto one below. Each is paid when its training starts.`;
     dock.innerHTML = `<div class="dk-head"><div><div class="nm">${esc(d.name[fac])}</div><div class="sub">${hpTxt} · ${icon(eco.icon, 12)} ${P.supplyLeft()} after this round's starts · army ${P.armyNext()}/${this.state.board.cap}</div></div><button class="ib x" data-tr="close">✕</button></div>
       ${b.build ? '' : `<div class="bd-sec">Queue · ${list.length}/${RULES.queueMax} · tap to remove, drag to reorder</div><div class="pq-row in-dock">${this.queueRowHTML('t', b) || '<span class="pq-empty">Empty</span>'}</div>`}
       <div class="dk-btns">${roles.map(role => {
@@ -405,8 +406,10 @@ export const BaseUI = {
         const nq = list.filter(r => r === role).length;
         return `<button class="act cat-none" data-tr="${role}" ${err ? 'disabled' : ''} title="${esc(err || `${u.models} models · tap to add to the queue`)}">${icon(role, 20)}${esc(u.name)}<small>${trainCost(fac, role)} ${esc(eco.name.toLowerCase())} · ${RULES.trainRounds[role]} rd${nq ? ` · ×${nq}` : ''}</small></button>`;
       }).join('')}</div>
-      <div class="hint">${status}${full ? ' The queue is full.' : ''}</div>${work}`;
+      ${b.build ? '' : `<div class="bd-sec">Keep training (repeat) · trains it whenever the queue is empty</div><div class="rep-row">${roles.map(role => `<button class="chip${P.repeatOf(b) === role ? ' on' : ''}" data-rep="${role}" title="${P.repeatOf(b) === role ? 'Stop repeating' : 'Lock onto ' + esc(units[role].name)}">${icon(role, 14)} ${esc(units[role].name)}</button>`).join('')}${P.repeatOf(b) ? '<button class="chip" data-rep="">✕ Off</button>' : ''}</div>`}
+      <div class="hint">${status}${full ? ' The queue is full.' : ''}${P.repeatOf(b) ? ` Locked: it keeps training ${esc(units[P.repeatOf(b)].name)} after the queue runs out.` : ''}</div>${work}`;
     this.wireQueueRows(dock);
+    dock.querySelectorAll('[data-rep]').forEach(el => el.onclick = () => { P.setRepeat(b, el.dataset.rep || P.repeatOf(b)); sfx('confirm'); });
     dock.querySelectorAll('[data-tr]').forEach(el => el.onclick = () => {
       if (el.dataset.tr === 'close') { this.selB = null; this.changed(); return; }
       if (P.queueTrain(b, el.dataset.tr)) { sfx('confirm'); this.texts.add(b.x, b.z, `Queued ${units[el.dataset.tr].name}`, 'ok', 2.8, 1.3); }
@@ -439,9 +442,9 @@ export const BaseUI = {
       const d = BUILDINGS[b.type], fac = this.faction(b.owner);
       const mine = this.phase === 'planning' && b.owner === this.me && !b.ghost;
       const tr = mine ? this.planner.training(b) : b.owner === this.me ? b.train : null;
-      const nq = mine && b.queue ? this.planner.tqList(b).length : 0;
+      const nq = mine && b.queue ? this.planner.tqList(b).length : 0, rp = mine && b.queue ? this.planner.repeatOf(b) : null;
       const sel = b.id === this.selB;
-      const status = b.queued !== undefined ? `#${b.queued + 1} queued · ${b.fc?.starts ? 'starts now' : (this.waitText(b.fc).replace(/^Waits:? ?/, 'waits ') || 'waits')}` : b.ghost ? 'planned' : b.stale ? 'last seen' : b.build ? (this.rises(b.owner) ? `rising · ${Math.ceil(b.build / RULES.riseWork)} rd` : `${Math.round(d.work - b.build)}/${d.work} work`) : tr ? `training ${FACTIONS[fac].units[tr.role].name}${tr.left > 1 ? ` · ${tr.left} rd` : ''}${nq ? ` · +${nq} queued` : ''}` : nq ? `${nq} queued` : '';
+      const status = b.queued !== undefined ? `#${b.queued + 1} queued · ${b.fc?.starts ? 'starts now' : (this.waitText(b.fc).replace(/^Waits:? ?/, 'waits ') || 'waits')}` : b.ghost ? 'planned' : b.stale ? 'last seen' : b.build ? (this.rises(b.owner) ? `rising · ${Math.ceil(b.build / RULES.riseWork)} rd` : `${Math.round(d.work - b.build)}/${d.work} work`) : tr ? `training ${FACTIONS[fac].units[tr.role].name}${tr.left > 1 ? ` · ${tr.left} rd` : ''}${nq ? ` · +${nq} queued` : ''}${rp ? ' · ⟳' : ''}` : nq ? `${nq} queued` : rp ? `⟳ ${FACTIONS[fac].units[rp].name}` : '';
       const key = `${Math.round(b.hp)}|${status}|${sel}|${zoomedOut}|${b.dying !== undefined}`;
       if (el.dataset.key !== key) {
         el.dataset.key = key;

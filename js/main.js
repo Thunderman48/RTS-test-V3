@@ -446,6 +446,15 @@ class Game {
         end.position.x = pr.x; end.position.z = pr.z; L.add(end);
       }
     }
+    // advance target points: a green flag line from each of my advancing squads
+    for (const q of this.state.squads) {
+      if (q.owner !== this.me || q.role === 'builder') continue;
+      const g = this.planner.goalOf(q);
+      if (!g || this.planner.stanceOf(q) !== 'advance') continue;
+      const sel = q.id === this.selected;
+      L.add(ribbon([{ x: q.x, z: q.z }, g], sel ? 0.1 : 0.06, 0x34c759, sel ? 0.7 : 0.3, 0.4));
+      const r = ring(0.55, 0.12, 0x34c759, sel ? 0.95 : 0.5); r.position.x = g.x; r.position.z = g.z; L.add(r);
+    }
     // engaged squads get a red contact ring
     for (const q of this.state.squads) if (engagedWith(q, this.state.squads).length) { const r = ring(radiusOf(q) + 0.18, 0.07, COL.bad, 0.55, 0.04); r.position.x = q.x; r.position.z = q.z; L.add(r); }
     // selected squad: reach ring for the AP left
@@ -582,6 +591,7 @@ class Game {
     if (kind === 'attack') return this.planner.addAttack(q.id, x, z);
     if (kind === 'skill') return this.planner.addSkill(q.id, skKind || this.modeSkill, x, z);
     if (kind === 'overwatch') { const ok = this.planner.setOverwatch(q.id, x, z); this.mode = 'move'; return ok; }
+    if (kind === 'goal') { this.planner.setGoal(q.id, x, z); this.mode = 'move'; this.confirm(q, 'Advance target set'); return true; }
     return false;
   }
 
@@ -873,6 +883,7 @@ class Game {
       move: '<b>Drag the green knob</b> to draw a path (or tap the table). The ring shows how far it can still go.' + (engaged ? ' <b>Engaged:</b> stepping away costs 30 AP and gives the enemy a free hit.' : ''),
       attack: `<b>Drag the red knob</b> to aim the ${atkName.toLowerCase()}. It hits whatever is in the shape when it lands, so aim where enemies <b>will be</b>.` + (at.kind === 'volley' ? ' Walls block volleys; forests give cover.' : at.kind === 'lob' ? ' Lobs arc over walls.' : ''),
       skill: msk ? `<b>${esc(msk.name)}:</b> ${SKILL_HELP[msk.kind]} ${mage ? `Costs ${msk.mana} mana (${mana} left); a mage can cast again this round while it has AP and mana.` : `Then it recharges for ${msk.cd} round${msk.cd > 1 ? 's' : ''}.`}` : '',
+      goal: '<b>Tap the table</b> where this squad should advance to. Over the next rounds it marches there, fighting the nearest enemy (squad or building) it meets on the way, then guards that spot.',
       overwatch: '<b>Drag the red knob</b> to point the overwatch cone. The squad fires once at the first enemy that moves inside it, at any speed tier.',
     };
     dock.innerHTML = `<div class="dk-head"><div><div class="nm">${esc(def.name)}${engaged ? ' <span class="eng">Engaged</span>' : ''}</div><div class="sub">Tier ${def.tier + (plan?.upgrades || 0)} · ${q.models}/${def.models} models · ${q.hp} HP · ${ctl}</div></div>
@@ -888,7 +899,7 @@ class Game {
         ${b('undo', 'undo', 'Undo', '', false, !plan, 'none')}
         ${b('clear', 'release', 'Clear', 'back to stance', false, !plan, 'none')}
       </div>
-      <div class="dk-stance">Stance (free): ${['guard', 'hold', 'advance'].map(s => `<button class="chip${st === s ? ' on' : ''}" data-act="stance:${s}">${s[0].toUpperCase() + s.slice(1)}</button>`).join('')}</div>
+      <div class="dk-stance">Stance (free): ${['advance', 'guard', 'hold', 'retreat'].map(s => `<button class="chip${st === s ? ' on' : ''}" data-act="stance:${s}" title="${STANCE_TIP[s]}">${s[0].toUpperCase() + s.slice(1)}</button>`).join('')}${st === 'advance' ? `<button class="chip${this.mode === 'goal' ? ' on' : ''}" data-act="mode:goal" title="Tap the table to set where it advances to">⚑ ${this.planner.goalOf(q) ? 'Move target' : 'Set target'}</button>${this.planner.goalOf(q) ? '<button class="chip" data-act="nogoal" title="Advance on the enemy HQ again">✕ Target</button>' : ''}` : ''}</div>
       <div class="hint">${hints[this.mode] || hints.move}</div>`;
     dock.querySelectorAll('[data-act]').forEach(el => el.onclick = () => this.dockAction(el.dataset.act, q));
   }
@@ -908,6 +919,7 @@ class Game {
     else if (k === 'undo') this.planner.undo(q.id);
     else if (k === 'clear') this.planner.clear(q.id);
     else if (k === 'stance') this.planner.setStance(q.id, arg);
+    else if (k === 'nogoal') this.planner.clearGoal(q.id);
     this.changed();
   }
 
@@ -1244,6 +1256,12 @@ class Game {
 Object.assign(Game.prototype, BaseUI, ProductionUI, OnlineUI, SettingsUI);
 
 const CAT_HEX = { move: '#34c759', attack: '#ff3b30', defense: '#3fa9ff' };
+const STANCE_TIP = {
+  advance: 'Fights the nearest enemy (squad, building or HQ alike) within 10″; otherwise marches to its target point, or on the enemy HQ',
+  guard: 'Holds its ground and fights enemies that come close',
+  hold: 'Stays put; all its AP goes into defends',
+  retreat: 'Falls back to your nearest Mine / Soul Well (else the HQ) and guards there',
+};
 const ACT_COL = { work: '#ffb020', swing: 'var(--swing)', volley: 'var(--volley)', lob: 'var(--volley)', charge: CAT_HEX.move, leap: CAT_HEX.move, step: CAT_HEX.move, blast: CAT_HEX.attack, storm: CAT_HEX.attack, sweep: CAT_HEX.attack, pierce: CAT_HEX.attack, mighty: CAT_HEX.attack, thunder: CAT_HEX.attack, explode: CAT_HEX.attack, rally: CAT_HEX.defense, raise: CAT_HEX.defense, wall: CAT_HEX.defense, summon: CAT_HEX.defense, wait: '#8a857c' };
 const SKILL_IC = { charge: 'dash', leap: 'shove', step: 'disrupt', blast: 'frag', storm: 'shoot', sweep: 'sweep', pierce: 'range', rally: 'rally', raise: 'heal', wall: 'fortify', mighty: 'attack', summon: 'spawn', thunder: 'zone', explode: 'frag' };
 const SKILL_HELP = {
@@ -1301,7 +1319,7 @@ const HELP = {
 <h3>Giving orders</h3>
 <ul>
 <li>Tap a squad (or its card) to select it. Knobs appear: ${G(GREEN)} = move, ${G(RED)} = attack, and its skills in their colour. A see-through copy shows where the squad will end up. Drag a knob to aim, or tap it and then tap the table.</li>
-<li>You can command <b>${RULES.cp} squads</b> a round (plus one per Banner / Obelisk). Your hero and builders are free. The others follow their <b>stance</b>: <b>Guard</b> fights what comes close, <b>Hold</b> stays and defends, <b>Advance</b> marches on the enemy (and on its HQ once found).</li>
+<li>You can command <b>${RULES.cp} squads</b> a round (plus one per Banner / Obelisk). Your hero and builders are free. The others follow their <b>stance</b>: <b>Advance</b> (the default) fights the nearest enemy it knows of, squad, building or HQ alike, and otherwise marches to the <b>target point</b> you set (⚑ in its panel, then tap the table) or on the enemy HQ; <b>Guard</b> fights what comes close; <b>Hold</b> stays and defends; <b>Retreat</b> falls back to your nearest Mine / Soul Well (or the HQ).</li>
 </ul>
 <h3>Watching the battle</h3>
 <p>The round plays back slowly. Drag the timeline to scrub, change the speed, or tap a log line to jump to it. Press <b>Next round</b> when you're done.</p>

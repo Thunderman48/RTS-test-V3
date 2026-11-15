@@ -41,7 +41,10 @@ export const ProductionUI = {
     } else if (b.train) {
       h += `<button class="pq-it cur stopped" data-q="t" data-bid="${b.id}" data-i="-1" title="Stopped: refunded when the round starts · tap to keep training">${icon(b.train.role, 18)}<i class="rd">✕</i></button>`;
     }
+    const rp = P.repeatOf(b);
+    if (rp && !list.length && !tr) h += `<button class="pq-it rep${cls(f[0])}" data-q="t" data-bid="${b.id}" data-i="-2" title="${esc(`Repeating ${units[rp].name}: ${this.waitText(f[0])} · tap to stop repeating`)}">${icon(rp, 18)}<i class="n">⟳</i></button>`;
     h += list.map((role, i) => `<button class="pq-it${cls(f[i])}" data-q="t" data-bid="${b.id}" data-i="${i}" title="${esc(`${units[role].name} · ${trainCost(fac, role)} · ${RULES.trainRounds[role]} rd · ${this.waitText(f[i])} · tap to remove, drag to reorder`)}">${icon(role, 18)}</button>`).join('');
+    if (rp && (list.length || tr)) h += `<span class="pq-rep" title="Then keeps training ${esc(units[rp].name)}">⟳${icon(rp, 14)}</span>`;
     return h;
   },
   prodGroups() {
@@ -105,6 +108,7 @@ export const ProductionUI = {
     const i = +el.dataset.i;
     if (el.dataset.q === 'b') { this.planner.unqueueBuild(i); this.toast('Removed from the build queue'); this.changed(); return; }
     const b = this.state.buildings.find(x => x.id === el.dataset.bid); if (!b) return;
+    if (i === -2) { this.planner.setRepeat(b, this.planner.repeatOf(b)); this.toast('Stopped repeating'); this.changed(); return; }
     if (i >= 0) { this.planner.unqueueTrain(b, i); this.changed(); return; }
     // the squad in training: first tap arms, second tap stops it (refunded); a stopped one is restored
     if (!this.planner.training(b)) { this.planner.toggleCancel(b); this.changed(); return; }

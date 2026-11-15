@@ -3,6 +3,8 @@ import { RULES, isMelee, isShooter, skillOf, cdOf, isMage, SKILL_KINDS as SK } f
 import { defOf, emptyPlan, apFor } from './state.js';
 import { validateQueue, bonusCp } from './base.js';
 
+export const STANCES = ['guard', 'hold', 'advance', 'retreat'];
+
 export function upgradeCost(n) { let c = 0; for (let i = 0; i < n; i++) c += RULES.tierCost[i]; return c; }
 
 export function actionCost(q, a) {
@@ -78,7 +80,7 @@ export function cpUsage(s, p, orders) {
 
 export function validateOrders(s, p, orders0) {
   const orders = orders0 || {};
-  const out = { squads: {}, stances: {}, queue: null };
+  const out = { squads: {}, stances: {}, goals: {}, queue: null };
   if (s.buildings) out.queue = validateQueue(s, p, orders);
   const plans = {};
   for (const [id, plan] of Object.entries(orders.squads || {})) {
@@ -88,7 +90,15 @@ export function validateOrders(s, p, orders0) {
   for (const id of cpUsage(s, p, { squads: plans }).accepted) out.squads[id] = plans[id];
   for (const [id, st] of Object.entries(orders.stances || {})) {
     const q = s.squads.find(x => x.id === id);
-    if (q && q.owner === p && ['guard', 'hold', 'advance'].includes(st)) out.stances[id] = st;
+    if (q && q.owner === p && STANCES.includes(st)) out.stances[id] = st;
+  }
+  // advance target points: { x, z } (clamped to the board) or null to clear
+  for (const [id, g] of Object.entries(orders.goals || {})) {
+    const q = s.squads.find(x => x.id === id);
+    if (!q || q.owner !== p || q.role === 'builder') continue;
+    if (g === null) { out.goals[id] = null; continue; }
+    const W = s.board ? s.board.w : RULES.board.w, H = s.board ? s.board.h : RULES.board.h;
+    out.goals[id] = { x: Math.max(0.5, Math.min(W - 0.5, num(g.x))), z: Math.max(0.5, Math.min(H - 0.5, num(g.z))) };
   }
   return out;
 }

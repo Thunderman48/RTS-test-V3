@@ -479,3 +479,8 @@ button { font-family: inherit; color: inherit; cursor: pointer; touch-action: ma
 .sl .st.sum { color: #7dff9a; font-weight: 900; }
 .sq .mn, i.mn { color: #7fb8ff; font-style: normal; font-weight: 800; }
 .knob b.mn { color: #7fb8ff; font-size: 13px; }
+
+/* repeat (locked production) */
+.rep-row { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 8px; }
+.pq-it.rep { border-style: dashed; }
+.pq-rep { display: flex; align-items: center; gap: 2px; font-size: 13px; font-weight: 900; color: var(--muted); padding: 0 2px; }

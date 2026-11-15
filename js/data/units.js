@@ -36,6 +36,10 @@ export const RULES = {
   undeadMend: 0.05,             // finished undead buildings regain this share of max HP every round
   // stun: a stunned squad's actions and movement pause for this many AP (leftover carries over)
   summonTtl: 3,                 // rounds a summoned squad lasts (it crumbles at the end of the last one)
+  // stances (js/sim/stances.js)
+  advanceEngage: 10,            // advance: fight the nearest enemy squad or building within this gap, else march on
+  goalReach: 1.5,               // advance: within this of its target point the squad stops and guards there
+  retreatReach: 3,              // retreat: within this of its fallback point the squad guards there
   // rounds a squad takes to train (it appears at the end of the last one)
   trainRounds: { builder: 1, fighter: 2, ranged: 2, fast: 2, tank: 3 },
   // production queues (each item is paid when it starts)
@@ -113,7 +117,7 @@ export const FACTIONS = {
       tank:    { name: 'Shieldwall', role: 'tank', models: 3, hpPer: 34, armor: 12, tier: 4, look: 'shield', vision: 9, defends: 2, attack: SWING(30, 4, 1.3), skills: [WALL('Lock Shields')] },
       fighter: { name: 'Men-at-arms', role: 'fighter', parry: true, models: 4, hpPer: 20, armor: 7, tier: 5, look: 'sword', vision: 9, defends: 1, attack: SWING(25, 5, 1.5) },
       ranged:  { name: 'Crossbows', role: 'ranged', models: 4, hpPer: 15, armor: 3, tier: 5, look: 'crossbow', vision: 11, defends: 1, attack: VOLLEY(30, 4, 14), skills: [PIERCE(35, 5, 16)] },
-      fast:    { name: 'Outriders', role: 'fast', models: 3, hpPer: 24, armor: 5, tier: 6, look: 'rider', vision: 11, defends: 1, attack: SWING(20, 7, 1.7), skills: [CHARGE(35, 9, 9)] },
+      fast:    { name: 'Outriders', role: 'fast', models: 3, hpPer: 24, armor: 5, tier: 6, look: 'rider', vision: 11, defends: 1, attack: SWING(45, 13, 1.7), skills: [CHARGE(35, 9, 9)] },
       builder: { name: 'Peasants', role: 'builder', models: 2, hpPer: 14, armor: 2, tier: 5, look: 'peasant', vision: 8, defends: 0, attack: SWING(25, 2, 1.2) },
     },
     // Gold: a steady builder economy (keep, big farms worked by many peasants, mines on resource sites)
@@ -131,7 +135,7 @@ export const FACTIONS = {
       tank:    { name: 'Grave Guard', role: 'tank', models: 3, hpPer: 26, armor: 9, tier: 4, look: 'graveguard', vision: 9, defends: 2, attack: SWING(30, 4, 1.3), skills: [WALL('Grave Wall')] },
       fighter: { name: 'Skeleton Warband', role: 'fighter', parry: true, models: 5, hpPer: 11, armor: 3, tier: 5, look: 'skeleton', vision: 9, defends: 1, attack: SWING(25, 3, 1.5) },
       ranged:  { name: 'Bone Archers', role: 'ranged', models: 4, hpPer: 12, armor: 1, tier: 5, look: 'archer', vision: 11, defends: 1, attack: VOLLEY(30, 3, 14, 0.9), skills: [STORM(35, 5, 15, 2.2)] },
-      fast:    { name: 'Wraiths', role: 'fast', models: 3, hpPer: 18, armor: 3, tier: 6, look: 'wraith', vision: 11, defends: 1, ghost: true, attack: SWING(20, 6, 1.7), skills: [CHARGE(35, 7, 9)] },
+      fast:    { name: 'Wraiths', role: 'fast', models: 3, hpPer: 18, armor: 3, tier: 6, look: 'wraith', vision: 11, defends: 1, ghost: true, attack: SWING(45, 11, 1.7), skills: [CHARGE(35, 7, 9)] },
       // raised by the Necromancer's Summon Warband: not trainable, crumbles after RULES.summonTtl rounds
       summon:  { name: 'Summoned Skeletons', role: 'summon', summoned: true, models: 3, hpPer: 11, armor: 3, tier: 5, look: 'skeleton', vision: 7, defends: 0, attack: SWING(25, 3, 1.5) },
     },

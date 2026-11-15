@@ -159,7 +159,13 @@ export function validateQueue(s, p, o = {}) {
     tq[b.id] = list.filter(r => typeof r === 'string' && trainCost(fac, r) && trainsRole(b, r, fac)).slice(0, RULES.queueMax);
   }
   const cancel = [...new Set((Array.isArray(oq.cancel) ? oq.cancel : []).filter(bid => trainers(s, p).some(b => b.id === bid && b.train)))];
-  return { bq, tq, cancel };
+  // repeat: { bid: role | null } locks a training building onto one role (it trains it whenever its queue is empty)
+  const repeat = {};
+  for (const [bid, role] of Object.entries(oq.repeat || {})) {
+    const b = trainers(s, p).find(x => x.id === bid);
+    if (b && (role === null || (typeof role === 'string' && trainCost(fac, role) && trainsRole(b, role, fac)))) repeat[bid] = role;
+  }
+  return { bq, tq, cancel, repeat };
 }
 
 // put validated queues into the state (assigns ids to new items; cancelling training refunds it)
@@ -167,6 +173,7 @@ export function applyQueue(s, p, v, ev = () => {}) {
   s.bq = s.bq || [[], []];
   s.bq[p] = v.bq.map(it => ({ ...it, qid: it.qid || 'k' + (s.nextQid = (s.nextQid || 0) + 1) }));
   for (const b of trainers(s, p)) b.queue = (v.tq[b.id] || []).slice();
+  for (const [bid, role] of Object.entries(v.repeat || {})) { const b = s.buildings.find(x => x.id === bid); if (role) b.repeat = role; else delete b.repeat; }
   for (const bid of v.cancel) {
     const b = s.buildings.find(x => x.id === bid);
     const refund = trainCost(s.players[p].faction, b.train.role);
@@ -223,7 +230,11 @@ export function startQueues(s, p, opts = {}) {
   for (const b of trainers(s, p).sort((a, c) => +a.id.slice(1) - +c.id.slice(1))) {
     const list = out.trains[b.id] = [];
     let busy = !!b.train && !cancel.has(b.id), started = false;
-    for (const role of (opts.tq && opts.tq[b.id]) || b.queue || []) {
+    // a locked (repeating) building trains its role whenever nothing else is queued
+    const rep = opts.rep && b.id in opts.rep ? opts.rep[b.id] : b.repeat;
+    const list0 = (opts.tq && opts.tq[b.id]) || b.queue || [];
+    const fromRepeat = !list0.length && !!rep;
+    for (const role of fromRepeat ? [rep] : list0) {
       if (busy) { list.push({ wait: 'line' }); continue; }
       const c = trainCost(fac, role);
       let wait = '', need = 0;
@@ -233,7 +244,7 @@ export function startQueues(s, p, opts = {}) {
       busy = true;
       if (wait) { list.push({ wait, need }); continue; }
       supply -= c; if (role === 'builder') nb++; else army++;
-      list.push({ starts: true }); started = true;
+      list.push({ starts: true, repeat: fromRepeat }); started = true;
       if (apply) {
         s.supply[p] -= c;
         const n = RULES.trainRounds[role] || 2;
@@ -241,7 +252,7 @@ export function startQueues(s, p, opts = {}) {
         ev({ type: 'train', id: b.id, role, owner: p });
       }
     }
-    if (apply && started) b.queue = b.queue.slice(1);
+    if (apply && started && !fromRepeat) b.queue = b.queue.slice(1);
   }
   return out;
 }

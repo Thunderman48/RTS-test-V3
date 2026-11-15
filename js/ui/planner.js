@@ -12,7 +12,7 @@ import { norm, segCircle, dist } from '../sim/geom.js';
 export class Planner {
   constructor(g) { this.g = g; this.reset(); }
   // draft.bq / draft.tq[bid] are edited copies of the queues (null = unchanged); draft.cancel stops training
-  reset() { this.draft = { ...emptyOrders(), bq: null, tq: {}, cancel: [] }; this._fc = null; }
+  reset() { this.draft = { ...emptyOrders(), goals: {}, bq: null, tq: {}, cancel: [], repeat: {} }; this._fc = null; }
   get s() { return this.g.state; }
   squad(id) { return this.s.squads.find(q => q.id === id); }
   plan(id) { return this.draft.squads[id] || null; }
@@ -258,6 +258,15 @@ export class Planner {
     this.g.changed();
   }
   stanceOf(q) { return this.draft.stances[q.id] || q.stance; }
+  // Advance target point (planned this round, else the one the squad keeps)
+  goalOf(q) { return q.id in this.draft.goals ? this.draft.goals[q.id] : q.goal || null; }
+  setGoal(id, x, z) {
+    const q = this.squad(id);
+    this.draft.goals[id] = { x: Math.round(x * 100) / 100, z: Math.round(z * 100) / 100 };
+    if (q.stance === 'advance') delete this.draft.stances[id]; else this.draft.stances[id] = 'advance';
+    this.g.changed();
+  }
+  clearGoal(id) { const q = this.squad(id); if (q.goal) this.draft.goals[id] = null; else delete this.draft.goals[id]; this.g.changed(); }
 
   // ---- base: production queues ------------------------------------------------------------
   // Both queues live in the state and carry over between rounds; this round's edits are drafts.
@@ -268,11 +277,11 @@ export class Planner {
   training(b) { return b.train && !this.draft.cancel.includes(b.id) ? b.train : null; }
   // what starts when the round begins, and why the rest waits (cached until the draft changes)
   forecast() {
-    const key = JSON.stringify([this.s.round, this.s.supply, this.bqList(), this.draft.tq, this.draft.cancel]);
+    const key = JSON.stringify([this.s.round, this.s.supply, this.bqList(), this.draft.tq, this.draft.cancel, this.draft.repeat]);
     if (this._fc && this._fc.key === key && this._fc.s === this.s) return this._fc.v;
     const tq = {};
     for (const b of this.s.buildings) if (b.owner === this.g.me && b.queue) tq[b.id] = this.tqList(b);
-    const v = startQueues(this.s, this.g.me, { bq: this.bqList(), tq, cancel: this.draft.cancel });
+    const v = startQueues(this.s, this.g.me, { bq: this.bqList(), tq, cancel: this.draft.cancel, rep: this.draft.repeat });
     this._fc = { key, s: this.s, v };
     return v;
   }
@@ -332,6 +341,13 @@ export class Planner {
   }
   unqueueTrain(b, i) { this.editTq(b, l => l.splice(i, 1)); }
   moveTrain(b, i, j) { this.editTq(b, l => { if (j < 0 || j >= l.length) return; const [x] = l.splice(i, 1); l.splice(j, 0, x); }); }
+  // lock a training building onto one squad: it trains it whenever its queue is empty (null = unlock)
+  repeatOf(b) { return b.id in this.draft.repeat ? this.draft.repeat[b.id] : b.repeat || null; }
+  setRepeat(b, role) {
+    const want = this.repeatOf(b) === role ? null : role;
+    if ((b.repeat || null) === want) delete this.draft.repeat[b.id]; else this.draft.repeat[b.id] = want;
+    this.g.changed();
+  }
   // stop (or un-stop) the squad in training: it is refunded in full
   toggleCancel(b) {
     const c = this.draft.cancel;
@@ -407,7 +423,8 @@ export class Planner {
     if (o.bq) queue.builds = o.bq;
     if (Object.keys(o.tq).length) queue.trains = o.tq;
     if (o.cancel.length) queue.cancel = o.cancel;
-    delete o.bq; delete o.tq; delete o.cancel;
+    if (Object.keys(o.repeat).length) queue.repeat = o.repeat;
+    delete o.bq; delete o.tq; delete o.cancel; delete o.repeat;
     if (Object.keys(queue).length) o.queue = queue;
     return o;
   }
