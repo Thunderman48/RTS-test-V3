@@ -24,6 +24,11 @@ It is a static site with no build step and no server, so it runs on GitHub Pages
 * Scrubbable battle replay with a combat log, help with tabs and an icon legend, and generated
   sound effects.
 
+## Game reference and balancing
+* **[`docs/GAME.md`](docs/GAME.md)**: every rule, formula and number, the AI's behaviour, the maps,
+  the latest balance report and a change log. Its tables are generated from the data files
+  (`npm run doc`); `npm run balance` runs the AI-vs-AI balance report (`tools/balance.mjs`).
+
 ## Versions
 * **V4** (this one) is at the site root.
 * Older versions stay playable: [`v3/`](v3/), [`v2/`](v2/) and [`v1/`](v1/). `v4/` redirects here.
