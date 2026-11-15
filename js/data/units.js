@@ -33,6 +33,9 @@ export const RULES = {
   maxFarms: 4,
   // rounds a squad takes to train (it appears at the end of the last one)
   trainRounds: { builder: 1, fighter: 2, ranged: 2, fast: 2, tank: 3 },
+  // production queues (each item is paid when it starts)
+  queueMax: 5,                  // squads waiting per training building (not counting the one in training)
+  queueMaxBuild: 5,             // buildings waiting in the base build queue
   siteHp: 0.3,                  // a construction site starts with this share of its HP; work fills the rest
   workReach: 1.0,               // a builder works on a site while its edge is this close to the footprint
   soulRange: 8,                 // undead: deaths within this of an undead squad / collector pay souls

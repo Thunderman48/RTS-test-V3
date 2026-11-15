@@ -26,6 +26,7 @@ export function addBuilding(s, owner, type, x, z, rot = 0, built = true) {
   const d = BUILDINGS[type];
   const b = { id: 'b' + (s.nextBid = (s.nextBid || 0) + 1), owner, type, rot, ...footprint(type, x, z, rot),
     hp: built || !d.work ? d.hp : Math.max(1, Math.round(d.hp * RULES.siteHp)), build: built ? 0 : d.work, train: null, vision: built || !d.work ? d.vision : 3 };
+  if (d.trains) b.queue = [];
   s.buildings.push(b);
   return b;
 }
@@ -66,8 +67,9 @@ export function nearestFreeSite(s, x, z, extra = []) {
 }
 export const canBuild = (s, p, type) => FACTIONS[s.players[p].faction].buildings.includes(type);
 
-// can side p place `type` at (x,z,rot)? `extra` = buildings already queued this round. Returns '' or a reason.
-export function placeError(s, p, type, x, z, rot = 0, extra = []) {
+// can side p place `type` at (x,z,rot)? `extra` = buildings already queued. `squads` = false ignores
+// squads standing there (they move; used for the build queue). Returns '' or a reason.
+export function placeError(s, p, type, x, z, rot = 0, extra = [], squads = true) {
   const W = s.board.w, H = s.board.h, d = BUILDINGS[type];
   if (!d || !canBuild(s, p, type)) return 'Your side can\'t build that';
   const f = footprint(type, x, z, rot), half = f.r !== undefined ? f.r : Math.max(f.w, f.d) / 2;
@@ -88,7 +90,7 @@ export function placeError(s, p, type, x, z, rot = 0, extra = []) {
     if (overlaps(f, tf, 0.2)) return 'Blocked by terrain';
   }
   for (const b of live) if (overlaps(f, b, 0.3)) return 'Too close to another building';
-  for (const q of s.squads) if (q.hp > 0 && overlaps(f, { x: q.x, z: q.z, r: squadRadius(FACTIONS[q.faction].units[q.role], q.models) }, 0.1)) return 'A squad is standing there';
+  if (squads) for (const q of s.squads) if (q.hp > 0 && overlaps(f, { x: q.x, z: q.z, r: squadRadius(FACTIONS[q.faction].units[q.role], q.models) }, 0.1)) return 'A squad is standing there';
   const count = t => live.filter(b => b.owner === p && b.type === t).length;
   if (type === 'banner' && count('banner') >= RULES.maxBannerCp) return `At most ${RULES.maxBannerCp} ${d.name[s.players[p].faction].toLowerCase()}s`;
   if (type === 'farm' && count('farm') >= RULES.maxFarms) return `At most ${RULES.maxFarms} farms`;
@@ -118,35 +120,126 @@ export function gatherRate(s, b) {
 // can building b train `role` (ignoring supply)?
 export function trainsRole(b, role) { return (BUILDINGS[b.type].trains || []).includes(role); }
 
-// validate this round's builds and trains for side p (in order, against the supply)
-export function validateBase(s, p, builds0 = [], trains0 = []) {
-  let supply = (s.supply || [0, 0])[p];
-  const builds = [], trains = [], queued = [];
-  const hasBuilder = s.squads.some(q => q.owner === p && q.hp > 0 && isBuilder(q));
-  const fac = s.players[p].faction;
-  for (const b0 of builds0.slice(0, 6)) {
-    const d = BUILDINGS[b0?.type];
-    if (!d || b0.type === 'hq' || !hasBuilder) continue;
-    const x = +b0.x || 0, z = +b0.z || 0, rot = b0.rot ? 1 : 0;
-    if (d.cost > supply) continue;
-    if (placeError(s, p, b0.type, x, z, rot, queued)) continue;
-    supply -= d.cost;
-    const f = { type: b0.type, x, z, rot, ...footprint(b0.type, x, z, rot), owner: p };
-    builds.push({ type: b0.type, x, z, rot }); queued.push(f);
+// ---- production queues ------------------------------------------------------------------
+// Two kinds: one base build queue per side (s.bq[p], items { qid, type, x, z, rot }) that free
+// builders take from, and a queue of roles on every training building (b.queue). Items are paid
+// when they start (at the start of a round); a queue whose front item can't start waits.
+export const trainers = (s, p) => (s.buildings || []).filter(b => b.owner === p && b.hp > 0 && !b.build && (BUILDINGS[b.type].trains || []).length);
+const qfoot = (it, p) => ({ type: it.type, x: it.x, z: it.z, rot: it.rot, owner: p, ...footprint(it.type, it.x, it.z, it.rot) });
+export const buildQueue = (s, p) => (s.bq && s.bq[p]) || [];
+
+// validate side p's queue orders. orders.queue = { builds?: full list, trains?: { bid: roles }, cancel?: [bid] }
+// replaces lists; the legacy orders.builds / orders.trains are appended. Returns the new queues.
+export function validateQueue(s, p, o = {}) {
+  const fac = s.players[p].faction, oq = o.queue || {};
+  const cur = buildQueue(s, p);
+  const hasBuilder = builderCount(s, p) > 0;
+  const src = Array.isArray(oq.builds) ? oq.builds : cur.concat(Array.isArray(o.builds) ? o.builds : []);
+  const bq = [], ids = new Set();
+  for (const it of src) {
+    if (bq.length >= RULES.queueMaxBuild) break;
+    const d = BUILDINGS[it?.type];
+    if (!d || it.type === 'hq' || !hasBuilder) continue;
+    const x = +it.x || 0, z = +it.z || 0, rot = it.rot ? 1 : 0;
+    const qid = it.qid && !ids.has(it.qid) && cur.some(c => c.qid === it.qid) ? it.qid : null;
+    // a new or moved item must fit; an item left where it was is checked when it starts (and dropped
+    // there with an event if its spot became invalid)
+    const same = qid && cur.some(c => c.qid === qid && c.type === it.type && c.x === x && c.z === z && c.rot === rot);
+    if (!same && placeError(s, p, it.type, x, z, rot, bq.map(b => qfoot(b, p)), false)) continue;
+    if (qid) ids.add(qid);
+    bq.push({ qid, type: it.type, x, z, rot });
   }
-  let army = armySize(s, p), builders = builderCount(s, p);
-  const usedB = new Set();
-  for (const t0 of trains0.slice(0, 4)) {
-    const b = (s.buildings || []).find(x => x.id === t0?.bid);
-    const cost = trainCost(fac, t0?.role);
-    if (!b || b.owner !== p || b.hp <= 0 || b.build || b.train || usedB.has(b.id) || !cost || !trainsRole(b, t0.role)) continue;
-    if (cost > supply || army >= s.board.cap) continue;
-    if (t0.role === 'builder' && builders >= RULES.maxBuilders) continue;
-    supply -= cost; army++; usedB.add(b.id);
-    if (t0.role === 'builder') builders++;
-    trains.push({ bid: b.id, role: t0.role });
+  const tq = {}, legacy = Array.isArray(o.trains) ? o.trains : [];
+  for (const b of trainers(s, p)) {
+    const rep = oq.trains && oq.trains[b.id];
+    const list = Array.isArray(rep) ? rep : (b.queue || []).concat(legacy.filter(t => t && t.bid === b.id).map(t => t.role));
+    tq[b.id] = list.filter(r => typeof r === 'string' && trainCost(fac, r) && trainsRole(b, r)).slice(0, RULES.queueMax);
   }
-  return { builds, trains };
+  const cancel = [...new Set((Array.isArray(oq.cancel) ? oq.cancel : []).filter(bid => trainers(s, p).some(b => b.id === bid && b.train)))];
+  return { bq, tq, cancel };
+}
+
+// put validated queues into the state (assigns ids to new items; cancelling training refunds it)
+export function applyQueue(s, p, v, ev = () => {}) {
+  s.bq = s.bq || [[], []];
+  s.bq[p] = v.bq.map(it => ({ ...it, qid: it.qid || 'k' + (s.nextQid = (s.nextQid || 0) + 1) }));
+  for (const b of trainers(s, p)) b.queue = (v.tq[b.id] || []).slice();
+  for (const bid of v.cancel) {
+    const b = s.buildings.find(x => x.id === bid);
+    const refund = trainCost(s.players[p].faction, b.train.role);
+    s.supply[p] += refund;
+    ev({ type: 'trainCancel', id: b.id, role: b.train.role, owner: p, refund });
+    b.train = null;
+  }
+}
+
+// start what can start, in order: the build queue first, then each training building (by id).
+// With opts.apply the state changes (pay, place sites, start training) and events go to opts.ev;
+// without it this is a forecast for the UI. opts.bq / opts.tq / opts.cancel override the queues.
+// Returns { builds: [{ qid, starts | wait, need | drop }], trains: { bid: [{ starts | wait, need }] } }.
+//   waits: 'gold' / 'souls' (need = shortfall), 'builders' (every builder already has a site),
+//   'blocked' (a squad stands on the spot), 'cap' (army cap), 'line' (behind an item that waits)
+//   drop: the spot became invalid (terrain, building, site taken, limit): the item leaves the queue
+export function startQueues(s, p, opts = {}) {
+  const apply = !!opts.apply, ev = opts.ev || (() => {});
+  const fac = s.players[p].faction, res = FACTIONS[fac].eco.res;
+  const cancel = new Set(opts.cancel || []);
+  let supply = s.supply[p];
+  for (const b of s.buildings) if (cancel.has(b.id) && b.owner === p && b.train) supply += trainCost(fac, b.train.role);
+  const out = { builds: [], trains: {} };
+  const crews = s.squads.filter(q => q.owner === p && q.hp > 0 && isBuilder(q)).length;
+  let sites = s.buildings.filter(b => b.owner === p && b.hp > 0 && b.build > 0).length;
+  const extra = [], keep = [];
+  let line = false;
+  for (const it of opts.bq || buildQueue(s, p)) {
+    const d = BUILDINGS[it.type];
+    const hard = placeError(s, p, it.type, it.x, it.z, it.rot, extra, false);
+    if (hard) {
+      out.builds.push({ qid: it.qid, drop: hard });
+      if (apply) ev({ type: 'queueDrop', owner: p, qid: it.qid, btype: it.type, x: it.x, z: it.z, why: hard });
+      continue;
+    }
+    let wait = '', need = 0;
+    if (line) wait = 'line';
+    else if (sites >= crews) wait = 'builders';
+    else if (supply < d.cost) { wait = res; need = d.cost - supply; }
+    else if (placeError(s, p, it.type, it.x, it.z, it.rot, extra, true)) wait = 'blocked';
+    if (wait) { out.builds.push({ qid: it.qid, wait, need }); keep.push(it); line = true; continue; }
+    supply -= d.cost; sites++;
+    out.builds.push({ qid: it.qid, starts: true });
+    if (apply) {
+      s.supply[p] -= d.cost;
+      const b = addBuilding(s, p, it.type, it.x, it.z, it.rot, !d.work);
+      ev({ type: 'construct', id: b.id, btype: b.type, owner: p, x: b.x, z: b.z, rot: b.rot, hp: b.hp, build: b.build, done: !b.build, qid: it.qid });
+    } else extra.push(qfoot(it, p));
+  }
+  if (apply) s.bq[p] = keep;
+  let army = armySize(s, p), nb = builderCount(s, p);
+  for (const b of cancel.size ? s.buildings : []) if (cancel.has(b.id) && b.owner === p && b.train) { army--; if (b.train.role === 'builder') nb--; }
+  for (const b of trainers(s, p).sort((a, c) => +a.id.slice(1) - +c.id.slice(1))) {
+    const list = out.trains[b.id] = [];
+    let busy = !!b.train && !cancel.has(b.id), started = false;
+    for (const role of (opts.tq && opts.tq[b.id]) || b.queue || []) {
+      if (busy) { list.push({ wait: 'line' }); continue; }
+      const c = trainCost(fac, role);
+      let wait = '', need = 0;
+      if (army >= s.board.cap) wait = 'cap';
+      else if (role === 'builder' && nb >= RULES.maxBuilders) wait = 'builders';
+      else if (supply < c) { wait = res; need = c - supply; }
+      busy = true;
+      if (wait) { list.push({ wait, need }); continue; }
+      supply -= c; army++; if (role === 'builder') nb++;
+      list.push({ starts: true }); started = true;
+      if (apply) {
+        s.supply[p] -= c;
+        const n = RULES.trainRounds[role] || 2;
+        b.train = { role, left: n, total: n };
+        ev({ type: 'train', id: b.id, role, owner: p });
+      }
+    }
+    if (apply && started) b.queue = b.queue.slice(1);
+  }
+  return out;
 }
 
 // a free spot next to a building for a newly trained squad (toward the enemy first)

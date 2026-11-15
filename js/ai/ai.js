@@ -4,7 +4,7 @@ import { RULES, isMelee, isShooter, skillOf, cdOf } from '../data/units.js';
 import { losCut, engagedWith } from '../sim/resolve.js';
 import { emptyOrders, emptyPlan, defOf, radiusOf, apFor } from '../sim/state.js';
 import { nearestEnemy, meleePlan, trimPath } from '../sim/stances.js';
-import { obstacles, navKey, placeError, bonusCp, armySize, armyValue, BUILDINGS, trainCost, footprint, nearestFreeSite, builderCount, trainsRole, edgeDist, bdef } from '../sim/base.js';
+import { obstacles, navKey, placeError, bonusCp, armySize, armyValue, BUILDINGS, trainCost, footprint, nearestFreeSite, builderCount, trainsRole, edgeDist, bdef, buildQueue } from '../sim/base.js';
 import { builderPlan } from '../sim/builders.js';
 import { Nav, pointBlocked } from '../sim/nav.js';
 import { dist } from '../sim/geom.js';
@@ -245,7 +245,8 @@ function economy(s, p, known, orders) {
   const hq = mine.find(b => b.type === 'hq');
   if (!hq) return out;
   const fwd = p === 0 ? 1 : -1;
-  const queued = [];
+  // items already waiting in the base queue count as placed (they start when a builder is free)
+  const queued = buildQueue(s, p).map(it => ({ ...it, owner: p, ...footprint(it.type, it.x, it.z, it.rot) }));
   const builders = s.squads.filter(q => q.owner === p && q.hp > 0 && q.role === 'builder');
   const count = t => mine.filter(b => b.type === t).length + queued.filter(b => b.type === t).length;
   const busy = new Set();
@@ -310,11 +311,11 @@ function economy(s, p, known, orders) {
   // idle builders stay home (hold), next to the HQ
   // training: a second builder early, then soldiers from the barracks
   let army = armySize(s, p), nb = builderCount(s, p);
-  if (nb < 2 && s.round >= 2 && !hq.train && supply >= trainCost(fac, 'builder') + 10 && army < s.board.cap) {
+  if (nb < 2 && s.round >= 2 && !hq.train && !(hq.queue || []).length && supply >= trainCost(fac, 'builder') + 10 && army < s.board.cap) {
     out.trains.push({ bid: hq.id, role: 'builder' }); supply -= trainCost(fac, 'builder'); army++;
   }
   const shooters = known.filter(e => isShooter(defOf(e))).length;
-  for (const b of mine.filter(b => b.type === 'barracks' && !b.build && !b.train)) {
+  for (const b of mine.filter(b => b.type === 'barracks' && !b.build && !b.train && !(b.queue || []).length)) {
     if (army >= s.board.cap) break;
     const myRoles = s.squads.filter(q => q.owner === p).map(q => q.role);
     const n = r => myRoles.filter(x => x === r).length;

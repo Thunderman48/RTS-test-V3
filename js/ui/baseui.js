@@ -2,7 +2,7 @@
 // training docks, building nameplates and the economy readout. Mixed into Game.
 import * as THREE from 'three';
 import { RULES, FACTIONS, BUILDINGS, trainCost } from '../data/units.js';
-import { footprint, hitRadius, armySize, nearestFreeSite, siteTaken, bdef, incomeOf, gatherRate } from '../sim/base.js';
+import { footprint, hitRadius, armySize, nearestFreeSite, siteTaken, bdef, incomeOf, gatherRate, startQueues, placeError } from '../sim/base.js';
 import { buildingsSeenBy } from '../sim/vision.js';
 import { defOf } from '../sim/state.js';
 import { BuildingView, ShrineView } from '../render/buildings.js';
@@ -85,7 +85,9 @@ export const BaseUI = {
     // remembered buildings destroyed out of sight still show where they were last seen
     for (const [id, k] of this.knownB || []) if (!this.state.buildings.some(b => b.id === id)) out.push({ ...k, stale: true });
     if (this.phase === 'planning') {
-      this.planner.draft.builds.forEach((d, i) => out.push({ id: 'draft' + i, vkey: 'draft' + i + d.type, draft: i, by: d.by, type: d.type, owner: this.me, rot: d.rot, ...footprint(d.type, d.x, d.z, d.rot), hp: BUILDINGS[d.type].hp, build: 0, ghost: true }));
+      // queued buildings that haven't started yet: numbered ghosts
+      const fc = this.planner.forecast();
+      this.planner.bqList().forEach((d, i) => { if (this.buildMode?.replace === i) return; out.push({ id: 'qb' + i, vkey: 'qb' + i + d.type, queued: i, fc: fc.builds[i], type: d.type, owner: this.me, rot: d.rot, ...footprint(d.type, d.x, d.z, d.rot), hp: BUILDINGS[d.type].hp, build: 0, ghost: true, selected: this.selB === 'qb' + i }); });
       const pm = this.buildMode;
       if (pm) out.push({ id: 'place', vkey: 'place', type: pm.type, owner: this.me, rot: pm.rot, ...footprint(pm.type, pm.x, pm.z, pm.rot), hp: 1, build: 0, ghost: true, place: true });
     }
@@ -168,36 +170,53 @@ export const BaseUI = {
     for (let r = 2.5; r < 10; r += 0.75) for (let k = 0; k < 16; k++) {
       const a = home + (k % 2 ? 1 : -1) * Math.ceil(k / 2) * Math.PI / 8;
       const x = c.x + Math.cos(a) * r, z = c.z + Math.sin(a) * r;
-      if (!this.planner.buildError(type, x, z, rot, this.buildBy)) return { x, z };
+      if (!this.planner.buildError(type, x, z, rot) && !placeError(this.state, this.me, type, x, z, rot, this.planner.queued())) return { x, z };   // and clear of squads
     }
     return { x: c.x + (this.me === 0 ? -3 : 3), z: c.z };
   },
   startPlace(type) {
     const rot = type === 'wall' ? 1 : 0;
+    const err = this.planner.bqList().length >= RULES.queueMaxBuild ? `The build queue is full (${RULES.queueMaxBuild})` : '';
+    if (err) { this.toast(err, true); return; }
     const p = this.defaultSpot(type, rot);
     this.buildMode = { type, rot, x: p.x, z: p.z };
     this.movePlace(p.x, p.z);
+  },
+  // move a queued (not started) building: the same ghost + Confirm, replacing its spot
+  startReplace(i) {
+    const it = this.planner.bqList()[i]; if (!it) return;
+    this.selB = null;
+    this.buildMode = { type: it.type, rot: it.rot, x: it.x, z: it.z, replace: i };
+    this.movePlace(it.x, it.z);
   },
   movePlace(x, z) {
     const pm = this.buildMode; if (!pm) return;
     if (BUILDINGS[pm.type].site) {
       // resource-site buildings snap onto the nearest free site
-      const own = this.planner.draft.builds.findIndex(b => b.by === this.buildBy);
-      const sh = nearestFreeSite(this.state, x, z, this.planner.queued(own));
+      const sh = nearestFreeSite(this.state, x, z, this.planner.queued(pm.replace ?? -1));
       if (sh && Math.hypot(sh.x - x, sh.z - z) < 5) { x = sh.x; z = sh.z; }
       pm.x = x; pm.z = z;
     } else { pm.x = Math.round(x * 4) / 4; pm.z = Math.round(z * 4) / 4; }
-    pm.err = this.planner.buildError(pm.type, pm.x, pm.z, pm.rot, this.buildBy);
-    const q = this.builderSq();
-    pm.prev = q && !pm.err ? this.planner.builderPreview(q, { type: pm.type, ...footprint(pm.type, pm.x, pm.z, pm.rot) }) : null;
-    if (pm.prev && !pm.prev.actions.length) pm.err = 'The builder can\'t reach that spot';
+    pm.err = this.planner.buildError(pm.type, pm.x, pm.z, pm.rot, pm.replace ?? -1);
+    // where it would sit in the queue, and whether it starts this round
+    const P = this.planner, l = P.bqList().map(x => ({ ...x }));
+    const it = { qid: null, type: pm.type, x: pm.x, z: pm.z, rot: pm.rot };
+    if (pm.replace !== undefined) l[pm.replace] = it; else l.push(it);
+    pm.pos = pm.replace ?? l.length - 1;
+    pm.fc = pm.err ? null : startQueues(this.state, this.me, { bq: l, tq: Object.fromEntries(this.state.buildings.filter(b => b.owner === this.me && b.queue).map(b => [b.id, P.tqList(b)])), cancel: P.draft.cancel }).builds[pm.pos];
+    // the builder that would take it: the selected one, else the nearest
+    const f = { type: pm.type, ...footprint(pm.type, pm.x, pm.z, pm.rot) };
+    const q = this.builderSq() || this.myBuilders().sort((a, b) => Math.hypot(a.x - pm.x, a.z - pm.z) - Math.hypot(b.x - pm.x, b.z - pm.z))[0];
+    pm.by = q?.id;
+    pm.prev = q && !pm.err ? P.builderPreview(q, f) : null;
+    if (pm.prev && !pm.prev.actions.length) pm.err = 'No builder can reach that spot';
     this.changed();
     this.drawPlaceLine();
   },
   // the builder's walk to the site, drawn while placing
   drawPlaceLine() {
     this.view.clear('ghost');
-    const pm = this.buildMode, q = this.builderSq();
+    const pm = this.buildMode, q = pm && this.state.squads.find(x => x.id === pm.by);
     if (!pm || !pm.prev || !q || !pm.prev.pts) return;
     const line = [{ x: q.x, z: q.z }, ...pm.prev.pts];
     this.view.layers.ghost.add(ribbon(line, 0.1, 0xffc400, 0.8));
@@ -207,10 +226,10 @@ export const BaseUI = {
   confirmPlace() {
     const pm = this.buildMode; if (!pm) return false;
     if (pm.err) { this.toast(pm.err, true); return false; }
-    if (!this.planner.addBuild(this.buildBy, pm.type, pm.x, pm.z, pm.rot)) return false;
-    const pv = pm.prev;
+    if (pm.replace !== undefined) { if (!this.planner.replaceBuild(pm.replace, pm.x, pm.z, pm.rot)) return false; }
+    else if (this.planner.queueBuild(pm.type, pm.x, pm.z, pm.rot) < 0) return false;
     sfx('confirm');
-    this.texts.add(pm.x, pm.z, `${BUILDINGS[pm.type].name[this.faction(this.me)]}: ${pv && pv.rounds <= 1 ? 'done this round' : pv ? pv.rounds + ' rounds' : 'queued'}`, 'ok', 2.6, 1.6);
+    this.texts.add(pm.x, pm.z, `#${pm.pos + 1} ${BUILDINGS[pm.type].name[this.faction(this.me)]}: ${pm.fc?.starts ? 'starts this round' : 'queued'}`, 'ok', 2.6, 1.6);
     this.buildMode = null;
     this.view.clear('ghost');
     this.changed();
@@ -255,7 +274,7 @@ export const BaseUI = {
   supplyHTML() {
     const eco = this.eco();
     const left = this.phase === 'planning' ? this.planner.supplyLeft() : this.state.supply[this.me];
-    const army = armySize(this.state, this.me) + (this.phase === 'planning' ? this.planner.draft.trains.length : 0);
+    const army = this.phase === 'planning' ? this.planner.armyNext() : armySize(this.state, this.me);
     const tip = eco.res === 'gold' ? 'Gold: your keep, farms and mines earn it every round' : `Souls: your crypt and soul wells earn a few each round; models dying within ${RULES.soulRange}″ of your squads, crypt, obelisks and soul wells give more`;
     return `<span class="ec ${eco.res}" title="${tip}">${icon(eco.icon, 16)}<b>${left}</b><small>+${this.income()}${eco.res === 'souls' ? ' +☠' : ''}</small></span>`
       + `<span class="ec" title="Army size / cap">${icon('army', 16)}<b>${army}</b><small>/${this.state.board.cap}</small></span>`;
@@ -282,12 +301,11 @@ export const BaseUI = {
     if (pm) {
       const d = BUILDINGS[pm.type], pv = pm.prev;
       const stt = pm.err ? esc(pm.err)
-        : pv ? `${pv.arrive ? `Walks ${pv.arrive} AP, then ` : 'Right here: '}${Math.min(pv.work, pv.need)}/${pv.need} work this round → <b>${pv.rounds <= 1 ? 'finished this round' : pv.rounds + ' rounds'}</b>` : '';
-      dock.innerHTML = head + `<div class="bd-place"><div class="bb-t">${icon(d.icon, 22)}<div><b>${esc(d.name[fac])}</b> · ${d.cost} ${esc(eco.name.toLowerCase())}<div class="bb-st ${pm.err ? 'bad' : 'ok'}">${stt}</div><div class="bb-tip">Drag the ghost or tap the table to move it.</div></div></div>
-        <div class="bd-pbtns">${d.shape === 'circle' ? '' : '<button class="chip" data-bd="rot">⟳ Rotate</button>'}<button class="chip" data-bd="cancel">✕ Cancel</button><button class="ready sm ok" data-bd="confirm" ${pm.err ? 'disabled' : ''}>✓ Confirm</button></div></div>`;
+        : `<b>#${pm.pos + 1} in the build queue</b> · ${esc(this.waitText(pm.fc))}${pm.fc?.starts && pv ? ` · ${pv.arrive ? `the nearest builder walks ${pv.arrive} AP, then ` : ''}${Math.min(pv.work, pv.need)}/${pv.need} work this round → <b>${pv.rounds <= 1 ? 'finished this round' : pv.rounds + ' rounds'}</b>` : ''}`;
+      dock.innerHTML = head + `<div class="bd-place"><div class="bb-t">${icon(d.icon, 22)}<div><b>${esc(d.name[fac])}</b> · ${d.cost} ${esc(eco.name.toLowerCase())} when it starts<div class="bb-st ${pm.err ? 'bad' : 'ok'}">${stt}</div><div class="bb-tip">Drag the ghost or tap the table to move it.</div></div></div>
+        <div class="bd-pbtns">${d.shape === 'circle' ? '' : '<button class="chip" data-bd="rot">⟳ Rotate</button>'}<button class="chip" data-bd="cancel">✕ Cancel</button><button class="ready sm ok" data-bd="confirm" ${pm.err ? 'disabled' : ''}>✓ ${pm.replace !== undefined ? 'Move here' : 'Add to queue'}</button></div></div>`;
     } else {
-      const own = this.planner.draft.builds.find(b => b.by === q.id);
-      const left = this.planner.supplyLeft() + (own ? BUILDINGS[own.type].cost : 0);
+      const left = this.planner.supplyLeft(), full = this.planner.bqList().length >= RULES.queueMaxBuild;
       const live = this.state.buildings.filter(b => b.owner === this.me).concat(this.planner.queued());
       const needs = this.state.buildings.filter(b => this.needsWork(b));
       const gb = this.state.buildings.filter(b => b.owner === this.me && gatherRate(this.state, b));
@@ -300,19 +318,21 @@ export const BaseUI = {
           ${btn('undo', 'undo', 'Undo', '', false, !plan)}
           ${btn('clear', 'release', 'Clear', 'automatic', false, !plan)}
         </div>
-        <div class="bd-sec${this.flashCards ? ' flash' : ''}">Build · ${icon(eco.icon, 12)} ${left} ${esc(eco.name.toLowerCase())}</div>
+        <div class="bd-sec">Build queue · ${this.planner.bqList().length}/${RULES.queueMaxBuild} · shared by all your builders</div>
+        <div class="pq-row in-dock">${this.queueRowHTML('b') || '<span class="pq-empty">Empty: pick a building below</span>'}</div>
+        <div class="bd-sec${this.flashCards ? ' flash' : ''}">Add a building · ${icon(eco.icon, 12)} ${left} ${esc(eco.name.toLowerCase())} after this round's starts</div>
         <div class="bb-cards bd-cards">${FACTIONS[fac].buildings.map(t => {
           const d = BUILDINGS[t];
           const n = live.filter(b => b.type === t).length;
           const max = t === 'banner' ? RULES.maxBannerCp : t === 'farm' ? RULES.maxFarms : 0;
-          const full = max && n >= max, nosite = d.site && !nearestFreeSite(this.state, 24, 16, this.planner.queued());
-          const dis = d.cost > left || full || nosite;
-          return `<button class="bcard" data-bt="${t}" ${dis ? 'disabled' : ''} title="${esc(FX(t, fac))}">${icon(d.icon, 20)}<b>${esc(d.name[fac])}</b><small>${d.cost} · ${d.work} work</small><small class="fx">${full ? 'Max reached' : nosite ? 'No free site' : SHORT[t]}</small></button>`;
+          const nosite = d.site && !nearestFreeSite(this.state, 24, 16, this.planner.queued());
+          const max2 = max && n >= max, dis = full || max2 || nosite;
+          return `<button class="bcard" data-bt="${t}" ${dis ? 'disabled' : ''} title="${esc(FX(t, fac))}">${icon(d.icon, 20)}<b>${esc(d.name[fac])}</b><small>${d.cost} · ${d.work} work</small><small class="fx">${full ? 'Queue full' : max2 ? 'Max reached' : nosite ? 'No free site' : SHORT[t]}</small></button>`;
         }).join('')}</div>
-        ${own ? `<div class="bb-q">Ordered to build a ${esc(BUILDINGS[own.type].name[fac])}. Picking another replaces it.</div>` : ''}
-        <div class="hint">With no orders a builder keeps at its job: it finishes its building, then gathers ${esc(eco.name.toLowerCase())} at the nearest ${esc(this.gatherNames())}. Tap one of your buildings to send it there.</div>`;
+        <div class="hint">Buildings are paid when they start. A builder with no orders keeps at its job, takes the next started building from the queue, then gathers ${esc(eco.name.toLowerCase())} at the nearest ${esc(this.gatherNames())}. Tap one of your buildings to send it there.</div>`;
     }
     this.flashCards = false;
+    this.wireQueueRows(dock);
     dock.querySelectorAll('[data-bt]').forEach(el => el.onclick = () => { this.startPlace(el.dataset.bt); });
     dock.querySelectorAll('[data-bd]').forEach(el => el.onclick = () => {
       const a = el.dataset.bd;
@@ -335,11 +355,19 @@ export const BaseUI = {
     const dock = $('dock'), info = $('info');
     const fac = this.faction(b.owner), d = BUILDINGS[b.type], eco = this.eco();
     const hpTxt = `${Math.round(b.hp)}/${d.hp} HP · armour ${d.armor}`;
-    if (b.draft !== undefined) {
+    if (b.queued !== undefined) {
+      const i = b.queued, n = this.planner.bqList().length;
       dock.classList.add('hidden'); info.classList.remove('hidden');
-      info.innerHTML = `<b>${esc(d.name[fac])}</b> · planned · ${d.cost} ${esc(eco.name.toLowerCase())}<br><span style="color:var(--muted)">${FX(b.type, fac)} The site goes down when the round starts; the builder then works on it.</span>
-        <div style="margin-top:8px"><button class="chip" data-x="cancel">Cancel this build</button></div>`;
-      info.querySelector('[data-x]').onclick = () => { this.planner.removeBuild(b.draft); this.selB = null; this.changed(); };
+      info.innerHTML = `<b>#${i + 1} ${esc(d.name[fac])}</b> · queued · ${d.cost} ${esc(eco.name.toLowerCase())} when it starts<br><b class="${b.fc?.starts ? 'okc' : 'warnc'}">${esc(this.waitText(b.fc))}</b><br><span style="color:var(--muted)">${FX(b.type, fac)} The site goes down (and is paid) when it starts; a free builder then puts it up.</span>
+        <div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap"><button class="chip" data-x="up" ${i ? '' : 'disabled'}>◂ Sooner</button><button class="chip" data-x="down" ${i < n - 1 ? '' : 'disabled'}>Later ▸</button><button class="chip" data-x="move">Move</button><button class="chip" data-x="cancel">✕ Remove</button></div>`;
+      info.querySelectorAll('[data-x]').forEach(el => el.onclick = () => {
+        const a = el.dataset.x;
+        if (a === 'cancel') { this.planner.unqueueBuild(i); this.selB = null; }
+        else if (a === 'up') { this.planner.moveBuild(i, i - 1); this.selB = 'qb' + (i - 1); }
+        else if (a === 'down') { this.planner.moveBuild(i, i + 1); this.selB = 'qb' + (i + 1); }
+        else if (a === 'move') this.startReplace(i);
+        this.changed();
+      });
       return;
     }
     const roles = b.owner === this.me && !b.stale ? d.trains || [] : [];
@@ -352,19 +380,26 @@ export const BaseUI = {
       return;
     }
     info.classList.add('hidden'); dock.classList.remove('hidden');
-    const cur = this.planner.trainOf(b.id);
-    const units = FACTIONS[fac].units;
-    const status = b.build ? `Under construction (${Math.round(d.work - b.build)}/${d.work} work): it can train once it is finished.` : b.train ? `Training ${esc(units[b.train.role].name)}: ${b.train.left > 1 ? `ready in ${b.train.left} rounds` : 'it arrives at the end of this round'}.` : cur ? `${esc(units[cur.role].name)} starts training this round: ${RULES.trainRounds[cur.role] > 1 ? `ready in ${RULES.trainRounds[cur.role]} rounds` : 'it arrives at the end of the round'}.` : `Pick a squad to train. It appears next to the ${esc(d.name[fac].toLowerCase())} when it's ready.`;
-    dock.innerHTML = `<div class="dk-head"><div><div class="nm">${esc(d.name[fac])}</div><div class="sub">${hpTxt} · ${icon(eco.icon, 12)} ${this.planner.supplyLeft()} left · army ${armySize(this.state, this.me) + this.planner.draft.trains.length}/${this.state.board.cap}</div></div><button class="ib x" data-tr="close">✕</button></div>
+    const units = FACTIONS[fac].units, P = this.planner;
+    const tr = P.training(b), list = P.tqList(b), fc = P.forecast().trains[b.id] || [];
+    const full = list.length >= RULES.queueMax;
+    const status = b.build ? `Under construction (${Math.round(d.work - b.build)}/${d.work} work): it can train once it is finished.`
+      : tr ? `Training ${esc(units[tr.role].name)}: ${tr.left > 1 ? `ready in ${tr.left} rounds` : 'it arrives at the end of this round'}.${list.length ? ` Next: ${esc(units[list[0]].name)} starts the round after.` : ''}`
+      : list.length ? `${esc(units[list[0]].name)}: ${esc(this.waitText(fc[0]))}.`
+      : `Tap a squad to queue it (up to ${RULES.queueMax}). Each is paid when its training starts.`;
+    dock.innerHTML = `<div class="dk-head"><div><div class="nm">${esc(d.name[fac])}</div><div class="sub">${hpTxt} · ${icon(eco.icon, 12)} ${P.supplyLeft()} after this round's starts · army ${P.armyNext()}/${this.state.board.cap}</div></div><button class="ib x" data-tr="close">✕</button></div>
+      ${b.build ? '' : `<div class="bd-sec">Queue · ${list.length}/${RULES.queueMax} · tap to remove, drag to reorder</div><div class="pq-row in-dock">${this.queueRowHTML('t', b) || '<span class="pq-empty">Empty</span>'}</div>`}
       <div class="dk-btns">${roles.map(role => {
-        const u = units[role], on = cur?.role === role;
-        const err = on ? '' : this.planner.trainError(b, role);
-        return `<button class="act cat-none${on ? ' on' : ''}" data-tr="${role}" ${err ? 'disabled' : ''} title="${esc(err || `${u.models} models`)}">${icon(role, 20)}${esc(u.name)}<small>${on ? 'queued ✕' : `${trainCost(fac, role)} ${esc(eco.name.toLowerCase())} · ${RULES.trainRounds[role]} rd`}</small></button>`;
+        const u = units[role];
+        const err = P.trainError(b, role);
+        const nq = list.filter(r => r === role).length;
+        return `<button class="act cat-none" data-tr="${role}" ${err ? 'disabled' : ''} title="${esc(err || `${u.models} models · tap to add to the queue`)}">${icon(role, 20)}${esc(u.name)}<small>${trainCost(fac, role)} ${esc(eco.name.toLowerCase())} · ${RULES.trainRounds[role]} rd${nq ? ` · ×${nq}` : ''}</small></button>`;
       }).join('')}</div>
-      <div class="hint">${status}</div>${work}`;
+      <div class="hint">${status}${full ? ' The queue is full.' : ''}</div>${work}`;
+    this.wireQueueRows(dock);
     dock.querySelectorAll('[data-tr]').forEach(el => el.onclick = () => {
       if (el.dataset.tr === 'close') { this.selB = null; this.changed(); return; }
-      if (this.planner.addTrain(b, el.dataset.tr) && this.planner.trainOf(b.id)) this.texts.add(b.x, b.z, `Training ${units[el.dataset.tr].name}`, 'ok', 2.8, 1.3);
+      if (P.queueTrain(b, el.dataset.tr)) { sfx('confirm'); this.texts.add(b.x, b.z, `Queued ${units[el.dataset.tr].name}`, 'ok', 2.8, 1.3); }
     });
     dock.querySelector('[data-x]')?.addEventListener('click', () => this.sendBuilder(b));
   },
@@ -392,9 +427,11 @@ export const BaseUI = {
       let el = this.labels.get(lid);
       if (!el) { el = document.createElement('div'); el.className = 'sl bl'; layer.appendChild(el); this.labels.set(lid, el); }
       const d = BUILDINGS[b.type], fac = this.faction(b.owner);
-      const train = this.phase === 'planning' && b.owner === this.me ? this.planner.trainOf(b.id) : null;
+      const mine = this.phase === 'planning' && b.owner === this.me && !b.ghost;
+      const tr = mine ? this.planner.training(b) : b.owner === this.me ? b.train : null;
+      const nq = mine && b.queue ? this.planner.tqList(b).length : 0;
       const sel = b.id === this.selB;
-      const status = b.ghost ? 'planned' : b.stale ? 'last seen' : b.build ? `${Math.round(d.work - b.build)}/${d.work} work` : b.train ? `training ${FACTIONS[fac].units[b.train.role].name}${b.train.left > 1 ? ` · ${b.train.left} rd` : ''}` : train ? `queued: ${FACTIONS[fac].units[train.role].name}` : '';
+      const status = b.queued !== undefined ? `#${b.queued + 1} queued · ${b.fc?.starts ? 'starts now' : (this.waitText(b.fc).replace(/^Waits:? ?/, 'waits ') || 'waits')}` : b.ghost ? 'planned' : b.stale ? 'last seen' : b.build ? `${Math.round(d.work - b.build)}/${d.work} work` : tr ? `training ${FACTIONS[fac].units[tr.role].name}${tr.left > 1 ? ` · ${tr.left} rd` : ''}${nq ? ` · +${nq} queued` : ''}` : nq ? `${nq} queued` : '';
       const key = `${Math.round(b.hp)}|${status}|${sel}|${zoomedOut}|${b.dying !== undefined}`;
       if (el.dataset.key !== key) {
         el.dataset.key = key;

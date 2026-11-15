@@ -17,6 +17,7 @@ import { Input } from './ui/input.js';
 import { Planner } from './ui/planner.js';
 import { icon } from './ui/iconset.js';
 import { BaseUI } from './ui/baseui.js';
+import { ProductionUI } from './ui/production.js';
 import { OnlineUI } from './ui/online.js';
 import { SettingsUI } from './ui/settings.js';
 import { sfx, unlockAudio, soundOn, setSound, setVolume } from './audio/sfx.js';
@@ -1008,6 +1009,8 @@ class Game {
       if (e.type === 'construct' && (e.owner === this.me || this.knownB.has(e.id))) lines.push({ T: e.T, html: `${name(e.id)} ${e.done ? 'goes up' : 'construction begins'}` });
       else if (e.type === 'built' && (e.owner === this.me || this.knownB.has(e.id))) lines.push({ T: e.T, html: `${name(e.id)} is finished` });
       else if (e.type === 'train' && e.owner === this.me) lines.push({ T: e.T, html: `${name(e.id)} starts training ${esc(FACTIONS[this.faction(e.owner)].units[e.role].name)}` });
+      else if (e.type === 'trainCancel' && e.owner === this.me) lines.push({ T: e.T, html: `${name(e.id)} stops training ${esc(FACTIONS[this.faction(e.owner)].units[e.role].name)} (+${e.refund} refunded)` });
+      else if (e.type === 'queueDrop' && e.owner === this.me) lines.push({ T: e.T, html: `Build queue: ${esc(BUILDINGS[e.btype].name[this.faction(e.owner)])} dropped (${esc(e.why)})` });
       else if (e.type === 'spawn' && e.owner === this.me) lines.push({ T: e.T, html: `<b class="t${e.owner}">New ${esc(FACTIONS[this.faction(e.owner)].units[e.role].name)}</b> join your army` });
       else if (e.type === 'bdown') lines.push({ T: e.T, html: `${name(e.id)} is destroyed` });
       else if (e.type === 'shrine') lines.push({ T: e.T, html: e.owner === this.me ? 'You claim a resource site' : e.owner < 0 ? 'A resource site is freed' : 'The enemy claims a resource site' });
@@ -1165,7 +1168,7 @@ class Game {
       if (this.state.buildings) { this.syncBuildings(this.planningBuildings()); this.syncShrines(this.state.shrines || []); }
       this.updatePlaceMark();
       if (this.phase === 'planning' || this.phase === 'waiting') {
-        if (this.dirty) { this.dirty = false; this.drawPlan(); this.renderSquadBar(); this.renderDock(); this.renderBuildBar(); this.updateTop(); }
+        if (this.dirty) { this.dirty = false; this.drawPlan(); this.renderSquadBar(); this.renderProd(); this.renderDock(); this.renderBuildBar(); this.updateTop(); }
         this.updateLabels(list);
       }
       if (this.phase === 'planning' || this.knobPos) {
@@ -1180,7 +1183,7 @@ class Game {
   }
 }
 
-Object.assign(Game.prototype, BaseUI, OnlineUI, SettingsUI);
+Object.assign(Game.prototype, BaseUI, ProductionUI, OnlineUI, SettingsUI);
 
 const CAT_HEX = { move: '#34c759', attack: '#ff3b30', defense: '#3fa9ff' };
 const ACT_COL = { work: '#ffb020', swing: 'var(--swing)', volley: 'var(--volley)', lob: 'var(--volley)', charge: CAT_HEX.move, leap: CAT_HEX.move, step: CAT_HEX.move, blast: CAT_HEX.attack, storm: CAT_HEX.attack, sweep: CAT_HEX.attack, pierce: CAT_HEX.attack, rally: CAT_HEX.defense, raise: CAT_HEX.defense, wall: CAT_HEX.defense, wait: '#8a857c' };
@@ -1257,9 +1260,10 @@ const HELP = {
 <ul>
 <li><b>Kingdom: Gold.</b> A steady income: the Keep earns ${FACTIONS.kingdom.eco.hq} a round, every <b>Farm</b> ${BUILDINGS.farm.income}, every <b>Mine</b> (on a resource site) ${BUILDINGS.mine.income}.</li>
 <li><b>Undead: Souls.</b> Fed by death: the Crypt earns ${FACTIONS.undead.eco.hq} a round and each <b>Soul Well</b> (on a resource site) ${BUILDINGS.well.income}, and every model that dies (either side) within ${RULES.soulRange}″ of your squads, Crypt, Obelisks or Soul Wells gives <b>${RULES.soulPerModel} souls</b> (a hero ${RULES.soulPerHero}).</li>
-<li><b>Builders</b> (Peasants / Grave Thralls) put up every building. Select one: its panel shows what it will do, its own buttons and the building cards. Pick a building, move the see-through ghost (green = it fits, red = it doesn't, and why) and press <b>✓ Confirm</b>. The builder walks there and spends its AP as <b>work</b>; two builders work twice as fast.</li>
+<li><b>Builders</b> (Peasants / Grave Thralls) put up every building. Select one: its panel shows what it will do, its own buttons and the building cards. Pick a building, move the see-through ghost (green = it fits, red = it doesn't, and why) and press <b>✓ Confirm</b>: it joins your <b>build queue</b> (numbered ghosts on the table). A free builder takes the next one, walks there and spends its AP as <b>work</b>; two builders work twice as fast.</li>
+<li><b>Production queues.</b> Your base has one build queue (up to ${RULES.queueMaxBuild} buildings, shared by all builders) and every HQ / Barracks has its own training queue (up to ${RULES.queueMax} squads). Nothing is paid when you queue: each item is <b>paid when it starts</b>. If you can't afford the next item, no builder is free or the army is at its cap, the queue <b>waits</b> (amber dot) and nothing behind it jumps ahead; a green dot means it starts this round. The <b>Production</b> bar above your squad cards shows every queue: tap an icon to remove it (tap the squad in training twice to stop it for a full refund), drag one sideways to change the order. Queues carry on by themselves over the rounds.</li>
 <li>With <b>no orders</b> a builder keeps at its job: it finishes its building over as many rounds as it takes, then <b>gathers</b> at the nearest farm or mine (Kingdom) or soul well or crypt (Undead) for extra income, two per building. Drag the <b>hammer</b> knob onto a site or damaged building, or the <b>gather</b> knob onto a farm, mine, well or crypt. <b>Hold</b> keeps it still. Train more builders at your HQ (max ${RULES.maxBuilders}).</li>
-<li><b>Barracks</b> train one squad at a time: builders take 1 round, fighters, shooters and fast squads 2, tanks 3. <b>Watchtowers</b> see far and shoot. <b>Banners / Obelisks</b>: +1 command point. <b>Palisades</b> block paths and volleys. Army cap: ${RULES.armyCap} squads (more on the big maps).</li>
+<li><b>Barracks</b> train one squad at a time (tap a squad card several times to queue more): builders take 1 round, fighters, shooters and fast squads 2, tanks 3. <b>Watchtowers</b> see far and shoot. <b>Banners / Obelisks</b>: +1 command point. <b>Palisades</b> block paths and volleys. Army cap: ${RULES.armyCap} squads (more on the big maps).</li>
 </ul>`,
   fog: () => `
 <p>The table is covered in <b>fog</b>: thick mist where you have never been, a thin haze where you have been but can't see right now. You only see enemies your squads and buildings can see: within their vision, not behind walls or rocks, and not deep in a forest (a squad inside a forest is only seen from close by). Hidden enemies show as faded <b>last seen</b> markers, and enemy buildings stay where you last saw them.</p>

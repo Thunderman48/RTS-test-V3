@@ -22,6 +22,8 @@ export function createGame(seed = 1, factions = ['kingdom', 'undead'], mapId = '
     shrines: mapSites(def).map(p => ({ x: p.x, z: p.z, owner: -1 })),
     // what each side knows about enemy buildings: id -> last seen snapshot
     intel: [{ known: {} }, { known: {} }],
+    // production: the base build queue per side (items are paid when they start)
+    bq: [[], []], nextQid: 0,
   };
   // each HQ starts at one of three spots along its back edge (so it has to be scouted)
   const hqz = [0, 1].map(() => def.hqSpots[Math.floor(R() * def.hqSpots.length) % def.hqSpots.length]);
@@ -71,7 +73,7 @@ export const alive = q => q.hp > 0;
 export const modelsFor = (q, hp) => Math.max(0, Math.ceil(hp / defOf(q).hpPer - 1e-9));
 export const speedOf = q => defOf(q).tier * RULES.moveFactor;
 export const apFor = () => RULES.ap;
-export function emptyOrders() { return { squads: {}, stances: {}, builds: [], trains: [] }; }
+export function emptyOrders() { return { squads: {}, stances: {} }; }
 export function emptyPlan() { return { actions: [], upgrades: 0, defends: 0, parry: false, overwatch: null }; }
 export const clone = o => JSON.parse(JSON.stringify(o));
 export const findSquad = (s, id) => s.squads.find(q => q.id === id) || null;

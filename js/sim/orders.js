@@ -1,7 +1,7 @@
 // Order costs and validation (shared by the planner UI, the AI and the resolver).
 import { RULES, isMelee, isShooter, skillOf, cdOf, SKILL_KINDS as SK } from '../data/units.js';
 import { defOf, emptyPlan, apFor } from './state.js';
-import { validateBase, bonusCp } from './base.js';
+import { validateQueue, bonusCp } from './base.js';
 
 export function upgradeCost(n) { let c = 0; for (let i = 0; i < n; i++) c += RULES.tierCost[i]; return c; }
 
@@ -70,8 +70,8 @@ export function cpUsage(s, p, orders) {
 
 export function validateOrders(s, p, orders0) {
   const orders = orders0 || {};
-  const out = { squads: {}, stances: {}, builds: [], trains: [] };
-  if (s.buildings) Object.assign(out, validateBase(s, p, orders.builds || [], orders.trains || []));
+  const out = { squads: {}, stances: {}, queue: null };
+  if (s.buildings) out.queue = validateQueue(s, p, orders);
   const plans = {};
   for (const [id, plan] of Object.entries(orders.squads || {})) {
     const q = s.squads.find(x => x.id === id);

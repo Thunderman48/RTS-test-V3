@@ -4,14 +4,15 @@ import { emptyOrders, emptyPlan, defOf, radiusOf, apFor } from '../sim/state.js'
 import { planCost, actionCost, cpUsage, SKILL_KINDS } from '../sim/orders.js';
 import { clampAim, engagedWith } from '../sim/resolve.js';
 import { Nav, pathAP, walkAP } from '../sim/nav.js';
-import { obstacles, navKey, placeError, footprint, armySize, builderCount, BUILDINGS, trainCost, bdef } from '../sim/base.js';
+import { obstacles, navKey, placeError, footprint, armySize, builderCount, BUILDINGS, trainCost, bdef, startQueues, trainsRole } from '../sim/base.js';
 import { builderPlan, builderIdleTarget, gatherTarget } from '../sim/builders.js';
 import { gatherRate, hitRadius } from '../sim/base.js';
 import { norm, segCircle, dist } from '../sim/geom.js';
 
 export class Planner {
   constructor(g) { this.g = g; this.reset(); }
-  reset() { this.draft = emptyOrders(); }
+  // draft.bq / draft.tq[bid] are edited copies of the queues (null = unchanged); draft.cancel stops training
+  reset() { this.draft = { ...emptyOrders(), bq: null, tq: {}, cancel: [] }; this._fc = null; }
   get s() { return this.g.state; }
   squad(id) { return this.s.squads.find(q => q.id === id); }
   plan(id) { return this.draft.squads[id] || null; }
@@ -229,7 +230,7 @@ export class Planner {
     this.g.changed();
   }
   // clearing a builder's orders also cancels the building it was sent to put up
-  clear(id) { delete this.draft.squads[id]; this.draft.builds = this.draft.builds.filter(b => b.by !== id); this.g.changed(); }
+  clear(id) { delete this.draft.squads[id]; this.g.changed(); }
 
   setStance(id, st) {
     const q = this.squad(id);
@@ -238,20 +239,84 @@ export class Planner {
   }
   stanceOf(q) { return this.draft.stances[q.id] || q.stance; }
 
-  // ---- base: builders, queued builds and training ---------------------------------------
+  // ---- base: production queues ------------------------------------------------------------
+  // Both queues live in the state and carry over between rounds; this round's edits are drafts.
+  // Nothing is paid when queued: each item is paid when it starts (see startQueues in sim/base.js).
   get fac() { return this.s.players[this.g.me].faction; }
-  supplyLeft() {
-    let v = (this.s.supply || [0, 0])[this.g.me];
-    for (const b of this.draft.builds) v -= BUILDINGS[b.type].cost;
-    for (const t of this.draft.trains) v -= trainCost(this.fac, t.role);
+  bqList() { return this.draft.bq || (this.s.bq?.[this.g.me] || []); }
+  tqList(b) { return this.draft.tq[b.id] || b.queue || []; }
+  training(b) { return b.train && !this.draft.cancel.includes(b.id) ? b.train : null; }
+  // what starts when the round begins, and why the rest waits (cached until the draft changes)
+  forecast() {
+    const key = JSON.stringify([this.s.round, this.s.supply, this.bqList(), this.draft.tq, this.draft.cancel]);
+    if (this._fc && this._fc.key === key && this._fc.s === this.s) return this._fc.v;
+    const tq = {};
+    for (const b of this.s.buildings) if (b.owner === this.g.me && b.queue) tq[b.id] = this.tqList(b);
+    const v = startQueues(this.s, this.g.me, { bq: this.bqList(), tq, cancel: this.draft.cancel });
+    this._fc = { key, s: this.s, v };
     return v;
   }
-  queued(except = -1) { return this.draft.builds.filter((_, i) => i !== except).map(b => ({ ...b, owner: this.g.me, ...footprint(b.type, b.x, b.z, b.rot) })); }
-  buildError(type, x, z, rot = 0, by = null) {
-    const own = by ? this.draft.builds.find(b => b.by === by) : null;   // re-placing replaces this builder's build
-    const left = this.supplyLeft() + (own ? BUILDINGS[own.type].cost : 0);
-    if (BUILDINGS[type].cost > left) return `Needs ${BUILDINGS[type].cost} ${this.g.ecoName()} (you have ${left})`;
-    return placeError(this.s, this.g.me, type, x, z, rot, this.queued(own ? this.draft.builds.indexOf(own) : -1));
+  // supply after this round's queue starts (and refunds)
+  supplyLeft() {
+    let v = (this.s.supply || [0, 0])[this.g.me];
+    for (const b of this.s.buildings) if (this.draft.cancel.includes(b.id) && b.train) v += trainCost(this.fac, b.train.role);
+    const fc = this.forecast();
+    this.bqList().forEach((it, i) => { if (fc.builds[i]?.starts) v -= BUILDINGS[it.type].cost; });
+    for (const b of this.s.buildings) if (b.owner === this.g.me && b.queue) this.tqList(b).forEach((r, i) => { if (fc.trains[b.id]?.[i]?.starts) v -= trainCost(this.fac, r); });
+    return v;
+  }
+  // squads training or starting this round (for the army count)
+  armyNext() {
+    const fc = this.forecast();
+    let n = armySize(this.s, this.g.me) - this.draft.cancel.length;
+    for (const l of Object.values(fc.trains)) n += l.filter(x => x.starts).length;
+    return n;
+  }
+  // footprints of the queued buildings (except index `except`)
+  queued(except = -1) { return this.bqList().filter((_, i) => i !== except).map(b => ({ ...b, owner: this.g.me, ...footprint(b.type, b.x, b.z, b.rot) })); }
+  // can a building go into the queue here? (`except` = the queue item being moved)
+  buildError(type, x, z, rot = 0, except = -1) {
+    if (except < 0 && this.bqList().length >= RULES.queueMaxBuild) return `The build queue is full (${RULES.queueMaxBuild})`;
+    if (!builderCount(this.s, this.g.me)) return 'You need a builder: train one at your HQ';
+    return placeError(this.s, this.g.me, type, x, z, rot, this.queued(except), false);
+  }
+  editBq(fn) { const l = this.bqList().map(x => ({ ...x })); fn(l); this.draft.bq = l; this.g.changed(); }
+  queueBuild(type, x, z, rot = 0) {
+    const err = this.buildError(type, x, z, rot);
+    if (err) { this.g.toast(err, true); return -1; }
+    let n = 0;
+    this.editBq(l => { n = l.push({ qid: null, type, x: Math.round(x * 100) / 100, z: Math.round(z * 100) / 100, rot: rot ? 1 : 0 }); });
+    return n - 1;
+  }
+  replaceBuild(i, x, z, rot = 0) {
+    const it = this.bqList()[i]; if (!it) return false;
+    const err = this.buildError(it.type, x, z, rot, i);
+    if (err) { this.g.toast(err, true); return false; }
+    this.editBq(l => Object.assign(l[i], { x: Math.round(x * 100) / 100, z: Math.round(z * 100) / 100, rot: rot ? 1 : 0 }));
+    return true;
+  }
+  unqueueBuild(i) { this.editBq(l => l.splice(i, 1)); }
+  moveBuild(i, j) { this.editBq(l => { if (j < 0 || j >= l.length) return; const [x] = l.splice(i, 1); l.splice(j, 0, x); }); }
+  trainError(b, role) {
+    if (b.build) return 'Still under construction';
+    if (!trainsRole(b, role)) return 'It can\'t train that';
+    if (this.tqList(b).length >= RULES.queueMax) return `Queue full (${RULES.queueMax})`;
+    return '';
+  }
+  editTq(b, fn) { const l = this.tqList(b).slice(); fn(l); this.draft.tq[b.id] = l; this.g.changed(); }
+  queueTrain(b, role) {
+    const err = this.trainError(b, role);
+    if (err) { this.g.toast(err, true); return false; }
+    this.editTq(b, l => l.push(role));
+    return true;
+  }
+  unqueueTrain(b, i) { this.editTq(b, l => l.splice(i, 1)); }
+  moveTrain(b, i, j) { this.editTq(b, l => { if (j < 0 || j >= l.length) return; const [x] = l.splice(i, 1); l.splice(j, 0, x); }); }
+  // stop (or un-stop) the squad in training: it is refunded in full
+  toggleCancel(b) {
+    const c = this.draft.cancel;
+    if (c.includes(b.id)) c.splice(c.indexOf(b.id), 1); else if (b.train) c.push(b.id);
+    this.g.changed();
   }
   // what builder q would do for a building at footprint f: walk, then work with the AP left
   builderPreview(q, f) {
@@ -260,23 +325,8 @@ export class Planner {
     const rounds = bp.work >= need ? 1 : 1 + Math.ceil((need - bp.work) / RULES.ap);
     return { ...bp, need, rounds: bp.actions.length ? rounds : 0 };
   }
-  // send builder q to put up a new building (replacing whatever it was told before)
-  addBuild(id, type, x, z, rot = 0) {
-    const q = this.squad(id);
-    const err = this.buildError(type, x, z, rot, id);
-    if (err) { this.g.toast(err, true); return false; }
-    const f = { type, x, z, rot, ...footprint(type, x, z, rot) };
-    const bp = builderPlan(this.s, q, f, apFor(q));
-    if (!bp.actions.length) { this.g.toast('The builder can\'t reach that spot', true); return false; }
-    this.draft.builds = this.draft.builds.filter(b => b.by !== id);
-    this.draft.builds.push({ type, x: Math.round(x * 100) / 100, z: Math.round(z * 100) / 100, rot: rot ? 1 : 0, by: id });
-    this.setBuilderPlan(id, bp.actions);
-    return true;
-  }
   // what a builder's work order at (a.x, a.z) is aimed at: { f (footprint), mode, b, draft }
   workTarget(q, a) {
-    const d = this.draft.builds.find(b => b.by === q.id && Math.hypot(b.x - a.x, b.z - a.z) < 0.6);
-    if (d) return { f: { type: d.type, ...footprint(d.type, d.x, d.z, d.rot) }, mode: 'build', draft: d };
     const b = this.s.buildings.find(b => b.owner === q.owner && b.hp > 0 && Math.hypot(b.x - a.x, b.z - a.z) < hitRadius(b) + 0.6);
     if (!b) return null;
     return { f: b, b, mode: b.build > 0 ? 'build' : b.hp < bdef(b).hp ? 'repair' : gatherRate(this.s, b) ? 'gather' : null };
@@ -288,7 +338,6 @@ export class Planner {
     if (!mode) { this.g.toast('Nothing to do there: builders finish sites, repair, and gather at ' + this.g.gatherNames(), true); return false; }
     const bp = builderPlan(this.s, q, b, apFor(q));
     if (!bp.actions.length) { this.g.toast('The builder can\'t reach it', true); return false; }
-    this.draft.builds = this.draft.builds.filter(x => x.by !== id);
     this.setBuilderPlan(id, bp.actions);
     delete this.draft.stances[id];
     this.g.confirm(q, { build: 'Building', repair: 'Repairing', gather: 'Gathering' }[mode]);
@@ -302,6 +351,8 @@ export class Planner {
     if (!tg && !plan) {
       if (this.stanceOf(q) === 'hold') return { text: 'Holding: it stays put and does nothing', mode: 'hold' };
       const b = builderIdleTarget(this.s, q);
+      const fresh = this.bqList().find((it, i) => this.forecast().builds[i]?.starts);
+      if (fresh && (!b || !(b.build > 0 || q.task?.kind === 'repair'))) return { text: `No orders, so it will take the queued ${BUILDINGS[fresh.type].name[this.fac]} when it starts this round`, mode: 'build', name: BUILDINGS[fresh.type].name[this.fac] };
       if (!b) return { text: `Idle: build a ${this.g.gatherNames()} and it will gather there`, mode: null };
       tg = { f: b, b, mode: b.build > 0 ? 'build' : b.hp < bdef(b).hp ? 'repair' : 'gather' };
     }
@@ -313,9 +364,9 @@ export class Planner {
       const n = Math.floor(bp.work / gatherRate(this.s, tg.b));
       return { text: `${pre ? pre + 'gather' : 'Gathering'} at the ${name}: about +${n} ${this.g.ecoName()} this round`, mode: 'gather', name };
     }
-    const need = tg.draft ? BUILDINGS[tg.f.type].work : tg.mode === 'build' ? tg.b.build : Math.ceil((bdef(tg.b).hp - tg.b.hp) * bdef(tg.b).work / bdef(tg.b).hp);
+    const need = tg.mode === 'build' ? tg.b.build : Math.ceil((bdef(tg.b).hp - tg.b.hp) * bdef(tg.b).work / bdef(tg.b).hp);
     const rounds = bp.work >= need ? 'done this round' : `${1 + Math.ceil((need - bp.work) / RULES.ap)} rounds`;
-    const verb = tg.mode === 'repair' ? 'repair' : tg.draft ? 'build' : 'finish';
+    const verb = tg.mode === 'repair' ? 'repair' : 'finish';
     return { text: `${pre ? pre + verb : verb[0].toUpperCase() + verb.slice(1) + 'ing'} the ${name}${bp.arrive ? ` (walks ${bp.arrive} AP)` : ''}: ${rounds}`, mode: tg.mode, name };
   }
   gatherAuto(id) {
@@ -329,34 +380,15 @@ export class Planner {
     this.draft.squads[id] = p;
     this.g.changed();
   }
-  removeBuild(i) { const b = this.draft.builds[i]; this.draft.builds.splice(i, 1); if (b?.by) delete this.draft.squads[b.by]; this.g.changed(); }
-  trainOf(bid) { return this.draft.trains.find(t => t.bid === bid) || null; }
-  trainError(b, role) {
-    const cur = this.trainOf(b.id);
-    if (b.build) return 'Still under construction';
-    if (b.train) return 'Already training';
-    const cost = trainCost(this.fac, role);
-    const left = this.supplyLeft() + (cur ? trainCost(this.fac, cur.role) : 0);
-    if (cost > left) return `Needs ${cost} ${this.g.ecoName()}`;
-    if (!cur && armySize(this.s, this.g.me) + this.draft.trains.length >= this.s.board.cap) return `Army cap reached (${this.s.board.cap} squads)`;
-    if (role === 'builder' && builderCount(this.s, this.g.me) + this.draft.trains.filter(t => t.role === 'builder').length >= RULES.maxBuilders) return `At most ${RULES.maxBuilders} builders`;
-    return '';
-  }
-  addTrain(b, role) {
-    const cur = this.trainOf(b.id);
-    if (cur && cur.role === role) { this.removeTrain(b.id); return true; }
-    const err = this.trainError(b, role);
-    if (err) { this.g.toast(err, true); return false; }
-    if (cur) cur.role = role; else this.draft.trains.push({ bid: b.id, role });
-    this.g.changed();
-    return true;
-  }
-  removeTrain(bid) { this.draft.trains = this.draft.trains.filter(t => t.bid !== bid); this.g.changed(); }
-
   final() {
     const o = JSON.parse(JSON.stringify(this.draft));
     for (const p of Object.values(o.squads)) { delete p.hist; for (const a of p.actions) delete a.disengage; }
-    for (const b of o.builds) delete b.by;
+    const queue = {};
+    if (o.bq) queue.builds = o.bq;
+    if (Object.keys(o.tq).length) queue.trains = o.tq;
+    if (o.cancel.length) queue.cancel = o.cancel;
+    delete o.bq; delete o.tq; delete o.cancel;
+    if (Object.keys(queue).length) o.queue = queue;
     return o;
   }
 }

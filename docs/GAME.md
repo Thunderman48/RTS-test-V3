@@ -44,8 +44,11 @@ A round, in order:
 1. **Planning** (players / AI build orders; not part of the sim).
 2. **Intel update** (each side remembers enemy buildings it sees, §12).
 3. **Order validation** (`js/sim/orders.js` → `validateOrders`, §3). Stance changes apply.
-4. **Base orders at round start:** each valid build is paid and its **site is placed immediately**
-   (blocks movement, can be attacked); each valid training order is paid and starts.
+4. **Production queues at round start** (§10.3, `applyQueue` then `startQueues` in `js/sim/base.js`):
+   this round's queue edits are applied for side 0 then side 1 (cancelled training is refunded); then for
+   side 0, then side 1: the **build queue** starts what it can in order (each started item is paid and
+   its **site is placed immediately**: blocks movement, can be attacked), then each training building
+   (in building id order) starts its next squad if it is idle (paid now).
 5. **Stance plans** are built for every squad without direct orders, from the positions at the start
    of the round and only from enemies its side **can see** at that moment (§4, §12).
 6. **Prepared states at round start:** defends, parry, overwatch (and its cone direction), and
@@ -101,13 +104,21 @@ everything after it).
 - Squads without direct orders follow their **stance** (§4). Stance changes are free and unlimited.
 - AI difficulty changes the AI's CP: Easy −1, Hard +1 (§14.8).
 
-### 3.3 Base orders (validated in `js/sim/base.js` → `validateBase`)
-- **Builds:** at most 6 per side per round; need at least one living builder; the building must be
-  in the side's faction list (§10), affordable (running total), and pass placement (§11.2).
-- **Training:** at most 4 orders per side per round; at most one per building; the building must be
-  finished and idle and able to train that role (HQ: builders; Barracks / Ossuary: tank, fighter,
-  ranged, fast); affordable; army size (squads + squads in training) below the map's army cap;
-  builders also limited to `RULES.maxBuilders` = 3.
+### 3.3 Production queue orders (validated in `js/sim/base.js` → `validateQueue`)
+Base orders edit the persistent production queues (§10.3); nothing is paid when queueing.
+- `orders.queue = { builds?, trains?: { bid: [roles] }, cancel?: [bid] }`: `builds` (the side's whole
+  build queue, items `{ qid, type, x, z, rot }`) and `trains[bid]` (one building's whole queue) **replace**
+  the current lists when present; lists not sent are kept. `cancel` stops the squad currently in
+  training at those buildings (full refund). The legacy `orders.builds` / `orders.trains` arrays are
+  **appended** to the current queues (the AI and tests use this form).
+- **Build queue:** at most `RULES.queueMaxBuild` = 5 items; needs at least one builder (alive or in
+  training); type in the faction's list; a **new or moved** item must pass placement (§11.2) against the
+  buildings and the earlier queue items, **ignoring squads** (they move). Items left where they were keep
+  their `qid` and are re-checked when they start. Farm / Banner limits count queued items.
+- **Training queue:** per finished training building, at most `RULES.queueMax` = 5 roles waiting (the
+  squad in training is not counted); roles must be ones it trains (HQ: builder; Barracks / Ossuary:
+  tank, fighter, ranged, fast) and the faction can train. Cost, army cap and the builder cap are
+  **not** checked when queueing, only when an item starts.
 
 ---
 
@@ -130,9 +141,10 @@ its side sees right now (positions at round start). Leftover AP becomes defends 
     the side cannot currently see (§13), else toward the enemy half.
   - Otherwise like guard but with unlimited chase distance (melee) / shooters walk until within
     0.8 × range.
-- **Builders** (whatever their stance except Hold): keep at their remembered task (finish / repair /
-  gather); else finish an own unfinished site within 12″; else **gather** at the nearest own
-  gather building with a free slot (§11.4). Hold = stand still.
+- **Builders** (whatever their stance except Hold): keep at their remembered build / repair task;
+  else take an own unfinished site at any distance (fewest builders on it first, then nearest;
+  gatherers leave for it); else **gather** (remembered gather building, else the nearest own gather
+  building with a free slot) (§11.4). Hold = stand still.
 
 Melee approach (`meleePlan`): the squad stops at centre distance = own radius + target radius +
 0.55 × reach; if it cannot also swing this round it walks with all its AP.
@@ -395,12 +407,40 @@ Souls: every model that dies (either side) within 8" of an undead squad (alive a
   at the end of its work action it gets `floor(progress / rate)` resource; the remainder carries over to
   the next round while it stays at the same building. At most **2 builders per building** (a third is
   turned away and goes elsewhere next round).
-- **Training:** paid when ordered (round start); the squad appears next to the building at the end of
-  its last training round (builder 1, fighter / ranged / fast 2, tank 3), on the first free spot
-  (toward the enemy first). Squads in training count toward the army cap.
+- **Training:** paid when it **starts** (round start, from the building's queue, §10.3); the squad
+  appears next to the building at the end of its last training round (builder 1, fighter / ranged /
+  fast 2, tank 3), on the first free spot (toward the enemy first). Squads in training count toward the
+  army cap; queued squads do not. Stopping a squad in training refunds its full cost.
 - **Army cap:** `RULES.armyCap` = 8 squads + the map's bonus (Twin Rivers / Highland +1, Great Field +2);
   builders count.
 
+### 10.3 Production queues (`startQueues` in `js/sim/base.js`)
+Two kinds of persistent queue, stored in the state and kept across rounds with no new orders:
+- **One base build queue per side** (`s.bq[p]`, up to 5 buildings, each a type + spot). Shared by all
+  the side's builders.
+- **One training queue per training building** (`b.queue`, up to 5 roles; HQ and Barracks / Ossuary).
+  Lost (free) if the building is destroyed.
+
+**Pay when it starts.** At round start (after this round's queue edits), with a running resource total:
+1. **Build queue, front to back.** For each item:
+   - If its spot is now **permanently invalid** (terrain, a building, the site taken, a farm / banner
+     limit; `placeError` ignoring squads) it is **dropped** (`queueDrop` event, nothing paid) and the
+     next item is considered.
+   - Else it **waits** (and every item behind it waits too, strict order) if: the side already has as
+     many unfinished sites as it has living builders (`builders`), or it can't pay (`gold` / `souls`,
+     with the shortfall), or a squad stands on the spot (`blocked`).
+   - Else it **starts**: the cost is paid, the site is placed (30 % HP, §11.3), a `construct` event
+     with its `qid`, and the next item is considered.
+2. **Training buildings, by building id.** A building with no squad in training starts the first role of
+   its queue if the army (squads + squads in training) is below the cap, the builder cap allows it (for
+   builders) and the side can pay; otherwise the queue waits (nothing behind it jumps ahead). At most one
+   squad starts per building per round, and a building that finishes a squad at the end of round N
+   starts the next one at the start of round N + 1 (no gap).
+3. The build queue is served before training, so a waiting building does not stop training (only its
+   cost is reserved once it can start).
+
+The UI runs the same function without applying it (a forecast) to show "starts this round" or why an
+item waits.
 ---
 
 ## 11. Buildings and builders
@@ -444,12 +484,20 @@ Repair: builder AP x (max HP / work) HP per AP. Siege damage taken: damageAfter(
   **Builders remember their task** across rounds (finish → then gather automatically).
 - Builders cost no CP; max 3 per side; trained at the HQ (1 round).
 
-### 11.4 Gather targets (automatic)
-Kingdom: Farm, Mine. Undead: Soul Well, Crypt. A builder with no orders picks: its remembered task →
-an own unfinished site within 12″ → the nearest own gather building with a free slot (2 per building).
+### 11.4 What a builder does with no orders (`builderIdleTarget` in `js/sim/builders.js`)
+Kingdom gathers at Farm, Mine; Undead at Soul Well, Crypt. A builder with no direct orders (and not on
+Hold) picks, in order:
+1. its remembered **build or repair** task, while that building still needs it;
+2. else an own **unfinished site at any distance** (so it takes the next started item of the build
+   queue): the site with the **fewest builders already on it**, then the nearest. Idle builders choose in
+   squad id order and count each other's picks, so two idle builders spread over two new sites. A
+   **gatherer is free**: it leaves its gather building for a new site;
+3. else its remembered gather task, else the nearest own gather building with a free slot (2 per
+   building).
 
 ### 11.5 Barracks / training buildings
-HQ trains builders; Barracks / Ossuary train tank, fighter, ranged, fast. One squad at a time each.
+HQ trains builders; Barracks / Ossuary train tank, fighter, ranged, fast. One squad in training at a
+time each, with up to 5 more queued (§10.3).
 
 ### 11.6 Tower and HQ fire (after all tiers)
 Each finished Watchtower / Bone Spire / HQ picks the **nearest enemy squad** whose edge is within its
@@ -675,6 +723,10 @@ while gathering.
 regardless: ordered squads go for the HQ unless in a fight.
 
 ### 14.6 Economy (build order, one new building per free builder per round, up to 3)
+The AI queues **just in time**: it only appends buildings it can pay for now with a free builder (so
+they start the same round) and only trains at an idle Barracks / HQ whose queue is empty, using the
+legacy append orders (§3.3). Items still waiting in its build queue count as placed for its build
+order and its placement checks.
 Checked in this order each round (first that applies and can be placed):
 1. Enemy within 14″ of its HQ and fewer than 2 walls → Palisade / Bone Fence toward the threat.
 2. Kingdom: no Farm → Farm. Undead: no Soul Well → Soul Well.
@@ -719,73 +771,74 @@ state. Income multiplier is 1 for both.
 ## 16. Balance status
 
 <!-- BALANCE -->
-_Latest run: 2026-11-15, `node tools/balance.mjs --games 8` (8 seeds × both army orders = 16 AI-vs-AI
-games per map, both AIs Normal, a game still going after 100 rounds counts as unfinished)._
+_Latest run: 2026-11-15, after the production queues, `node tools/balance.mjs --games 8` (8 seeds ×
+both army orders = 16 AI-vs-AI games per map, both AIs Normal, a game still going after 100 rounds
+counts as unfinished)._
 
 | Map | Kingdom wins | Undead wins | Unfinished | Rounds (avg / median / min / max) | How games ended |
 |---|---|---|---|---|---|
-| Crossing | 9 (56 %) | 7 (44 %) | 0 | 18.9 / 15 / 8 / 69 | HQ destroyed 16 |
-| Twin Rivers | 6 (38 %) | 10 (63 %) | 0 | 13.8 / 13 / 10 / 22 | HQ destroyed 16 |
-| Highland Ruins | 9 (60 %) | 6 (40 %) | 1 | 14.9 / 13 / 10 / 26 | HQ 14, army + barracks 1, unfinished 1 |
-| Great Field | 8 (53 %) | 7 (47 %) | 1 | 22.0 / 18 / 15 / 43 | HQ 15, unfinished 1 |
-| **All** | **32 (52 %)** | **30 (48 %)** | **2 of 64** | | |
+| Crossing | 8 (50 %) | 8 (50 %) | 0 | 17.8 / 17 / 8 / 32 | HQ destroyed 15, army + barracks 1 |
+| Twin Rivers | 9 (56 %) | 7 (44 %) | 0 | 15.6 / 14 / 10 / 37 | HQ destroyed 16 |
+| Highland Ruins | 10 (67 %) | 5 (33 %) | 1 | 19.1 / 13 / 9 / 95 | HQ 14, army + barracks 1, unfinished 1 |
+| Great Field | 11 (73 %) | 4 (27 %) | 1 | 21.1 / 20 / 15 / 35 | HQ 15, unfinished 1 |
+| **All** | **38 (61 %)** | **24 (39 %)** | **2 of 64** | | |
 
-**What the numbers say (2026-11-15):**
-- Overall the factions are even (32–30), but per map: Twin Rivers leans Undead (63 %), Highland
-  Kingdom (60 %).
-- **Games are short** (median 13–18 rounds) and almost always end with an HQ destroyed. Since building
-  work and training were made slower, the AIs **finish only 0.3–1 Barracks per game** and train few
-  squads (Undead on Twin Rivers: 0.4 soldiers per game): games are decided mostly by the **starting
-  armies**. If longer, base-building games are wanted, the AI attacks too early relative to the new
-  build times (waves launch from round 3, small-map assault from round 6) or the timings are too slow.
-- **Builders are the most-killed squads** (2–5 builder squads lost per game per side): they walk to
-  far sites and resource sites in the open.
-- **Wraiths** are the top Undead damage dealers on every map (~290–300 damage per game vs Outriders
-  ~140–260); Bone Archers and Crossbows next. Tanks deal the least (~20–85).
-- The Undead find the enemy HQ earlier (round ~7–11) than the Kingdom (~9–13) and more often.
-- Kingdom income per game is ~1.5–2× the Undead's (gold is steady), the Undead make it up with souls
-  (~50–115 per game) and gathering.
+**What the numbers say (2026-11-15, after the queues):**
+- The AI queues just in time (§14.6), so its own production timing is unchanged; the one rule change
+  that reaches AI games is that **gatherers now leave to take any new site, at any distance** (before:
+  only sites within 12″, and gatherers kept gathering). With 16 games per map the noise is about
+  ±12 %, but the shift is in one direction: **Kingdom 32 → 38 of 64** (Undead 30 → 24), mostly on
+  the big maps (Great Field 53 % → 73 %, Highland 60 % → 67 %), while Twin Rivers flipped from
+  63 % Undead to 56 % Kingdom.
+- **Kingdom income on the big maps is 2.3× the Undead's** (Great Field 459 vs 201 per game; Highland
+  454 vs 197 + 112 souls), and the Kingdom trains about 6 soldiers per game there vs the Undead's ~4.
+- **Undead on Twin Rivers train almost no soldiers** (0.1 per game) and 3.8 builders per game: their
+  builders keep dying on the way to far sites and they rebuy them. Builders are still the most-killed
+  squads (2–4 squads per game per side).
+- Games stay short (median 13–20 rounds) and almost always end with an HQ destroyed.
+- **Wraiths** are still the top Undead damage dealers (220–360 damage per game).
+- The Undead find the enemy HQ earlier (round ~6–12) than the Kingdom (~8–14).
 
 <details><summary>Full report (per faction: buildings finished, squads trained, income, gathering, souls, HQ found, per unit type damage dealt / taken / models lost / squads lost)</summary>
 
 ```
 Balance report 2026-11-15 · 8 seeds x 2 orders per map · AI normal · stop at round 100
 
-## crossing: 16 games · Kingdom 9 (56% of decided) · Undead 7 (44%) · draws 0 · unfinished 0
-   rounds (decided): avg 18.9, median 15, min 8, max 69 · ends: {"hq destroyed":16}
-   kingdom: built/game {"farm":1.8,"barracks":0.6,"tower":0.4,"wall":1.1,"banner":0.3,"mine":0.1} · trained/game {"builder":3.4,"fighter":1,"ranged":0.5,"tank":0.4,"fast":0.1}
-      income/game 225.3 · gathered/game 27.9 · souls/game 0.0 · found enemy HQ in 10/16 games, avg round 9.1
-      per unit type (per game): builder dealt 0.1 taken 122.1 models lost 7.1 squads lost 3.4 trained 3.4 | fast dealt 181.9 taken 66.5 models lost 2.5 squads lost 0.8 trained 0.1 | fighter dealt 122.4 taken 114.6 models lost 5.3 squads lost 1.3 trained 1.0 | hero dealt 136.6 taken 101.8 models lost 0.6 squads lost 0.6 trained 0.0 | ranged dealt 215.1 taken 55.1 models lost 3.3 squads lost 0.6 trained 0.5 | tank dealt 53.3 taken 106.6 models lost 2.8 squads lost 0.8 trained 0.4
-   undead: built/game {"well":0.9,"barracks":0.4,"tower":0.6,"wall":0.4,"banner":0.3} · trained/game {"builder":3.1,"fighter":0.7,"ranged":0.3,"fast":0.4,"tank":0.3}
-      income/game 130.8 · gathered/game 10.9 · souls/game 87.6 · found enemy HQ in 16/16 games, avg round 6.9
-      per unit type (per game): builder dealt 0.0 taken 112.6 models lost 6.4 squads lost 3.1 trained 3.1 | fast dealt 304.3 taken 69.9 models lost 2.6 squads lost 0.7 trained 0.4 | fighter dealt 107.9 taken 103.5 models lost 6.3 squads lost 1.0 trained 0.7 | hero dealt 140.2 taken 88.6 models lost 0.6 squads lost 0.6 trained 0.0 | ranged dealt 246.7 taken 31.4 models lost 1.8 squads lost 0.4 trained 0.3 | tank dealt 85.9 taken 93.8 models lost 2.5 squads lost 0.6 trained 0.3
+## crossing: 16 games · Kingdom 8 (50% of decided) · Undead 8 (50%) · draws 0 · unfinished 0
+   rounds (decided): avg 17.8, median 17, min 8, max 32 · ends: {"hq destroyed":15,"army and barracks gone":1}
+   kingdom: built/game {"farm":2.1,"barracks":0.6,"mine":0.2,"banner":0.1,"tower":0.3,"wall":1.2} · trained/game {"builder":2.9,"fighter":1.1,"ranged":0.5,"tank":0.3}
+      income/game 222.9 · gathered/game 20.3 · souls/game 0.0 · found enemy HQ in 10/16 games, avg round 8.1
+      per unit type (per game): builder dealt 0.0 taken 98.9 models lost 6.0 squads lost 2.9 trained 2.9 | fast dealt 132.1 taken 58.3 models lost 2.1 squads lost 0.7 trained 0.0 | fighter dealt 140.5 taken 130.8 models lost 6.0 squads lost 1.4 trained 1.1 | hero dealt 105.4 taken 103.4 models lost 0.8 squads lost 0.8 trained 0.0 | ranged dealt 263.5 taken 58.3 models lost 3.5 squads lost 0.8 trained 0.5 | tank dealt 54.2 taken 104.2 models lost 2.8 squads lost 0.8 trained 0.3
+   undead: built/game {"well":1.1,"barracks":0.6,"tower":0.8,"banner":0.8,"wall":0.3} · trained/game {"builder":2.6,"fighter":0.9,"tank":0.3,"ranged":0.3,"fast":0.2}
+      income/game 120.8 · gathered/game 16.6 · souls/game 82.1 · found enemy HQ in 15/16 games, avg round 6.2
+      per unit type (per game): builder dealt 0.0 taken 95.1 models lost 5.4 squads lost 2.7 trained 2.6 | fast dealt 245.4 taken 57.9 models lost 2.1 squads lost 0.6 trained 0.2 | fighter dealt 154.4 taken 104.7 models lost 6.3 squads lost 0.9 trained 0.9 | hero dealt 153.4 taken 89.2 models lost 0.5 squads lost 0.5 trained 0.0 | ranged dealt 227.0 taken 31.2 models lost 1.7 squads lost 0.3 trained 0.3 | tank dealt 82.2 taken 88.9 models lost 2.2 squads lost 0.5 trained 0.3
 
-## twinrivers: 16 games · Kingdom 6 (38% of decided) · Undead 10 (63%) · draws 0 · unfinished 0
-   rounds (decided): avg 13.8, median 13, min 10, max 22 · ends: {"hq destroyed":16}
-   kingdom: built/game {"farm":1.6,"barracks":0.7,"tower":0.4,"wall":0.8} · trained/game {"builder":2.6,"fighter":0.8,"ranged":0.4}
-      income/game 147.0 · gathered/game 20.1 · souls/game 0.0 · found enemy HQ in 15/16 games, avg round 9.1
-      per unit type (per game): builder dealt 0.0 taken 91.3 models lost 5.1 squads lost 2.4 trained 2.6 | fast dealt 141.8 taken 52.4 models lost 1.9 squads lost 0.6 trained 0.0 | fighter dealt 100.1 taken 63.3 models lost 2.8 squads lost 0.6 trained 0.8 | hero dealt 127.1 taken 38.1 models lost 0.1 squads lost 0.1 trained 0.0 | ranged dealt 106.9 taken 42.3 models lost 2.3 squads lost 0.4 trained 0.4 | tank dealt 19.7 taken 23.1 models lost 0.5 squads lost 0.1 trained 0.0
-   undead: built/game {"well":1,"barracks":0.3,"wall":0.2} · trained/game {"builder":2.8,"fighter":0.2,"ranged":0.1,"fast":0.1}
-      income/game 92.3 · gathered/game 7.8 · souls/game 53.4 · found enemy HQ in 16/16 games, avg round 8.0
-      per unit type (per game): builder dealt 0.0 taken 104.9 models lost 5.9 squads lost 2.9 trained 2.8 | fast dealt 288.1 taken 50.9 models lost 1.4 squads lost 0.2 trained 0.1 | fighter dealt 57.3 taken 72.9 models lost 4.2 squads lost 0.7 trained 0.2 | hero dealt 96.3 taken 54.3 models lost 0.3 squads lost 0.3 trained 0.0 | ranged dealt 84.2 taken 25.6 models lost 1.3 squads lost 0.3 trained 0.1 | tank dealt 38.8 taken 55.6 models lost 1.4 squads lost 0.3 trained 0.0
+## twinrivers: 16 games · Kingdom 9 (56% of decided) · Undead 7 (44%) · draws 0 · unfinished 0
+   rounds (decided): avg 15.6, median 14, min 10, max 37 · ends: {"hq destroyed":16}
+   kingdom: built/game {"farm":2.1,"barracks":0.7,"mine":0.2,"wall":0.9,"tower":0.2,"banner":0.1} · trained/game {"builder":2.5,"fighter":1.2,"ranged":0.6,"tank":0.1}
+      income/game 197.9 · gathered/game 19.8 · souls/game 0.0 · found enemy HQ in 14/16 games, avg round 9.1
+      per unit type (per game): builder dealt 0.0 taken 84.4 models lost 4.4 squads lost 2.2 trained 2.5 | fast dealt 185.6 taken 57.9 models lost 2.1 squads lost 0.6 trained 0.0 | fighter dealt 99.7 taken 76.6 models lost 3.4 squads lost 0.6 trained 1.2 | hero dealt 180.8 taken 40.8 models lost 0.1 squads lost 0.1 trained 0.0 | ranged dealt 109.2 taken 51.3 models lost 3.0 squads lost 0.6 trained 0.6 | tank dealt 24.3 taken 29.6 models lost 0.7 squads lost 0.1 trained 0.1
+   undead: built/game {"well":1.1,"barracks":0.1,"wall":0.1,"tower":0.1} · trained/game {"builder":3.8,"fast":0.1}
+      income/game 100.0 · gathered/game 2.1 · souls/game 59.0 · found enemy HQ in 16/16 games, avg round 8.4
+      per unit type (per game): builder dealt 0.0 taken 132.4 models lost 7.5 squads lost 3.8 trained 3.8 | fast dealt 219.9 taken 53.5 models lost 1.8 squads lost 0.4 trained 0.1 | fighter dealt 26.9 taken 65.7 models lost 3.9 squads lost 0.7 trained 0.0 | hero dealt 130.9 taken 66.1 models lost 0.4 squads lost 0.4 trained 0.0 | ranged dealt 97.8 taken 34.4 models lost 1.9 squads lost 0.4 trained 0.0 | tank dealt 57.5 taken 69.0 models lost 1.6 squads lost 0.3 trained 0.0
 
-## highland: 16 games · Kingdom 9 (60% of decided) · Undead 6 (40%) · draws 0 · unfinished 1
-   rounds (decided): avg 14.9, median 13, min 10, max 26 · ends: {"hq destroyed":14,"army and barracks gone":1,"unfinished":1}
-   kingdom: built/game {"farm":2,"barracks":0.8,"tower":0.8,"wall":0.7,"mine":0.3,"banner":0.3} · trained/game {"builder":2.1,"fighter":2.2,"ranged":1.2,"tank":0.4,"fast":0.1}
-      income/game 332.4 · gathered/game 95.5 · souls/game 0.0 · found enemy HQ in 14/16 games, avg round 10.7
-      per unit type (per game): builder dealt 0.0 taken 76.6 models lost 4.3 squads lost 2.0 trained 2.1 | fast dealt 256.4 taken 62.8 models lost 2.3 squads lost 0.6 trained 0.1 | fighter dealt 158.1 taken 166.4 models lost 7.8 squads lost 1.7 trained 2.2 | hero dealt 134.0 taken 64.5 models lost 0.4 squads lost 0.4 trained 0.0 | ranged dealt 153.6 taken 87.8 models lost 5.4 squads lost 1.3 trained 1.2 | tank dealt 42.6 taken 90.0 models lost 2.4 squads lost 0.7 trained 0.4
-   undead: built/game {"well":0.8,"wall":0.8,"barracks":0.6,"tower":0.3,"banner":0.2} · trained/game {"builder":2.5,"fighter":1.1,"tank":0.3,"fast":0.5,"ranged":0.5}
-      income/game 130.8 · gathered/game 56.1 · souls/game 91.5 · found enemy HQ in 13/16 games, avg round 7.8
-      per unit type (per game): builder dealt 0.0 taken 70.1 models lost 4.0 squads lost 1.9 trained 2.5 | fast dealt 302.5 taken 85.2 models lost 3.1 squads lost 0.9 trained 0.5 | fighter dealt 133.3 taken 139.8 models lost 8.4 squads lost 1.5 trained 1.1 | hero dealt 134.9 taken 67.4 models lost 0.3 squads lost 0.3 trained 0.0 | ranged dealt 120.5 taken 61.2 models lost 3.4 squads lost 0.8 trained 0.5 | tank dealt 82.4 taken 88.1 models lost 2.3 squads lost 0.6 trained 0.3
+## highland: 16 games · Kingdom 10 (67% of decided) · Undead 5 (33%) · draws 0 · unfinished 1
+   rounds (decided): avg 19.1, median 13, min 9, max 95 · ends: {"hq destroyed":14,"army and barracks gone":1,"unfinished":1}
+   kingdom: built/game {"farm":2.3,"barracks":0.9,"mine":0.7,"tower":0.4,"banner":0.4,"wall":0.6} · trained/game {"builder":2.9,"fighter":2.3,"ranged":1.2,"tank":0.6,"fast":0.3}
+      income/game 454.4 · gathered/game 22.1 · souls/game 0.0 · found enemy HQ in 14/16 games, avg round 10.0
+      per unit type (per game): builder dealt 0.0 taken 96.3 models lost 5.4 squads lost 2.6 trained 2.9 | fast dealt 204.1 taken 69.4 models lost 2.5 squads lost 0.8 trained 0.3 | fighter dealt 182.6 taken 196.4 models lost 9.2 squads lost 2.1 trained 2.3 | hero dealt 158.3 taken 66.9 models lost 0.4 squads lost 0.4 trained 0.0 | ranged dealt 187.1 taken 95.3 models lost 5.7 squads lost 1.4 trained 1.2 | tank dealt 65.4 taken 94.8 models lost 2.5 squads lost 0.8 trained 0.6
+   undead: built/game {"well":1.2,"barracks":0.4,"banner":0.3,"tower":0.3,"wall":0.3} · trained/game {"builder":2.8,"tank":0.5,"fighter":1.9,"fast":0.7,"ranged":0.9}
+      income/game 196.8 · gathered/game 133.1 · souls/game 112.3 · found enemy HQ in 13/16 games, avg round 7.8
+      per unit type (per game): builder dealt 0.0 taken 86.4 models lost 4.9 squads lost 2.4 trained 2.8 | fast dealt 357.8 taken 97.5 models lost 3.6 squads lost 0.9 trained 0.7 | fighter dealt 199.5 taken 197.9 models lost 12.1 squads lost 2.3 trained 1.9 | hero dealt 170.3 taken 78.0 models lost 0.5 squads lost 0.5 trained 0.0 | ranged dealt 202.3 taken 90.9 models lost 5.0 squads lost 1.1 trained 0.9 | tank dealt 91.2 taken 102.5 models lost 2.8 squads lost 0.8 trained 0.5
 
-## greatfield: 16 games · Kingdom 8 (53% of decided) · Undead 7 (47%) · draws 0 · unfinished 1
-   rounds (decided): avg 22.0, median 18, min 15, max 43 · ends: {"hq destroyed":15,"unfinished":1}
-   kingdom: built/game {"farm":2.1,"barracks":1,"tower":0.7,"wall":0.4,"mine":0.4,"banner":0.3} · trained/game {"builder":4.8,"fighter":2.9,"ranged":1.8,"tank":0.6,"fast":1.2}
-      income/game 422.5 · gathered/game 64.4 · souls/game 0.0 · found enemy HQ in 14/16 games, avg round 12.7
-      per unit type (per game): builder dealt 0.1 taken 165.1 models lost 9.7 squads lost 4.8 trained 4.8 | fast dealt 161.9 taken 124.4 models lost 4.7 squads lost 1.5 trained 1.2 | fighter dealt 156.7 taken 199.9 models lost 9.1 squads lost 2.1 trained 2.9 | hero dealt 194.7 taken 56.4 models lost 0.3 squads lost 0.3 trained 0.0 | ranged dealt 191.1 taken 93.2 models lost 5.6 squads lost 1.3 trained 1.8 | tank dealt 26.8 taken 92.6 models lost 2.4 squads lost 0.7 trained 0.6
-   undead: built/game {"well":1.1,"barracks":0.6,"banner":0.3,"tower":0.3,"wall":0.1} · trained/game {"builder":3.5,"tank":0.6,"fighter":2.1,"ranged":1,"fast":0.3}
-      income/game 200.3 · gathered/game 92.8 · souls/game 115.0 · found enemy HQ in 15/16 games, avg round 11.3
-      per unit type (per game): builder dealt 0.0 taken 116.6 models lost 6.6 squads lost 3.2 trained 3.5 | fast dealt 298.2 taken 65.6 models lost 2.3 squads lost 0.6 trained 0.3 | fighter dealt 253.9 taken 168.3 models lost 9.9 squads lost 1.6 trained 2.1 | hero dealt 187.3 taken 63.8 models lost 0.4 squads lost 0.4 trained 0.0 | ranged dealt 337.9 taken 75.2 models lost 4.3 squads lost 0.9 trained 1.0 | tank dealt 43.3 taken 91.7 models lost 2.5 squads lost 0.8 trained 0.6
+## greatfield: 16 games · Kingdom 11 (73% of decided) · Undead 4 (27%) · draws 0 · unfinished 1
+   rounds (decided): avg 21.1, median 20, min 15, max 35 · ends: {"hq destroyed":15,"unfinished":1}
+   kingdom: built/game {"farm":2.3,"barracks":1,"wall":1.3,"mine":1.1,"tower":0.4,"banner":0.2} · trained/game {"builder":2.6,"fighter":3.9,"ranged":1.9,"tank":0.3,"fast":0.3}
+      income/game 458.8 · gathered/game 47.8 · souls/game 0.0 · found enemy HQ in 16/16 games, avg round 13.8
+      per unit type (per game): builder dealt 0.0 taken 77.4 models lost 4.5 squads lost 2.2 trained 2.6 | fast dealt 183.3 taken 37.6 models lost 1.4 squads lost 0.4 trained 0.3 | fighter dealt 219.8 taken 233.3 models lost 10.6 squads lost 2.4 trained 3.9 | hero dealt 217.4 taken 54.8 models lost 0.3 squads lost 0.3 trained 0.0 | ranged dealt 293.2 taken 98.4 models lost 5.6 squads lost 1.3 trained 1.9 | tank dealt 31.3 taken 59.3 models lost 1.4 squads lost 0.4 trained 0.3
+   undead: built/game {"well":1.3,"barracks":0.7,"tower":0.3,"banner":0.2,"wall":0.3} · trained/game {"builder":3.8,"tank":0.5,"fighter":1.8,"ranged":0.9,"fast":0.7}
+      income/game 200.8 · gathered/game 59.5 · souls/game 101.6 · found enemy HQ in 15/16 games, avg round 11.5
+      per unit type (per game): builder dealt 0.0 taken 137.6 models lost 8.1 squads lost 4.1 trained 3.8 | fast dealt 286.4 taken 103.5 models lost 3.9 squads lost 1.2 trained 0.7 | fighter dealt 121.8 taken 170.0 models lost 10.4 squads lost 1.9 trained 1.8 | hero dealt 144.3 taken 56.3 models lost 0.3 squads lost 0.3 trained 0.0 | ranged dealt 155.4 taken 91.8 models lost 5.0 squads lost 1.2 trained 0.9 | tank dealt 48.8 taken 88.5 models lost 2.4 squads lost 0.8 trained 0.5
 ```
 </details>
 <!-- /BALANCE -->
@@ -795,7 +848,10 @@ Balance report 2026-11-15 · 8 seeds x 2 orders per map · AI normal · stop at 
   towers help the defender; builders repair the HQ between waves). Longer build / training times
   (2026-11-14) made this much rarer.
 - The AI sometimes never scouts the enemy HQ on the big maps (fast squads die before they get there).
-- Twin Rivers favours the Undead (63 %), Highland the Kingdom (60 %) in the latest run.
+- In the latest run (after the production queues) the Kingdom wins 61 % overall and 73 % on Great Field;
+  the Undead economy falls behind on the big maps (§16 summary). Candidates: Undead builder losses on
+  long walks to far sites (`builderIdleTarget` now has no distance limit), soul-well income, Crypt
+  gathering rate.
 - Wraiths (ghost, tier 6, charge) deal the most damage per game of any Undead unit in AI games.
 - Builders are the most-killed squads in AI games (they walk to far sites in the open).
 - With the slower build / training times the AI rarely finishes a Barracks before the game is decided:
@@ -812,6 +868,8 @@ Balance report 2026-11-15 · 8 seeds x 2 orders per map · AI normal · stop at 
 | Economy per faction | `FACTIONS.<f>.eco` (`start`, `hq`, `gather`), `FACTIONS.<f>.train` (costs), `FACTIONS.<f>.buildings` (build list) | |
 | Buildings | `BUILDINGS` in `js/data/units.js` | cost, work, hp, armour, footprint, vision, fire, income, cp, site, souls, trains |
 | Training time, caps, souls, sites, work reach | `RULES.trainRounds`, `armyCap`, `maxBuilders`, `gatherSlots`, `maxBannerCp`, `maxFarms`, `soulRange`, `soulPerModel`, `soulPerHero`, `siteHp`, `workReach` | |
+| Production queues | `RULES.queueMax` (squads waiting per training building, 5), `RULES.queueMaxBuild` (base build queue, 5); start order and wait rules in `startQueues` (`js/sim/base.js`) | longer queues = fewer decisions per round; the "one unfinished site per builder" rule limits how fast a base grows |
+| Builder site pick | `builderIdleTarget` in `js/sim/builders.js` | idle builders take any unfinished site (fewest builders, then nearest); gatherers leave for new sites. A distance limit there would keep builders (Undead especially) off long, exposed walks |
 | Maps | `js/data/maps.js` → `MAPS` | size, terrain (`half` mirrored, `center` not), rivers, sites, HQ spots, road, `capBonus` |
 | AI behaviour | `js/ai/ai.js` | wave thresholds (`frac`, 6″ rally radius, 4 rounds, 40 % / 10 rounds), assault (round 6 / 12, ×1.15), economy order, training picks, difficulty |
 | AI difficulty income | `js/main.js` → `start()` (`{ easy: 0.8, normal: 1, hard: 1.25 }`) | |
@@ -850,6 +908,8 @@ Balance report 2026-11-15 · 8 seeds x 2 orders per map · AI normal · stop at 
 | `maxBannerCp` | `2` | max banners / obelisks (and max bonus CP) |
 | `maxFarms` | `4` | max farms |
 | `trainRounds` | `{"builder":1,"fighter":2,"ranged":2,"fast":2,"tank":3}` | rounds each role takes to train |
+| `queueMax` | `5` |  |
+| `queueMaxBuild` | `5` |  |
 | `siteHp` | `0.3` | share of max HP a new site starts with |
 | `workReach` | `1` | inches between builder edge and footprint to work |
 | `soulRange` | `8` | deaths within this of an undead collector pay souls |
@@ -880,6 +940,7 @@ Balance report 2026-11-15 · 8 seeds x 2 orders per map · AI normal · stop at 
 | 2026-11-14 | AI waves on maps ≥ 60″ wide (rally, launch at 60 %, fall back at 40 % / forward rally after 10 rounds, shooters siege the HQ) | unfinished per 8: Twin Rivers 6 → 1, Highland 5 → 2, Great Field ~3 → 2 |
 | 2026-11-14 | **Building work ×2** (wall 60, farm / banner 120, mine / well 160, tower 200, barracks 240); **training 1–3 rounds** (builder 1, fighter / ranged / fast 2, tank 3) | games end far more often: 0–1 of 8 unfinished per map; Twin Rivers 16/16 in 11–23 rounds (Undead 10, Kingdom 6) |
 | 2026-11-15 | This document, `tools/balance.mjs`, `tools/gendoc.mjs` | see §16 |
+| 2026-11-15 | **Production queues:** one base build queue per side (5 buildings) and a training queue per HQ / Barracks (5 squads); each item paid when it **starts**; waits while unaffordable / no free builder / army cap, in strict order; cancelling a waiting item is free, stopping training refunds it. Idle builders take **any** unfinished site (no 12″ limit; fewest builders first) and gatherers leave to take new sites. AI queues just in time | Kingdom / Undead of 64: 32 / 30 → **38 / 24**; Great Field 8 / 7 → 11 / 4; Highland 9 / 6 → 10 / 5; Twin Rivers 6 / 10 → 9 / 7; Crossing 9 / 7 → 8 / 8; unfinished 2 → 2 |
 
 ---
 

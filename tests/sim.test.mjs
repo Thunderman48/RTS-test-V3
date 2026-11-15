@@ -5,7 +5,7 @@ import { resolveRound, damageAfter, engagedWith, losCut } from '../js/sim/resolv
 import { cpUsage, validateOrders } from '../js/sim/orders.js';
 import { aiOrders, aiMemory } from '../js/ai/ai.js';
 import { canSee, visibleTo } from '../js/sim/vision.js';
-import { placeError, addBuilding, incomeOf, obstacles } from '../js/sim/base.js';
+import { placeError, addBuilding, incomeOf, obstacles, startQueues, armySize } from '../js/sim/base.js';
 import { builderPlan } from '../js/sim/builders.js';
 import { knownEnemyHq } from '../js/sim/vision.js';
 import { Nav, walkAP, pointBlocked } from '../js/sim/nav.js';
@@ -582,8 +582,8 @@ test('builders cost no command points; the HQ trains builders, barracks soldiers
   eq(u.accepted.length, 5, 'hero + builder + 3');
   const hq = s.buildings.find(b => b.owner === 0 && b.type === 'hq');
   const v = validateOrders(s, 0, ob([], [{ bid: hq.id, role: 'builder' }]));
-  eq(v.trains.length, 1);
-  eq(validateOrders(s, 0, ob([], [{ bid: hq.id, role: 'fighter' }])).trains.length, 0, 'no soldiers from the HQ');
+  eq(v.queue.tq[hq.id].length, 1);
+  eq(validateOrders(s, 0, ob([], [{ bid: hq.id, role: 'fighter' }])).queue.tq[hq.id].length, 0, 'no soldiers from the HQ');
 });
 
 test('training takes rounds: a fighter appears at the end of its second round', () => {
@@ -598,6 +598,115 @@ test('training takes rounds: a fighter appears at the end of its second round', 
   eq(r.state.squads.filter(q => q.owner === 0).length, n0 + 1);
   ok(events(r.log).some(e => e.type === 'spawn' && e.role === 'fighter'));
   eq(RULES.trainRounds.tank, 3); eq(RULES.trainRounds.builder, 1);
+});
+
+// ---- production queues ----
+const qo = (queue = {}, extra = {}) => ({ squads: {}, stances: {}, queue, ...extra });
+console.log('Production queues');
+test('training queue: each squad is paid when it starts, and they come out one after another', () => {
+  const s = k(); s.supply[0] = 100;
+  const b = addBuilding(s, 0, 'barracks', 6, 4, 0, true);
+  let r = resolveRound(s, [qo({ trains: { [b.id]: ['fighter', 'fighter', 'ranged'] } }), ob()]);
+  let B = r.state.buildings.find(x => x.id === b.id);
+  eq(B.train.role, 'fighter'); eq(B.queue.join(), 'fighter,ranged', 'two still waiting');
+  eq(r.state.supply[0], 100 - trainCost('kingdom', 'fighter') + incomeOf(r.state, 0), 'only the first is paid');
+  r = resolveRound(r.state, [ob(), ob()]);
+  ok(events(r.log).some(e => e.type === 'spawn' && e.role === 'fighter'), 'first fighter out after 2 rounds');
+  r = resolveRound(r.state, [ob(), ob()]);
+  B = r.state.buildings.find(x => x.id === b.id);
+  eq(B.train.role, 'fighter', 'the next one started the round after, with no new orders'); eq(B.queue.join(), 'ranged');
+});
+
+test('an unaffordable front item waits and nothing behind it jumps ahead', () => {
+  const s = k(); s.supply[0] = 25;
+  const b = addBuilding(s, 0, 'barracks', 6, 4, 0, true);
+  const fc = startQueues(s, 0, { tq: { [b.id]: ['tank', 'fighter'] } });
+  eq(fc.trains[b.id][0].wait, 'gold'); eq(fc.trains[b.id][0].need, 5); eq(fc.trains[b.id][1].wait, 'line');
+  let r = resolveRound(s, [qo({ trains: { [b.id]: ['tank', 'fighter'] } }), ob()]);
+  let B = r.state.buildings.find(x => x.id === b.id);
+  eq(B.train, null, 'the tank waits (25 < 30) and the fighter (24) does not jump ahead'); eq(r.state.supply[0], 25 + incomeOf(r.state, 0));
+  r = resolveRound(r.state, [ob(), ob()]);
+  eq(r.state.buildings.find(x => x.id === b.id).train.role, 'tank', 'starts once income arrives');
+});
+
+test('the army cap holds the queue; cancelling a waiting item is free, stopping training refunds it', () => {
+  const s = k(); s.supply[0] = 100;
+  const b = addBuilding(s, 0, 'barracks', 6, 4, 0, true);
+  s.board.cap = armySize(s, 0);
+  eq(startQueues(s, 0, { tq: { [b.id]: ['fighter'] } }).trains[b.id][0].wait, 'cap');
+  s.board.cap = 8;
+  let r = resolveRound(s, [qo({ trains: { [b.id]: ['fighter', 'tank'] } }), ob()]);
+  const paid = r.state.supply[0];
+  r = resolveRound(r.state, [qo({ trains: { [b.id]: [] }, cancel: [b.id] }), ob()]);
+  const B = r.state.buildings.find(x => x.id === b.id);
+  eq(B.train, null); eq(B.queue.length, 0);
+  eq(r.state.supply[0], paid + trainCost('kingdom', 'fighter') + incomeOf(r.state, 0), 'fighter refunded, the tank cost nothing');
+  ok(events(r.log).some(e => e.type === 'trainCancel'));
+});
+
+test('queues hold at most 5 items', () => {
+  const s = k(); s.supply[0] = 400;
+  const b = addBuilding(s, 0, 'barracks', 6, 4, 0, true);
+  const v = validateOrders(s, 0, qo({ trains: { [b.id]: Array(7).fill('fighter') }, builds: [4, 13, 20, 23, 26, 29, 11].map(z => ({ type: 'wall', x: 9, z })) }));
+  eq(v.queue.tq[b.id].length, RULES.queueMax); eq(v.queue.bq.length, RULES.queueMaxBuild);
+});
+
+test('base queue: one builder takes one site at a time; two builders start two at once', () => {
+  const one = k(); one.supply[0] = 200;
+  const q2 = [{ type: 'farm', x: 6, z: 5 }, { type: 'tower', x: 10, z: 13 }];
+  let r = resolveRound(one, [qo({ builds: q2 }), ob()]);
+  eq(r.state.buildings.filter(b => b.owner === 0 && b.build > 0).length, 1, 'one site');
+  eq(r.state.bq[0].length, 1); eq(r.state.bq[0][0].type, 'tower', 'the tower waits for a free builder');
+  eq(startQueues(r.state, 0).builds[0].wait, 'builders');
+  for (let i = 0; i < 6 && r.state.bq[0].length; i++) r = resolveRound(r.state, [ob(), ob()]);
+  eq(r.state.bq[0].length, 0, 'the tower started once the farm was done');
+  ok(r.state.buildings.some(b => b.type === 'farm' && !b.build));
+  const two = arena([[0, 'builder', 7, 9], [0, 'builder', 9, 8], [1, 'builder', 41, 23]]); two.supply[0] = 200;
+  r = resolveRound(two, [qo({ builds: q2 }), ob()]);
+  eq(r.state.buildings.filter(b => b.owner === 0 && b.build > 0).length, 2, 'both start in the same round');
+  ok(r.state.squads.filter(q => q.owner === 0).every(q => q.task && q.task.kind === 'build'), 'and each builder took one');
+  ok(new Set(r.state.squads.filter(q => q.owner === 0).map(q => q.task.bid)).size === 2, 'different sites');
+});
+
+test('an idle builder walks to a far queued site (no distance limit)', () => {
+  const s = arena([[0, 'builder', 7, 4]]); s.supply[0] = 100;
+  let r = resolveRound(s, [qo({ builds: [{ type: 'tower', x: 12, z: 28 }] }), ob()]);
+  const b = r.state.buildings.find(x => x.type === 'tower');
+  ok(b, 'site placed'); eq(r.state.squads[0].task?.bid, b.id, 'the builder took it');
+  for (let i = 0; i < 4; i++) r = resolveRound(r.state, [ob(), ob()]);
+  ok(r.state.buildings.find(x => x.id === b.id).build < BUILDINGS.tower.work, 'and works on it');
+});
+
+test('queued builds: a squad on the spot makes it wait; a building on it drops it; reorder keeps ids', () => {
+  const s = k(); s.supply[0] = 200;
+  let r = resolveRound(s, [qo({ builds: [{ type: 'tower', x: 7, z: 9 }] }), holdAll(s)[1]]);   // the builder stands there
+  // the builder is on Hold? no: it has no orders, so it may walk off; the item either waited or started
+  const st = r.state;
+  const w = startQueues(st, 0, { bq: [{ qid: 'x', type: 'wall', x: st.squads[0].x, z: st.squads[0].z, rot: 0 }] });
+  eq(w.builds[0].wait === 'blocked' || w.builds[0].wait === 'builders', true, 'a squad on the spot: wait, not drop');
+  const t = k(); t.supply[0] = 10;   // too poor: items wait in the queue
+  r = resolveRound(t, [qo({ builds: [{ type: 'farm', x: 6, z: 5 }, { type: 'wall', x: 10, z: 4 }] }), ob()]);
+  const ids = r.state.bq[0].map(i => i.qid);
+  eq(ids.length, 2); ok(ids[0] && ids[1] && ids[0] !== ids[1], 'stable ids');
+  r = resolveRound(r.state, [qo({ builds: r.state.bq[0].slice().reverse() }), ob()]);
+  eq(r.state.bq[0].length >= 1, true);
+  ok(events(r.log).some(e => e.type === 'construct' && e.btype === 'wall' && e.qid === ids[1]) || r.state.bq[0][0].qid === ids[1], 'the wall moved to the front');
+  const u = r.state; u.supply[0] = 0;
+  const far = u.bq[0].find(i => i.type === 'farm');
+  addBuilding(u, 0, 'barracks', far.x, far.z, 0, true);
+  r = resolveRound(u, [ob(), ob()]);
+  ok(events(r.log).some(e => e.type === 'queueDrop' && e.qid === far.qid), 'a building on the spot drops it');
+  ok(!r.state.bq[0].some(i => i.qid === far.qid));
+});
+
+test('queues are deterministic and survive several rounds without orders', () => {
+  const run = () => { const s = k(); s.supply[0] = 30; const b = addBuilding(s, 0, 'barracks', 6, 4, 0, true);
+    let r = resolveRound(s, [qo({ trains: { [b.id]: ['fighter', 'ranged', 'fighter'] }, builds: [{ type: 'farm', x: 6, z: 9.5 }] }), ob()]);
+    for (let i = 0; i < 8; i++) r = resolveRound(r.state, [ob(), ob()]);
+    return r.state; };
+  const a = run();
+  eq(JSON.stringify(a), JSON.stringify(run()));
+  ok(a.squads.filter(q => q.owner === 0 && q.role !== 'builder').length >= 2, 'queued squads came out over the rounds');
 });
 
 test('gold: a finished mine owns its site and pays every round', () => {

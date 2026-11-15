@@ -56,12 +56,30 @@ export function gatherTarget(s, q) {
   return (s.buildings || []).filter(b => b.owner === q.owner && gatherRate(s, b) && taken(b) < RULES.gatherSlots)
     .sort((a, b) => dist(q.x, q.z, a.x, a.z) - dist(q.x, q.z, b.x, b.z))[0] || null;
 }
-// what a builder does with no orders: keep at its task, finish a nearby site, else gather
-export function builderIdleTarget(s, q) {
+// a builder's remembered task, while its building still needs it
+function taskTarget(s, q) {
   const tb = q.task && (s.buildings || []).find(b => b.id === q.task.bid && b.hp > 0 && b.owner === q.owner);
-  if (tb && (tb.build > 0 || tb.hp < bdef(tb).hp || (q.task.kind === 'gather' && gatherRate(s, tb)))) return tb;
-  const site = (s.buildings || []).filter(b => b.owner === q.owner && b.hp > 0 && b.build > 0 && dist(q.x, q.z, b.x, b.z) < 12)
-    .sort((a, b) => dist(q.x, q.z, a.x, a.z) - dist(q.x, q.z, b.x, b.z))[0];
-  return site || gatherTarget(s, q);
+  return tb && (tb.build > 0 || tb.hp < bdef(tb).hp || (q.task.kind === 'gather' && gatherRate(s, tb))) ? tb : null;
+}
+// what a builder does with no orders: keep at its task, else take an unfinished site (any distance:
+// the one with the fewest builders on it, then the nearest; idle builders pick in id order so two
+// of them spread over two sites), else gather
+export function builderIdleTarget(s, q) {
+  // building and repairing carry on; a gatherer is free to take a new site
+  const busy = o => { const t = taskTarget(s, o); return t && o.task.kind !== 'gather' ? t : null; };
+  const own = busy(q);
+  if (own) return own;
+  const sites = (s.buildings || []).filter(b => b.owner === q.owner && b.hp > 0 && b.build > 0);
+  if (!sites.length) return taskTarget(s, q) || gatherTarget(s, q);
+  const crew = new Map(sites.map(b => [b.id, 0]));
+  const mates = s.squads.filter(o => o.owner === q.owner && o.hp > 0 && o.role === 'builder').sort((a, c) => +a.id.slice(1) - +c.id.slice(1));
+  for (const o of mates) { const t = busy(o); if (t && crew.has(t.id)) crew.set(t.id, crew.get(t.id) + 1); }
+  for (const o of mates) {
+    if (o !== q && (busy(o) || o.stance === 'hold')) continue;
+    const pick = sites.map(b => ({ b, n: crew.get(b.id), d: dist(o.x, o.z, b.x, b.z) })).sort((a, c) => a.n - c.n || a.d - c.d)[0].b;
+    if (o === q) return pick;
+    crew.set(pick.id, crew.get(pick.id) + 1);
+  }
+  return gatherTarget(s, q);
 }
 export const footprintOf = b => b.w !== undefined || b.r !== undefined ? b : footprint(b.type, b.x, b.z, b.rot || 0);

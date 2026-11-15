@@ -16,7 +16,7 @@ import { validateOrders, actionCost } from './orders.js';
 import { buildStancePlan } from './stances.js';
 import { terrainFactor, pointBlocked, blocks, blocksMove, boardOf } from './nav.js';
 import { visibleTo, canSee, updateIntel } from './vision.js';
-import { obstacles, navKey, hitRadius, bdef, addBuilding, spawnSpot, armyValue, incomeOf, edgeDist, gatherRate } from './base.js';
+import { obstacles, navKey, hitRadius, bdef, applyQueue, startQueues, spawnSpot, armyValue, incomeOf, edgeDist, gatherRate } from './base.js';
 import { approachSpot } from './builders.js';
 import { Nav } from './nav.js';
 import { BUILDINGS, FACTIONS, trainCost } from '../data/units.js';
@@ -87,22 +87,11 @@ export function resolveRound(state0, ordersIn) {
   for (const p of [0, 1]) for (const [id, st] of Object.entries(orders[p].stances)) {
     const q = s.squads.find(x => x.id === id); if (q) q.stance = st;
   }
-  // base orders: pay, place construction sites, queue training
+  // production queues: apply this round's queue edits, then start what can start (paid now)
   const baseEvents = [];
-  for (const p of [0, 1]) {
-    for (const b0 of orders[p].builds || []) {
-      const d = BUILDINGS[b0.type];
-      s.supply[p] -= d.cost;
-      const b = addBuilding(s, p, b0.type, b0.x, b0.z, b0.rot, !d.work);
-      baseEvents.push({ type: 'construct', id: b.id, btype: b.type, owner: p, x: b.x, z: b.z, rot: b.rot, hp: b.hp, build: b.build, done: !b.build });
-    }
-    for (const t0 of orders[p].trains || []) {
-      const b = s.buildings.find(x => x.id === t0.bid);
-      s.supply[p] -= trainCost(s.players[p].faction, t0.role);
-      b.train = { role: t0.role, left: RULES.trainRounds[t0.role] || 2, total: RULES.trainRounds[t0.role] || 2 };
-      baseEvents.push({ type: 'train', id: b.id, role: t0.role, owner: p });
-    }
-  }
+  const bev = e => baseEvents.push(e);
+  for (const p of [0, 1]) if (orders[p].queue) applyQueue(s, p, orders[p].queue, bev);
+  for (const p of [0, 1]) if (orders[p].queue) startQueues(s, p, { apply: true, ev: bev });
   // planning-time knowledge
   const snapshot = s.squads.filter(q => q.hp > 0).map(q => ({ ...q }));
   // fog: stance squads only react to enemies their side can see
