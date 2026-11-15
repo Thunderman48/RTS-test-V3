@@ -13,6 +13,12 @@ economy, maps, fog, stances or the AI:**
    change log with the date and before / after numbers.
 4. Add new tunables to the §17 tuning guide (where the number lives, what it affects).
 
+## Design references
+- **Gameplay, systems and balance:** base most references on well-known real RTS games and RTS design
+  guides (mechanics and ideas only; never recreate a specific game's names, characters, art, maps or
+  levels). Record new references in `docs/GAME.md` §20.
+- **Art and look:** use only the references the owner gives or names.
+
 ## Commands
 - `node tests/sim.test.mjs` — simulation tests (must pass).
 - `node tools/balance.mjs --games 8 [--maps a,b] [--level easy|normal|hard] [--rounds 100] [--json]`

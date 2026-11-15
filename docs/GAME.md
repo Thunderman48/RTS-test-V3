@@ -15,7 +15,7 @@ Contents: 1 Overview · 2 Round structure · 3 Orders and limits · 4 Stances ·
 6 Movement and collisions · 7 Units (generated) · 8 Skills (generated) · 9 Derived combat numbers
 (generated) · 10 Economy (generated + rules) · 11 Buildings and builders · 12 Fog of war and intel ·
 13 Maps (generated) · 14 AI · 15 Online · 16 Balance status · 17 Tuning guide · 18 Change log ·
-19 Keeping this document up to date
+19 Keeping this document up to date · 20 Design references
 
 ---
 
@@ -1041,3 +1041,36 @@ Whenever rules, numbers, the AI or maps change:
 2. Update the prose sections that describe the changed behaviour (§2–§6, §10–§15).
 3. For balance-relevant changes, run `node tools/balance.mjs --games 8`, paste the summary into §16,
    and add a row to §18 with the before / after numbers.
+
+---
+
+## 20. Design references
+
+**How references are chosen (the owner's rule, from 2026-11-15):**
+- **Gameplay, systems and balance:** most references are **well-known real RTS games** and established
+  RTS design guides (and the tabletop wargames the game grew from). They are used for **mechanics and
+  ideas** (how a system works, typical numbers, why a design choice is made), never to recreate a
+  specific game: no copied names, characters, art, music, maps or levels.
+- **Art and look:** only the references the owner gives or names. Nothing else is used for art.
+- When a new feature is designed after a reference, add a row below (feature, reference, what was
+  taken, what is different here).
+
+**Mechanics already in the game and the real RTS games they resemble:**
+
+| Feature here | Similar to | What is shared | What is different here |
+|---|---|---|---|
+| Squads of several models; damage removes models; a big squad cap (30) | Dawn of War, Company of Heroes | squad-based armies, losses shown as fewer models, a squad cap | turn-based with simultaneous orders; damage scales with the models left |
+| Speed tiers inside a round, simultaneous orders | tabletop wargames (alternating / initiative activation), WeGo games such as Combat Mission | everyone plans, then the round resolves | faster tiers act first; AP is time inside a tier |
+| Heroes with three skills | Warcraft III | heroes with a small kit that shapes fights | no hero levels or items |
+| Mana mage (Necromancer): spells cost mana, regenerate each round | Warcraft III casters | mana pool and regeneration | no cooldowns for mages; casts repeat while AP and mana last |
+| Chain lightning (Dark Thunder) | Warcraft III (Far Seer's Chain Lightning) | a bolt that jumps to nearby enemies, weaker each jump | aimed skillshot; first target needs line of sight |
+| Stun (Mighty Swing) | Warcraft III (Storm Bolt, Thunder Clap) | a hit that stops the target acting for a while | stun is measured in AP inside the round |
+| Temporary summons that crumble | Warcraft III summoned units with a timed life | free bodies that expire | they rise at the end of the round; Corpse Explosion can spend them |
+| Undead buildings that build themselves | Warcraft III Undead (summoned buildings), StarCraft Protoss (warped-in buildings) | no worker has to stay to finish a building | a separate limit of 2 rising at once; they mend slowly |
+| Workers on farms; farms use land | Age of Empires | farmers gather at farms; farms take building space | 4 farmers per farm; peasants also build and repair |
+| Resource sites to claim (Mines, Soul Wells) | Dawn of War (strategic points), Company of Heroes (territory) | fixed spots on the map worth fighting over | souls come from deaths near Soul Wells |
+| Production queues paid when the item starts | the queues of most RTS games (StarCraft II: 5 per building) | queue several items per building | payment at start, the queue waits when you can't pay |
+| Fog of war with explored / visible ground | most RTS games (Warcraft, StarCraft, Age of Empires) | black mist for never-seen ground, a haze for explored ground | line of sight blocked by walls and deep forests |
+| Command points (3 direct orders a round) | tabletop command / order systems | you can't micro everything | squads without orders follow stances |
+| AI waves (gather at a rally point, attack together) | the attack-wave behaviour of classic RTS AIs | the AI groups up before attacking | thresholds per difficulty (§14.4) |
+
