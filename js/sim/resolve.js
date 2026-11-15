@@ -1,4 +1,4 @@
-// V4 round resolution.
+// Round resolution.
 //  Both sides' orders are resolved together. Speed tiers act fastest -> slowest; inside a tier
 //  every squad acts at once on a shared timeline where an action's AP cost is its duration.
 //  Every attack is a non-targeted skillshot (Swing arc, Volley line, Lob circle, Charge lane,

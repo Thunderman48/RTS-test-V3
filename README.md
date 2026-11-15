@@ -1,4 +1,4 @@
-# TIERS: tabletop battles
+# Rovina: tabletop battles
 
 A turn-based strategy game played like a miniatures wargame: two armies of low-poly painted
 minis on a games table, simultaneous orders, and speed tiers that decide who acts first.
@@ -32,15 +32,10 @@ It is a static site with no build step and no server, so it runs on GitHub Pages
   the latest balance report and a change log. Its tables are generated from the data files
   (`npm run doc`); `npm run balance` runs the AI-vs-AI balance report (`tools/balance.mjs`).
 
-## Versions
-* **V4** (this one) is at the site root.
-* Older versions stay playable: [`v3/`](v3/), [`v2/`](v2/) and [`v1/`](v1/). `v4/` redirects here.
-
 ## Running
 ```
 python3 -m http.server 8080      # then open http://localhost:8080/
-node tests/sim.test.mjs          # V4 simulation tests
-node v3/tests/sim.test.mjs       # V3 tests
+node tests/sim.test.mjs          # simulation tests
 ```
 * `?gallery` shows every miniature and `?gallery&build` every building.
 * `?nettest` swaps the online transport for a BroadcastChannel, so two tabs of one browser can

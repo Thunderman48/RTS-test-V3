@@ -1,6 +1,6 @@
 // Online multiplayer over WebRTC using PeerJS (works from static hosting like GitHub Pages).
 // The host is authoritative: it resolves each round and sends the result to the guest.
-const PREFIX = 'tiers-v4-';
+const PREFIX = 'rovina-';
 const ALPHA = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 
 export function randomCode() {
@@ -108,7 +108,7 @@ export class BcNet {
   emit(t, d) { this.handlers[t]?.(d); }
   available() { return typeof BroadcastChannel === 'function'; }
   open(code) {
-    this.ch = new BroadcastChannel('tiers-v4-test-' + code);
+    this.ch = new BroadcastChannel('rovina-test-' + code);
     this.ch.onmessage = e => {
       const m = e.data; if (!m || m.from === this.me) return;
       if (m.sys === 'join' && this.isHost && !this.peerId) { this.peerId = m.from; this.ch.postMessage({ sys: 'welcome', to: m.from, from: this.me }); this.emit('connected'); return; }

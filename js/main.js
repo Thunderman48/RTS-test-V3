@@ -1,4 +1,4 @@
-// V4 game controller.
+// Rovina game controller.
 import * as THREE from 'three';
 import { RULES, FACTIONS, ROLE_ORDER, isMelee, isShooter, skillOf, skillsOf, cdOf, SELF_SKILLS } from './data/units.js';
 import { createGame, defOf, radiusOf, apFor } from './sim/state.js';
@@ -110,7 +110,7 @@ class Game {
     $('b-rehearse').onclick = () => this.rehearse();
     $('b-build').onclick = () => this.openBuild();
     $('b-build').innerHTML = icon('build', 20) + '<span>Build</span>';
-    try { this.hintsDone = localStorage.getItem('tiers-v4-hints') === '1'; } catch {}
+    try { this.hintsDone = localStorage.getItem('rovina-hints') === '1'; } catch {}
     $('b-help').onclick = () => showHelp();
     $('help-close').onclick = () => $('help').classList.add('hidden');
     $('b-menu').onclick = () => $('opts').classList.remove('hidden');
@@ -131,7 +131,7 @@ class Game {
   setAnim(mode, save = true) {
     setMiniMode(mode);
     document.querySelectorAll('.anim-v').forEach(e => { e.textContent = MINI_MODE === 'statue' ? 'Solid statues' : 'Posable arms'; });
-    if (save) try { localStorage.setItem('tiers-v4-anim', MINI_MODE); } catch {}
+    if (save) try { localStorage.setItem('rovina-anim', MINI_MODE); } catch {}
     // rebuild every squad with the new minis
     if (this.views && this.views.size) {
       for (const v of this.views.values()) v.destroy();
@@ -145,7 +145,7 @@ class Game {
     this.lensOn = on;
     if (this.view.lens) this.view.lens.enabled = on;
     for (const id of ['o-lens', 'm-lens']) $(id)?.classList.toggle('on', on);
-    if (save) try { localStorage.setItem('tiers-v4-lens', on ? '1' : '0'); } catch {}
+    if (save) try { localStorage.setItem('rovina-lens', on ? '1' : '0'); } catch {}
   }
 
   soundUi() { for (const id of ['o-sound', 'm-sound']) $(id)?.classList.toggle('on', soundOn()); }
@@ -214,7 +214,7 @@ class Game {
     const homeX = this.me === 0 ? 14 : bd.w - 14;
     this.view.cam = { x: homeX, z: bd.h / 2, dist: portrait ? 40 : 36, yaw: portrait ? (this.me === 0 ? Math.PI / 2 : -Math.PI / 2) : (this.me === 0 ? 0 : Math.PI), pitch: 0.92 };
     this.beginPlanning();
-    let seenHelp = true; try { seenHelp = !!localStorage.getItem('tiers-v4-help'); localStorage.setItem('tiers-v4-help', '1'); } catch {}
+    let seenHelp = true; try { seenHelp = !!localStorage.getItem('rovina-help'); localStorage.setItem('rovina-help', '1'); } catch {}
     if (!seenHelp) showHelp('basics');
   }
 
@@ -900,7 +900,7 @@ class Game {
     ];
     el.innerHTML = `<span>${msgs[this.hintStep || 0]}</span><button class="ib sm" id="hint-x" title="Hide tips">✕</button>`;
     el.classList.remove('hidden');
-    $('hint-x').onclick = () => { this.hintsDone = true; el.classList.add('hidden'); try { localStorage.setItem('tiers-v4-hints', '1'); } catch {} };
+    $('hint-x').onclick = () => { this.hintsDone = true; el.classList.add('hidden'); try { localStorage.setItem('rovina-hints', '1'); } catch {} };
   }
 
   updateLabels(list) {
@@ -1275,11 +1275,11 @@ const HELP = {
   icons: () => LEGEND.map(([title, items]) => `<h3>${title}</h3><div class="legend">${items.map(([ic, label]) => `<span>${icon(ic, 18)}${label}</span>`).join('')}</div>`).join(''),
 };
 let helpTab = 'basics';
-try { helpTab = localStorage.getItem('tiers-v4-helptab') || 'basics'; } catch {}
+try { helpTab = localStorage.getItem('rovina-helptab') || 'basics'; } catch {}
 function showHelp(tab = helpTab) {
   if (!HELP[tab]) tab = 'basics';
   helpTab = tab;
-  try { localStorage.setItem('tiers-v4-helptab', tab); } catch {}
+  try { localStorage.setItem('rovina-helptab', tab); } catch {}
   $('help-body').innerHTML = `<div class="help-tabs">${HELP_TABS.map(([k, n]) => `<button class="chip${k === tab ? ' on' : ''}" data-ht="${k}">${n}</button>`).join('')}</div><div class="help-page">${HELP[tab]()}</div>`;
   $('help-body').querySelectorAll('[data-ht]').forEach(el => el.onclick = () => showHelp(el.dataset.ht));
   $('help').classList.remove('hidden');

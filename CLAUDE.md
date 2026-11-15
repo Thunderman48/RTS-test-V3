@@ -1,4 +1,4 @@
-# Working on TIERS (V4 at the repo root)
+# Working on Rovina
 
 ## The game reference doc must stay complete and current
 `docs/GAME.md` is the single source for understanding and balancing the game (the owner balances the
@@ -14,7 +14,7 @@ economy, maps, fog, stances or the AI:**
 4. Add new tunables to the §17 tuning guide (where the number lives, what it affects).
 
 ## Commands
-- `node tests/sim.test.mjs` — V4 simulation tests (must pass). `node v3/tests/sim.test.mjs` — V3.
+- `node tests/sim.test.mjs` — simulation tests (must pass).
 - `node tools/balance.mjs --games 8 [--maps a,b] [--level easy|normal|hard] [--rounds 100] [--json]`
 - `python3 -m http.server 8080` then open http://localhost:8080/ (`?nettest` for two-tab online tests).
 
@@ -22,4 +22,3 @@ economy, maps, fog, stances or the AI:**
 - `js/data/units.js` (all unit / building / economy numbers, `RULES`), `js/data/maps.js` (maps).
 - `js/sim/` deterministic rules (resolve, orders, stances, base, builders, vision, nav); `js/ai/ai.js`.
 - `js/render/`, `js/ui/`, `js/net/`, `js/audio/`: presentation, UI, online, sound.
-- Older versions live in `v1/`, `v2/`, `v3/`; `v4/` only redirects to the root.

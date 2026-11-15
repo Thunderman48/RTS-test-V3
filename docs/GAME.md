@@ -1,6 +1,6 @@
-# TIERS V4: complete game and balance reference
+# Rovina: complete game and balance reference
 
-This document describes **every rule, number and behaviour** of the game (V4, at the site root) so the
+This document describes **every rule, number and behaviour** of the game (Rovina, at the site root) so the
 game can be understood and balanced from this file alone. Tables marked *generated* are produced from
 the game's data files by `npm run doc` (`node tools/gendoc.mjs`) and are always exact; the prose
 around them describes the code in `js/sim/` (rules), `js/ai/` (the AI) and `js/data/` (numbers).
@@ -915,7 +915,7 @@ Balance report 2026-11-15 · 8 seeds x 2 orders per map · AI normal · stop at 
 | `soulRange` | `8` | deaths within this of an undead collector pay souls |
 | `soulPerModel` | `2` | souls per model that dies |
 | `soulPerHero` | `10` | souls when a hero dies |
-| `planningTimerSec` | `120` | (unused in V4; online timer is chosen in the lobby) |
+| `planningTimerSec` | `120` | (unused; the online timer is chosen in the lobby) |
 <!-- /GEN:rules -->
 
 **Test loop for a balance change**
@@ -931,7 +931,7 @@ Balance report 2026-11-15 · 8 seeds x 2 orders per map · AI normal · stop at 
 
 | Date | Change | Measured effect |
 |---|---|---|
-| 2026-11 (M1–M2) | V4 core: squads, tiers, skillshots, engagement, parry, overwatch, cover, cooldowns. HP tuning for Lord vs Necromancer, Grave Guard, Bone Archers | 40 mirrored games roughly even |
+| 2026-11 (M1–M2) | Core (the 4th remake, then called V4): squads, tiers, skillshots, engagement, parry, overwatch, cover, cooldowns. HP tuning for Lord vs Necromancer, Grave Guard, Bone Archers | 40 mirrored games roughly even |
 | 2026-11 (M3) | Bases: HQ 220 HP / armour 8, siege ×2.5, shrine income, towers; round limit 30 | Kingdom 26 / Undead 14 of 40; 24 of 40 reached the limit |
 | 2026-11-13 (M3c) | Faction economies: Kingdom gold (Keep, Farms, Mines), Undead souls (Crypt, Soul Wells, deaths ×2 within 8″); builders; real fog; HQ at 1 of 3 seeded spots | iterated Keep income 6 → 8 → 7: Kingdom 34 / Undead 26 of 60 |
 | 2026-11-13 (M3d) | Builders gather (Kingdom farm 12 / mine 10 AP per gold; Undead well 9 / crypt 8 AP per soul, 2 per building); Keep income 7 → 6; round-limit tiebreak counts squads and HQ only | 30 / 30 of 60 |
@@ -941,6 +941,7 @@ Balance report 2026-11-15 · 8 seeds x 2 orders per map · AI normal · stop at 
 | 2026-11-14 | **Building work ×2** (wall 60, farm / banner 120, mine / well 160, tower 200, barracks 240); **training 1–3 rounds** (builder 1, fighter / ranged / fast 2, tank 3) | games end far more often: 0–1 of 8 unfinished per map; Twin Rivers 16/16 in 11–23 rounds (Undead 10, Kingdom 6) |
 | 2026-11-15 | This document, `tools/balance.mjs`, `tools/gendoc.mjs` | see §16 |
 | 2026-11-15 | **Production queues:** one base build queue per side (5 buildings) and a training queue per HQ / Barracks (5 squads); each item paid when it **starts**; waits while unaffordable / no free builder / army cap, in strict order; cancelling a waiting item is free, stopping training refunds it. Idle builders take **any** unfinished site (no 12″ limit; fewest builders first) and gatherers leave to take new sites. AI queues just in time | Kingdom / Undead of 64: 32 / 30 → **38 / 24**; Great Field 8 / 7 → 11 / 4; Highland 9 / 6 → 10 / 5; Twin Rivers 6 / 10 → 9 / 7; Crossing 9 / 7 → 8 / 8; unfinished 2 → 2 |
+| 2026-11-15 | The game is renamed **Rovina**; the old versions (v1–v3) and the `v4/` redirect are removed. No rule or number changes | none |
 
 ---
 

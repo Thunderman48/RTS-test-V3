@@ -7,7 +7,7 @@ import { MINI_MODE } from '../render/minis.js';
 
 const $ = id => document.getElementById(id);
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-const KEY = 'tiers-v4-settings';
+const KEY = 'rovina-settings';
 export const DEFAULTS = {
   quality: 'high', lens: true, anim: 'posable', mist: true,
   sound: true, volume: 0.8,
@@ -17,15 +17,15 @@ export const DEFAULTS = {
 export function loadSettings() {
   let s = {};
   try { s = JSON.parse(localStorage.getItem(KEY) || '{}') || {}; } catch {}
-  // settings from older versions
+  // settings from older versions (old keys are renamed in index.html)
   try {
-    if (s.lens === undefined && localStorage.getItem('tiers-v4-lens') === '0') s.lens = false;
-    if (s.anim === undefined && localStorage.getItem('tiers-v4-anim')) s.anim = localStorage.getItem('tiers-v4-anim');
-    if (s.sound === undefined && localStorage.getItem('tiers-v4-sound') === '0') s.sound = false;
+    if (s.lens === undefined && localStorage.getItem('rovina-lens') === '0') s.lens = false;
+    if (s.anim === undefined && localStorage.getItem('rovina-anim')) s.anim = localStorage.getItem('rovina-anim');
+    if (s.sound === undefined && localStorage.getItem('rovina-sound') === '0') s.sound = false;
   } catch {}
   return { ...DEFAULTS, ...s };
 }
-const SETUP_KEY = 'tiers-v4-setup';
+const SETUP_KEY = 'rovina-setup';
 
 const TABS = [['graphics', 'Graphics'], ['audio', 'Audio'], ['gameplay', 'Gameplay'], ['camera', 'Camera & controls']];
 
@@ -97,7 +97,7 @@ export const SettingsUI = {
     body.querySelectorAll('[data-act]').forEach(el => el.onclick = () => {
       const a = el.dataset.act;
       if (a === 'test') { unlockAudio(); setTimeout(() => sfx('victory'), 60); }
-      else if (a === 'tips') { this.hintsDone = false; this.hintStep = 0; try { localStorage.removeItem('tiers-v4-hints'); localStorage.removeItem('tiers-v4-help'); } catch {} this.toast('Tips will show again'); this.hint?.(); }
+      else if (a === 'tips') { this.hintsDone = false; this.hintStep = 0; try { localStorage.removeItem('rovina-hints'); localStorage.removeItem('rovina-help'); } catch {} this.toast('Tips will show again'); this.hint?.(); }
       else if (a === 'cam') { if (this.homeCam && this.state && this.phase !== 'menu') this.view.cam = this.homeCam(); this.toast('Camera reset'); }
     });
   },

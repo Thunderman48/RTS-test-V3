@@ -24,7 +24,7 @@ const RULE_NOTES = {
   shrineRadius: 'ring drawn around resource sites (visual + placement keep-out x 0.6)', armyCap: 'base squad cap (builders count; maps add capBonus)', maxBuilders: 'builder squads per side',
   gatherSlots: 'builders that can gather at one building', buildZone: 'default build zone (each map: round(width / 3))', maxBannerCp: 'max banners / obelisks (and max bonus CP)', maxFarms: 'max farms',
   trainRounds: 'rounds each role takes to train', siteHp: 'share of max HP a new site starts with', workReach: 'inches between builder edge and footprint to work',
-  soulRange: 'deaths within this of an undead collector pay souls', soulPerModel: 'souls per model that dies', soulPerHero: 'souls when a hero dies', planningTimerSec: '(unused in V4; online timer is chosen in the lobby)',
+  soulRange: 'deaths within this of an undead collector pay souls', soulPerModel: 'souls per model that dies', soulPerHero: 'souls when a hero dies', planningTimerSec: '(unused; the online timer is chosen in the lobby)',
 };
 
 function genRules() {

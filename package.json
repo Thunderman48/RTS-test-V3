@@ -1,10 +1,9 @@
 {
-  "name": "turn-based-rts-prototype",
+  "name": "rovina",
   "private": true,
   "type": "module",
   "scripts": {
     "test": "node tests/sim.test.mjs",
-    "test:v3": "node v3/tests/sim.test.mjs",
     "doc": "node tools/gendoc.mjs",
     "balance": "node tools/balance.mjs --games 8",
     "serve": "python3 -m http.server 8080"

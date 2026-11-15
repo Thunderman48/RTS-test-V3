@@ -1,4 +1,4 @@
-// V4 AI (M1): advances as a battle line, directly controls its hero and the 3 squads
+// AI: advances as a battle line, directly controls its hero and the 3 squads
 // closest to the enemy, and aims a little ahead of enemies that moved last round.
 import { RULES, isMelee, isShooter, skillOf, cdOf } from '../data/units.js';
 import { losCut, engagedWith } from '../sim/resolve.js';

@@ -1,4 +1,4 @@
-// V4 game state: squads of miniatures on a terrain board.
+// Game state: squads of miniatures on a terrain board.
 import { RULES, FACTIONS, squadRadius, unitDef } from '../data/units.js';
 import { DEPLOY, HQ_X, mapDef, buildMapTerrain, mapSites, mirrorOn, boardOf } from '../data/maps.js';
 import { addBuilding, obstacles } from './base.js';

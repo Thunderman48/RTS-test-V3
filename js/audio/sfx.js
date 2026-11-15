@@ -2,7 +2,7 @@
 // Everything goes through a master gain and a gentle low-pass, for a soft "tabletop" sound.
 let ctx = null, master = null, noiseBuf = null, on = true;
 const last = new Map();
-try { on = localStorage.getItem('tiers-v4-sound') !== '0'; } catch {}
+try { on = localStorage.getItem('rovina-sound') !== '0'; } catch {}
 
 function init() {
   if (ctx) return ctx;
@@ -20,7 +20,7 @@ function init() {
 // the browser only lets audio start after a user gesture
 export function unlockAudio() { if (!on) return; const c = init(); if (c && c.state === 'suspended') c.resume(); }
 export function soundOn() { return on; }
-export function setSound(v) { on = v; try { localStorage.setItem('tiers-v4-sound', v ? '1' : '0'); } catch {} if (v) unlockAudio(); }
+export function setSound(v) { on = v; try { localStorage.setItem('rovina-sound', v ? '1' : '0'); } catch {} if (v) unlockAudio(); }
 let volume = 1, masterVol = 0.8;
 export function setVolume(v) { volume = v; }
 // the Settings volume slider (0..1)

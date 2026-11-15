@@ -1,4 +1,4 @@
-// Headless tests for the V4 simulation. Run: node v4/tests/sim.test.mjs
+// Headless tests for the simulation. Run: node tests/sim.test.mjs
 import { RULES, FACTIONS, BUILDINGS, trainCost } from '../js/data/units.js';
 import { createGame, addSquad, defOf, radiusOf, emptyOrders, emptyPlan } from '../js/sim/state.js';
 import { resolveRound, damageAfter, engagedWith, losCut } from '../js/sim/resolve.js';
@@ -33,7 +33,7 @@ const plan = (actions, extra = {}) => ({ ...emptyPlan(), actions, ...extra });
 const holdAll = s => { const o = [orders(), orders()]; for (const q of s.squads) o[q.owner].stances[q.id] = 'hold'; return o; };
 const events = log => log.segments.flatMap(sg => sg.events.map(e => ({ ...e, seg: sg })));
 
-console.log('V4 simulation');
+console.log('Simulation');
 
 test('createGame deploys 6 squads per side (with a builder) with full models', () => {
   const s = createGame(1);

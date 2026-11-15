@@ -1,4 +1,4 @@
-// V4 data: rules, factions and rosters. Every tunable number lives here.
+// Data: rules, factions and rosters. Every tunable number lives here.
 // Distances are in inches (the board is a 48" x 32" battle mat).
 
 export const RULES = {
