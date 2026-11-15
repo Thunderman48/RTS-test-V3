@@ -2,13 +2,14 @@
 // always exactly the game's). Each table sits between <!-- GEN:name --> and <!-- /GEN:name -->.
 //   node tools/gendoc.mjs        (npm run doc)
 import { readFileSync, writeFileSync } from 'node:fs';
-import { RULES, FACTIONS, BUILDINGS, squadRadius } from '../js/data/units.js';
+import { RULES, FACTIONS, BUILDINGS, squadRadius, trainsOf, maxBuildersOf, gatherSlotsOf } from '../js/data/units.js';
 import { MAPS, MAP_ORDER, buildMapTerrain, mapSites, boardOf, DEPLOY, HQ_X } from '../js/data/maps.js';
 import { damageAfter } from '../js/sim/resolve.js';
 
 const DOC = new URL('../docs/GAME.md', import.meta.url);
 const F = ['kingdom', 'undead'];
-const ROLES = ['hero', 'tank', 'fighter', 'ranged', 'fast', 'builder'];
+const ROLES_ALL = ['hero', 'tank', 'fighter', 'ranged', 'fast', 'summon', 'builder'];
+const rolesOf = f => ROLES_ALL.filter(r => FACTIONS[f].units[r]);
 const n1 = v => Math.round(v * 10) / 10;
 const row = cells => '| ' + cells.join(' | ') + ' |';
 const table = (head, rows) => [row(head), row(head.map(() => '---')), ...rows.map(row)].join('\n');
@@ -21,10 +22,10 @@ const RULE_NOTES = {
   cp: 'command points per round (hero and builders are free)', engageGap: 'inches between squad edges that count as engaged', disengageAP: 'AP spent standing still when stepping away from an engaged enemy',
   partingMult: 'parting blow strength (x the enemy\'s full attack)', parryCost: 'AP for a prepared parry', riposteMult: 'riposte strength (x own attack)', overwatchCost: 'AP for prepared overwatch',
   overwatchCos: 'overwatch cone: cos of the half angle (0.5 = 60 deg each side)', coverMult: 'damage x this through / into a forest (volleys, pierce, tower fire)', siegeMult: 'damage x this against buildings',
-  shrineRadius: 'ring drawn around resource sites (visual + placement keep-out x 0.6)', armyCap: 'base squad cap (builders count; maps add capBonus)', maxBuilders: 'builder squads per side',
-  gatherSlots: 'builders that can gather at one building', buildZone: 'default build zone (each map: round(width / 3))', maxBannerCp: 'max banners / obelisks (and max bonus CP)', maxFarms: 'max farms',
+  shrineRadius: 'ring drawn around resource sites (visual + placement keep-out x 0.6)', armyCap: 'base squad cap (builders and summoned squads do not count; maps add capBonus)', maxBuilders: 'default builder cap (FACTIONS.<f>.maxBuilders overrides)',
+  gatherSlots: 'builders that can gather at one building (BUILDINGS.<type>.slots overrides: farm 4)', buildZone: 'default build zone (each map: round(width / 3))', maxBannerCp: 'max banners / obelisks (and max bonus CP)', riseWork: 'undead: work a rising site gains at the end of every round (no builders)', maxRising: 'undead: sites rising at the same time', undeadMend: 'undead: finished buildings regain this share of max HP every round', summonTtl: 'rounds a summoned squad lasts', queueMax: 'squads waiting per training building', queueMaxBuild: 'buildings waiting in the base build queue',
   trainRounds: 'rounds each role takes to train', siteHp: 'share of max HP a new site starts with', workReach: 'inches between builder edge and footprint to work',
-  soulRange: 'deaths within this of an undead collector pay souls', soulPerModel: 'souls per model that dies', soulPerHero: 'souls when a hero dies', planningTimerSec: '(unused; the online timer is chosen in the lobby)',
+  soulRange: 'deaths within this of a finished own Soul Well pay souls', soulPerModel: 'souls per model that dies', soulPerHero: 'souls when a hero dies', planningTimerSec: '(unused; the online timer is chosen in the lobby)',
 };
 
 function genRules() {
@@ -37,9 +38,9 @@ function genUnits() {
     const U = FACTIONS[f].units;
     out.push(`**${FACTIONS[f].name}** (\`FACTIONS.${f}.units\`)\n`);
     out.push(table(['Role', 'Name', 'Models', 'HP/model', 'HP', 'Armour', 'Tier', 'Move "/rnd', 'Vision', 'Defends', 'Radius', 'Attack', 'AP', 'Dmg/model', 'Full squad/hit', 'Reach / range', 'Hits per 100 AP', 'Flags', 'Train cost', 'Train rnds'],
-      ROLES.map(r => { const d = U[r], a = d.attack; return [r, d.name, d.models, d.hpPer, d.models * d.hpPer, d.armor, d.tier, speed(d.tier), d.vision, d.defends, n1(squadRadius(d, d.models) * 100) / 100, a.kind, a.ap, a.dmg, a.dmg * d.models,
+      rolesOf(f).map(r => { const d = U[r], a = d.attack; return [r, d.name, d.models, d.hpPer, d.models * d.hpPer, d.armor, d.tier, speed(d.tier), d.vision, d.defends, n1(squadRadius(d, d.models) * 100) / 100, a.kind, a.ap, a.dmg, a.dmg * d.models,
         a.kind === 'swing' ? `reach ${a.reach}" (arc +-60 deg)` : `range ${a.range}", width ${a.width}"`, Math.floor(RULES.ap / a.ap),
-        [d.parry ? 'parry' : '', d.ghost ? 'ghost' : ''].filter(Boolean).join(', ') || '-', r === 'hero' ? '-' : FACTIONS[f].train[r], r === 'hero' ? '-' : RULES.trainRounds[r]]; })));
+        [d.parry ? 'parry' : '', d.ghost ? 'ghost' : '', d.mana ? `mage: mana ${d.mana.start}/${d.mana.max}, +${d.mana.regen}/rnd` : '', d.summoned ? `summoned (lasts ${RULES.summonTtl} rnds, not trainable)` : ''].filter(Boolean).join(', ') || '-', r === 'hero' || d.summoned ? '-' : FACTIONS[f].train[r], r === 'hero' || d.summoned ? '-' : RULES.trainRounds[r]]; })));
     out.push('');
   }
   return out.join('\n');
@@ -47,13 +48,13 @@ function genUnits() {
 
 function genSkills() {
   const rows = [];
-  for (const f of F) for (const r of ROLES) for (const k of FACTIONS[f].units[r].skills || []) {
+  for (const f of F) for (const r of rolesOf(f)) for (const k of FACTIONS[f].units[r].skills || []) {
     const d = FACTIONS[f].units[r];
-    const params = Object.entries(k).filter(([key]) => !['kind', 'name', 'cat', 'ap', 'cd'].includes(key)).map(([key, v]) => `${key} ${v}`).join(', ');
+    const params = Object.entries(k).filter(([key]) => !['kind', 'name', 'cat', 'ap', 'cd', 'mana'].includes(key)).map(([key, v]) => `${key} ${v}`).join(', ');
     const full = k.dmg ? `${k.dmg} x ${d.models} = ${k.dmg * d.models}` : '-';
-    rows.push([FACTIONS[f].name, d.name, k.name, '`' + k.kind + '`', k.cat, k.ap, k.cd, full, params]);
+    rows.push([FACTIONS[f].name, d.name, k.name, '`' + k.kind + '`', k.cat, k.ap, d.mana ? '- (mage)' : k.cd, d.mana ? k.mana : '-', full, params]);
   }
-  return table(['Faction', 'Unit', 'Skill', 'Kind', 'Category', 'AP', 'Cooldown (rounds)', 'Dmg (per model x models)', 'Parameters'], rows);
+  return table(['Faction', 'Unit', 'Skill', 'Kind', 'Category', 'AP', 'Cooldown (rounds)', 'Mana', 'Dmg (per model x models)', 'Parameters'], rows);
 }
 
 // damage per 100 AP of the full squad against an armour value (each hit rounded on its own)
@@ -63,15 +64,15 @@ function genDerived() {
   out.push('Damage per round = hits per 100 AP x damageAfter(dmg per model x models, armour), full squad, no defends, no cover, standing in reach. Real fights lose AP to walking.\n');
   for (const f of F) {
     out.push(`**${FACTIONS[f].name}: damage per 100 AP against armour**\n`);
-    out.push(table(['Unit', 'Raw/hit', 'vs 0', 'vs 3', 'vs 5', 'vs 8', 'vs 11', 'vs 12'], ROLES.map(r => { const d = FACTIONS[f].units[r], h = Math.floor(RULES.ap / d.attack.ap); return [d.name, d.attack.dmg * d.models, ...[0, 3, 5, 8, 11, 12].map(a => h * perHit(d, a))]; })));
+    out.push(table(['Unit', 'Raw/hit', 'vs 0', 'vs 3', 'vs 5', 'vs 8', 'vs 11', 'vs 12'], rolesOf(f).map(r => { const d = FACTIONS[f].units[r], h = Math.floor(RULES.ap / d.attack.ap); return [d.name, d.attack.dmg * d.models, ...[0, 3, 5, 8, 11, 12].map(a => h * perHit(d, a))]; })));
     out.push('');
   }
   // time to kill: attacks needed by a full attacking squad to destroy a full defending squad (no defends)
   for (const [A, B] of [['kingdom', 'undead'], ['undead', 'kingdom']]) {
     out.push(`**Attacks needed: ${FACTIONS[A].name} (rows, full squad, no losses) vs ${FACTIONS[B].name} (columns, full HP, no defends)** (rounds = attacks / hits per 100 AP)\n`);
-    out.push(table(['Attacker \\ Target', ...ROLES.map(r => FACTIONS[B].units[r].name)], ROLES.map(ra => {
+    out.push(table(['Attacker \\ Target', ...rolesOf(B).map(r => FACTIONS[B].units[r].name)], rolesOf(A).map(ra => {
       const a = FACTIONS[A].units[ra];
-      return [a.name, ...ROLES.map(rb => { const b = FACTIONS[B].units[rb], hp = b.models * b.hpPer, h = perHit(a, b.armor); const n = Math.ceil(hp / h); return `${n} (${n1(n / Math.floor(RULES.ap / a.attack.ap))} r)`; })];
+      return [a.name, ...rolesOf(B).map(rb => { const b = FACTIONS[B].units[rb], hp = b.models * b.hpPer, h = perHit(a, b.armor); const n = Math.ceil(hp / h); return `${n} (${n1(n / Math.floor(RULES.ap / a.attack.ap))} r)`; })];
     })));
     out.push('');
   }
@@ -80,21 +81,22 @@ function genDerived() {
 
 function genBuildings() {
   const rows = Object.entries(BUILDINGS).map(([k, b]) => [
-    '`' + k + '`', `${b.name.kingdom} / ${b.name.undead}`, b.cost, b.work, b.work ? n1(b.work / 100) : 0, b.hp, Math.round(b.hp * RULES.siteHp), b.armor,
+    '`' + k + '`', `${b.name.kingdom} / ${b.name.undead}`, b.cost, b.work, b.work ? n1(b.work / 100) : 0, FACTIONS.undead.buildings.includes(k) ? Math.ceil(b.work / RULES.riseWork) : '-', b.hp, Math.round(b.hp * RULES.siteHp), b.armor,
     b.shape === 'circle' ? `circle r ${b.r}` : `${b.w} x ${b.d}`, b.vision, b.fire ? `${b.fire.dmg} x 4 = ${b.fire.dmg * 4} raw, range ${b.fire.range}"` : '-', b.income || '-',
-    [b.site ? 'resource site only' : '', b.souls ? 'soul collector' : '', b.cp ? `+${b.cp} CP` : '', b.trains ? 'trains ' + b.trains.join('/') : ''].filter(Boolean).join('; ') || '-',
+    [b.site ? 'resource site only' : '', b.souls ? `soul collector (${RULES.soulRange}")` : '', b.cp ? `+${b.cp} CP` : '', b.slots ? `${b.slots} gatherers` : '', b.trains ? 'trains ' + (b.trains === 'faction' ? F.map(f => `${f}: ${trainsOf(k, f).join('/')}`).join(', ') : b.trains.join('/')) : ''].filter(Boolean).join('; ') || '-',
     F.filter(f => k === 'hq' || FACTIONS[f].buildings.includes(k)).join(', ')]);
-  return table(['Type', 'Names (Kingdom / Undead)', 'Cost', 'Work (builder AP)', 'Builder-rounds', 'HP', 'Site HP', 'Armour', 'Footprint', 'Vision', 'Fire (after the tiers)', 'Income/rnd', 'Special', 'Built by'], rows)
-    + '\n\nRepair: builder AP x (max HP / work) HP per AP. Siege damage taken: damageAfter(raw x ' + RULES.siegeMult + ', armour) (no defends).';
+  return table(['Type', 'Names (Kingdom / Undead)', 'Cost', 'Work (builder AP)', 'Builder-rounds', 'Undead rise rounds', 'HP', 'Site HP', 'Armour', 'Footprint', 'Vision', 'Fire (after the tiers)', 'Income/rnd', 'Special', 'Built by'], rows)
+    + '\n\nRepair (Kingdom builders): builder AP x (max HP / work) HP per AP. Undead buildings rise by ' + RULES.riseWork + ' work a round (at most ' + RULES.maxRising + ' at once) and mend ' + (RULES.undeadMend * 100) + ' % of max HP a round. Siege damage taken: damageAfter(raw x ' + RULES.siegeMult + ', armour) (no defends).';
 }
 
 function genEconomy() {
   const out = [];
   out.push(table(['Faction', 'Resource', 'Start', 'HQ income/rnd', 'Gather (AP per 1 resource)', 'Builder gathering a full round', 'Buildable'],
-    F.map(f => { const e = FACTIONS[f].eco; return [FACTIONS[f].name, e.name, e.start, e.hq, Object.entries(e.gather).map(([b, v]) => `${b} ${v}`).join(', '), Object.entries(e.gather).map(([b, v]) => `${b} ~${Math.floor(RULES.ap / v)}`).join(', '), FACTIONS[f].buildings.join(', ')]; })));
+    F.map(f => { const e = FACTIONS[f].eco; return [FACTIONS[f].name, e.name, e.start, e.hq, Object.entries(e.gather).map(([b, v]) => `${b} ${v} (${gatherSlotsOf(b)} gatherers)`).join(', ') || '- (no builders)', Object.entries(e.gather).map(([b, v]) => `${b} ~${Math.floor(RULES.ap / v)}`).join(', ') || '-', FACTIONS[f].buildings.join(', ')]; })));
+  out.push(`\nBuilders: Kingdom up to ${maxBuildersOf('kingdom')} peasant squads (not in the army cap); Undead ${maxBuildersOf('undead')} (buildings rise by themselves). HQ trains: ${F.map(f => `${FACTIONS[f].name} ${trainsOf('hq', f).join('/')}`).join('; ')}.`);
   out.push('\n**Training cost (resource) and time (rounds)**\n');
-  out.push(table(['Role', ...F.map(f => FACTIONS[f].name + ' cost'), 'Rounds', 'Trained at'], ['builder', 'tank', 'fighter', 'ranged', 'fast'].map(r => [r, ...F.map(f => FACTIONS[f].train[r]), RULES.trainRounds[r], r === 'builder' ? 'HQ' : 'Barracks / Ossuary'])));
-  out.push(`\nSouls: every model that dies (either side) within ${RULES.soulRange}" of an undead squad (alive at the end of the round), Crypt, Obelisk or Soul Well pays ${RULES.soulPerModel} souls (a hero: ${RULES.soulPerHero}). Each death pays once.`);
+  out.push(table(['Role', ...F.map(f => FACTIONS[f].name + ' cost'), 'Rounds', 'Trained at'], ['builder', 'tank', 'fighter', 'ranged', 'fast'].map(r => [r, ...F.map(f => FACTIONS[f].train[r] ?? '-'), RULES.trainRounds[r], r === 'builder' ? 'Keep (Kingdom only)' : r === 'fighter' ? 'Barracks / Ossuary; also the Crypt (Undead)' : 'Barracks / Ossuary'])));
+  out.push(`\nSouls: every model that dies (either side, not summoned skeletons) within ${RULES.soulRange}" of a finished Soul Well of the undead side pays ${RULES.soulPerModel} souls (a hero: ${RULES.soulPerHero}). Each death pays once per side.`);
   return out.join('\n');
 }
 
@@ -128,7 +130,7 @@ function genMaps() {
     for (const z of m.hqSpots) { put(HQ_X, z, 'H'); put(m.w - HQ_X, m.h - z, 'H'); }
     out.push('```\n' + g.map(r => r.join('')).join('\n') + '\n```\n');
   }
-  out.push('Deployment (player 0; player 1 mirrored), relative to the chosen HQ spot z: ' + DEPLOY.map(d => `${d.role} x ${d.x}, z ${d.dz >= 0 ? '+' : ''}${d.dz}`).join('; ') + '. Each squad gets a seeded jitter of up to +-0.8" (builders none), then is nudged clear of terrain and other squads.');
+  out.push('Deployment (player 0; player 1 mirrored), relative to the chosen HQ spot z: ' + DEPLOY.map(d => `${d.role}${d.alt ? ` (undead: ${d.alt})` : ''}${d.only ? ` (${d.only} only)` : ''} x ${d.x}, z ${d.dz >= 0 ? '+' : ''}${d.dz}`).join('; ') + '. Each squad gets a seeded jitter of up to +-0.8" (builders none), then is nudged clear of terrain and other squads.');
   return out.join('\n');
 }
 

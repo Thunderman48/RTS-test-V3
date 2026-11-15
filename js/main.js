@@ -1,6 +1,6 @@
 // Rovina game controller.
 import * as THREE from 'three';
-import { RULES, FACTIONS, ROLE_ORDER, isMelee, isShooter, skillOf, skillsOf, cdOf, SELF_SKILLS } from './data/units.js';
+import { RULES, FACTIONS, ROLE_ORDER, isMelee, isShooter, skillOf, skillsOf, cdOf, SELF_SKILLS, isMage } from './data/units.js';
 import { createGame, defOf, radiusOf, apFor } from './sim/state.js';
 import { planCost, actionCost } from './sim/orders.js';
 import { resolveRound, arcHits, losCut, inCover, clampAim, engagedWith } from './sim/resolve.js';
@@ -408,12 +408,12 @@ class Game {
       const cut = losCut(this.state.terrain, leg.ox, leg.oz, leg.ox + leg.dx * leg.len, leg.oz + leg.dz * leg.len);
       L.add(lineShape(leg.ox, leg.oz, leg.dx, leg.dz, leg.len * cut, leg.w, COL.volley, a));
       if (cut < 1) L.add(lineShape(leg.ox + leg.dx * leg.len * cut, leg.oz + leg.dz * leg.len * cut, leg.dx, leg.dz, leg.len * (1 - cut), leg.w, 0x555555, a * 0.6));
-    } else if (leg.kind === 'sweep' || leg.kind === 'wall') L.add(arcShape(leg.ox, leg.oz, leg.dx, leg.dz, leg.R, leg.ch, COL[leg.kind], a));
+    } else if (leg.kind === 'sweep' || leg.kind === 'wall' || leg.kind === 'mighty') L.add(arcShape(leg.ox, leg.oz, leg.dx, leg.dz, leg.R, leg.ch, COL[leg.kind], a));
     else if (leg.kind === 'pierce') L.add(lineShape(leg.ox, leg.oz, leg.dx, leg.dz, leg.len, leg.w, COL.pierce, a));
     else if (leg.kind === 'leap' || leg.kind === 'step') {
       L.add(ribbon([{ x: leg.ox, z: leg.oz }, { x: leg.cx, z: leg.cz }], sel ? 0.12 : 0.08, COL[leg.kind], sel ? 0.8 : 0.5, 0.35));
       const r = ring(radiusOf(q) + 0.3, 0.1, COL[leg.kind], sel ? 0.9 : 0.5); r.position.x = leg.cx; r.position.z = leg.cz; L.add(r);
-    } else if (leg.kind === 'lob' || leg.kind === 'blast' || leg.kind === 'storm' || leg.kind === 'rally' || leg.kind === 'raise') {
+    } else if (leg.kind === 'lob' || leg.kind === 'blast' || leg.kind === 'storm' || leg.kind === 'rally' || leg.kind === 'raise' || leg.kind === 'summon' || leg.kind === 'thunder' || leg.kind === 'explode') {
       const col = COL[leg.kind];
       const d = disc(leg.R, col, a * 0.8); d.position.x = leg.cx; d.position.z = leg.cz; L.add(d);
       const r = ring(leg.R, 0.08, col, sel ? 0.9 : 0.5); r.position.x = leg.cx; r.position.z = leg.cz; L.add(r);
@@ -488,7 +488,7 @@ class Game {
     const sks = builder ? [] : skillsOf(def);
     const atkIc = def.attack.kind === 'swing' ? 'attack' : 'shoot';
     const content = { move: icon('move', 20), attack: icon(this.mode === 'overwatch' ? 'overwatch' : atkIc, 20), build: icon('build', 20), gather: icon(this.eco().icon, 20) };
-    sks.forEach((sk, i) => { const cd = cdOf(q, sk.kind); content['skill' + i] = this.planner.skillReady(q, sk.kind) ? icon(SKILL_IC[sk.kind], 20) : `<b>${cd > 0 ? cd : '✓'}</b>`; });
+    sks.forEach((sk, i) => { const cd = cdOf(q, sk.kind); content['skill' + i] = this.planner.skillReady(q, sk.kind) ? icon(SKILL_IC[sk.kind], 20) : isMage(def) ? `<b class="mn">${sk.mana}</b>` : `<b>${cd > 0 ? cd : '✓'}</b>`; });
     // place knobs in screen space around the squad's planned end point: always ~64px apart
     const pr = this.planner.predict(q);
     const c = this.view.project(pr.x, 0.4, pr.z), f = this.view.project(pr.x + pr.fx, 0.4, pr.z + pr.fz);
@@ -657,7 +657,7 @@ class Game {
         L.add(ribbon([{ x: pr.x, z: pr.z }, c], 0.1, col, 0.7, 0.35));
         const d = ring(radiusOf(q) + 0.3, 0.12, col, 0.95); d.position.x = c.x; d.position.z = c.z; L.add(d);
         this.previewEnd = { x: c.x, z: c.z, fx: ux, fz: uz };
-        return { html: `${sk.name}<small>${sk.kind === 'leap' ? 'jumps over walls and squads; shoves enemies at the landing' : 'reappears there; no parting blows'}</small>` };
+        return { html: `${sk.name}<small>${sk.kind === 'leap' ? `jumps over walls and squads; ${sk.dmg ? `hits (${sk.dmg}) and ` : ''}shoves enemies at the landing` : 'reappears there; no parting blows'}</small>` };
       }
       if (sk.kind === 'pierce') {
         const bx = pr.x + ux * sk.range, bz = pr.z + uz * sk.range, cut = losCut(this.state.terrain, pr.x, pr.z, bx, bz);
@@ -675,6 +675,31 @@ class Game {
         if (ln.hit) mark(ln.hit);
         return { html: `Charge ${sk.dmg * q.models}<small>${ln.hit ? 'hits the first squad in the lane' : 'nobody in the lane now'}${cut < 1 ? ' · a wall stops it' : ''}</small>`, bad: cut < 1 && !ln.hit };
       }
+      if (sk.kind === 'mighty') {
+        const R = radiusOf(q) + sk.reach; let n = 0;
+        L.add(arcShape(pr.x, pr.z, ux, uz, R, sk.cosHalf, COL.mighty, 0.55));
+        for (const e of enemies) if (arcHits(pr.x, pr.z, ux, uz, R, sk.cosHalf, e.x, e.z, radiusOf(e))) { n++; mark(e); }
+        return { html: `Mighty Swing ${sk.dmg * q.models}<small>${n ? `hits and stuns ${n} if they stay` : 'nobody there now'} · stun ${sk.stun} AP</small>` };
+      }
+      if (sk.kind === 'summon' || sk.kind === 'thunder' || sk.kind === 'explode') {
+        const c = clampAim(pr.x, pr.z, p.x, p.z, sk.range), col = COL[sk.kind];
+        const rr = ring(sk.range, 0.05, col, 0.4, 0.05, 72); rr.position.x = pr.x; rr.position.z = pr.z; L.add(rr);
+        const mana = `${sk.mana} mana (${this.planner.manaLeft(q)} left)`;
+        if (sk.kind === 'summon') {
+          for (const a of [0.6, 0.6 + Math.PI]) { const r = ring(1.1, 0.1, col, 0.8); r.position.x = c.x + Math.cos(a) * 0.9; r.position.z = c.z + Math.sin(a) * 0.9; L.add(r); }
+          return { html: `Summon Warband<small>two skeleton squads rise here at the end of the round · ${mana}</small>` };
+        }
+        if (sk.kind === 'thunder') {
+          const first = enemies.filter(e => Math.hypot(e.x - c.x, e.z - c.z) - radiusOf(e) <= sk.radius && losCut(this.state.terrain, pr.x, pr.z, e.x, e.z) >= 1).sort((a, b) => Math.hypot(a.x - c.x, a.z - c.z) - Math.hypot(b.x - c.x, b.z - c.z))[0];
+          const d = disc(sk.radius, col, 0.4); d.position.x = c.x; d.position.z = c.z; L.add(d);
+          let n = 0;
+          if (first) { mark(first); n = 1; let cur = first; const hit = [first]; for (let i = 0; i < sk.jumps; i++) { const nx = enemies.filter(e => !hit.includes(e) && Math.hypot(e.x - cur.x, e.z - cur.z) - radiusOf(e) - radiusOf(cur) <= sk.jump).sort((a, b) => Math.hypot(a.x - cur.x, a.z - cur.z) - Math.hypot(b.x - cur.x, b.z - cur.z))[0]; if (!nx) break; L.add(ribbon([cur, nx], 0.08, col, 0.7, 0.3)); mark(nx); hit.push(nx); cur = nx; n++; } }
+          return { html: `Dark Thunder ${sk.dmg}<small>${first ? `strikes ${n} if they stay (each jump ×${sk.decay})` : 'no enemy in sight there'} · ${mana}</small>`, bad: !first };
+        }
+        const own = this.state.squads.find(o => o.owner === q.owner && o.ttl && Math.hypot(o.x - c.x, o.z - c.z) - radiusOf(o) <= 1.5);
+        if (own) { const d = disc(sk.radius, col, 0.4); d.position.x = own.x; d.position.z = own.z; L.add(d); let n = 0; for (const e of enemies) if (Math.hypot(e.x - own.x, e.z - own.z) <= sk.radius + radiusOf(e) * 0.6) { n++; mark(e); } return { html: `Corpse Explosion ${sk.base + sk.perModel * own.models}<small>${n ? `hits ${n} if they stay` : 'no enemies around it now'} · ${mana}</small>` }; }
+        return { html: `Corpse Explosion<small>aim at one of your summoned skeleton squads · ${mana}</small>`, bad: true };
+      }
       if (sk.kind === 'blast' || sk.kind === 'storm') {
         const c = clampAim(pr.x, pr.z, p.x, p.z, sk.range), col = COL[sk.kind];
         const rr = ring(sk.range, 0.05, col, 0.4, 0.05, 72); rr.position.x = pr.x; rr.position.z = pr.z; L.add(rr);
@@ -684,7 +709,7 @@ class Game {
       }
       if (sk.kind === 'rally') {
         const d = disc(sk.radius, COL.rally, 0.3); d.position.x = pr.x; d.position.z = pr.z; L.add(d);
-        return { html: `Rally<small>allies in the circle: +1 defend, hit 25% harder</small>` };
+        return { html: `Rally<small>allies in the circle: +1 defend${sk.armor ? `, +${sk.armor} armour` : ''}${sk.dmgMult > 1 ? `, hit ${Math.round((sk.dmgMult - 1) * 100)}% harder` : ''} this round</small>` };
       }
     }
     // basic attack
@@ -802,7 +827,7 @@ class Game {
       const st = plan ? 'Your orders' : 'Stance: ' + this.planner.stanceOf(q);
       return `<button class="sq${q.id === this.selected ? ' sel' : ''}" data-id="${q.id}">
         <span class="n"><span class="tr">${tier}</span>${esc(def.name)}${icon(def.role, 14, 'role')}</span>
-        <span class="m"><span class="pips">${pips}</span><span>${q.hp} HP</span></span>
+        <span class="m"><span class="pips">${pips}</span><span>${q.hp} HP${def.mana ? ` · <i class="mn">${this.planner.manaLeft(q)} mana</i>` : ''}${q.ttl ? ` · ☠${q.ttl}` : ''}</span></span>
         <span class="ap">${apBlocks(q, plan, true)}</span>
         <span class="st${plan ? ' ord' : ''}">${esc(st)}${plan ? ` · ${apFor(q) - used} AP left` : ''}</span></button>`;
     }).join('');
@@ -814,10 +839,11 @@ class Game {
     const q = this.selectedSquad();
     const sb = this.phase === 'planning' && !q ? this.selectedBuilding() : null;
     if (sb) { this.renderBuildingDock(sb); return; }
+    if (this.phase === 'planning' && !q && this.selB === 'build') { this.renderBuilderDock(null); return; }
     if (this.phase !== 'planning' || !q) { dock.classList.add('hidden'); info.classList.add('hidden'); return; }
     if (q.role === 'builder' && q.owner === this.me) { this.renderBuilderDock(q); return; }
     const def = defOf(q), at = def.attack, sks = skillsOf(def);
-    const atkName = { swing: 'Swing', volley: 'Volley', lob: 'Lob' }[at.kind];
+    const atkName = def.magic ? 'Bolt' : { swing: 'Swing', volley: 'Volley', lob: 'Lob' }[at.kind];
     if (q.owner !== this.me) {
       dock.classList.add('hidden');
       info.classList.remove('hidden');
@@ -836,7 +862,8 @@ class Game {
     const ctl = plan ? 'Your orders' : (q.role === 'hero' ? 'Hero: free to command' : q.role === 'builder' ? 'Builder: free to command' : 'Giving an order uses 1 command point');
     // every button is coloured by category: green = move/speed, red = attack, blue = defence/buffs
     const b = (act, ic, label, sub, on = false, dis = false, cat = 'move') => `<button class="act cat-${cat}${on ? ' on' : ''}" data-act="${act}" ${dis ? 'disabled' : ''}>${icon(ic, 20)}${label}<small>${sub}</small></button>`;
-    const skBtn = sks.map(sk => { const cd = cdOf(q, sk.kind); return b('skill:' + sk.kind, SKILL_IC[sk.kind], sk.name, cd > 0 ? `recharging ${cd}` : this.planner.skillUsed(q.id, sk.kind) ? 'used' : `${sk.ap} AP`, this.mode === 'skill' && this.modeSkill === sk.kind, !this.planner.skillReady(q, sk.kind) || left < sk.ap, sk.cat); }).join('');
+    const mage = isMage(def), mana = mage ? this.planner.manaLeft(q) : 0;
+    const skBtn = sks.map(sk => { const cd = cdOf(q, sk.kind); const sub = mage ? `${sk.mana} mana · ${sk.ap} AP` : cd > 0 ? `recharging ${cd}` : this.planner.skillUsed(q.id, sk.kind) ? 'used' : `${sk.ap} AP`; return b('skill:' + sk.kind, SKILL_IC[sk.kind], sk.name, sub, this.mode === 'skill' && this.modeSkill === sk.kind, !this.planner.skillReady(q, sk.kind) || left < sk.ap, sk.cat); }).join('');
     const msk = this.mode === 'skill' ? skillOf(def, this.modeSkill) : null;
     const melee = at.kind === 'swing';
     const prepBtn = melee
@@ -845,7 +872,7 @@ class Game {
     const hints = {
       move: '<b>Drag the green knob</b> to draw a path (or tap the table). The ring shows how far it can still go.' + (engaged ? ' <b>Engaged:</b> stepping away costs 30 AP and gives the enemy a free hit.' : ''),
       attack: `<b>Drag the red knob</b> to aim the ${atkName.toLowerCase()}. It hits whatever is in the shape when it lands, so aim where enemies <b>will be</b>.` + (at.kind === 'volley' ? ' Walls block volleys; forests give cover.' : at.kind === 'lob' ? ' Lobs arc over walls.' : ''),
-      skill: msk ? `<b>${esc(msk.name)}:</b> ${SKILL_HELP[msk.kind]} Then it recharges for ${msk.cd} round${msk.cd > 1 ? 's' : ''}.` : '',
+      skill: msk ? `<b>${esc(msk.name)}:</b> ${SKILL_HELP[msk.kind]} ${mage ? `Costs ${msk.mana} mana (${mana} left); a mage can cast again this round while it has AP and mana.` : `Then it recharges for ${msk.cd} round${msk.cd > 1 ? 's' : ''}.`}` : '',
       overwatch: '<b>Drag the red knob</b> to point the overwatch cone. The squad fires once at the first enemy that moves inside it, at any speed tier.',
     };
     dock.innerHTML = `<div class="dk-head"><div><div class="nm">${esc(def.name)}${engaged ? ' <span class="eng">Engaged</span>' : ''}</div><div class="sub">Tier ${def.tier + (plan?.upgrades || 0)} · ${q.models}/${def.models} models · ${q.hp} HP · ${ctl}</div></div>
@@ -932,7 +959,9 @@ class Game {
       const cds = planning ? skillsOf(def).filter(k => cdOf(d, k.kind) > 0).map(k => [k, cdOf(d, k.kind)]) : [];
       const cd = cds.map(([k, n]) => k.kind + n).join();
       const bt = planning && d.role === 'builder' ? this.btasks?.get(d.id) : null;
-      const key = `${bt ? bt.mode + bt.name : ''}|${tier}|${d.models}|${d.hp}|${sel}|${!!plan}|${d.dying !== undefined}|${defs}|${ups}|${stance}|${zoomedOut}|${parry}|${watch}|${engaged}|${cd}|${d.lastSeen}`;
+      const mage = !!def.mana, mana = mage ? (planning && d.owner === this.me ? this.planner.manaLeft(d) : d.mana ?? 0) : 0;
+      const stun = d.stun || 0, ttl = d.ttl || 0;
+      const key = `${mana}|${stun}|${ttl}|${bt ? bt.mode + bt.name : ''}|${tier}|${d.models}|${d.hp}|${sel}|${!!plan}|${d.dying !== undefined}|${defs}|${ups}|${stance}|${zoomedOut}|${parry}|${watch}|${engaged}|${cd}|${d.lastSeen}`;
       if (el.dataset.key !== key && d.lastSeen !== undefined) {
         el.dataset.key = key;
         el.style.setProperty('--team', TEAM[d.owner]);
@@ -950,12 +979,15 @@ class Game {
         if (parry) st.push(`<span class="st" title="Parry ready">${icon('parry', 12)}</span>`);
         if (watch) st.push(`<span class="st" title="Overwatch">${icon('overwatch', 12)}</span>`);
         if (engaged) st.push(`<span class="st" title="Engaged in melee">${icon('engaged', 12)}</span>`);
+        if (stun) st.push(`<span class="st stun" title="Stunned: its actions wait ${stun} AP">✶${stun}</span>`);
+        if (ttl) st.push(`<span class="st sum" title="Summoned: crumbles after ${ttl} more round${ttl > 1 ? 's' : ''}">☠${ttl}</span>`);
         for (const [k, n] of cds) st.push(`<span class="st cdc" style="--c:${CAT_HEX[k.cat]}" title="${esc(k.name)} recharging">${icon(SKILL_IC[k.kind], 11)}${n}</span>`);
         if (bt && bt.mode && bt.mode !== 'hold') st.push(`<span class="st bt ${bt.mode}">${icon(bt.mode === 'gather' ? this.eco().icon : 'build', 12)}${esc(bt.name || '')}</span>`);
         if (plan) st.push(`<span class="st">${icon('control', 12)}</span>`);
         else if (stance) st.push(`<span class="st">${icon(stance, 12)}</span>`);
         el.innerHTML = `<div class="sl-h"><span class="tr">${tier}</span><span class="nm">${esc(def.name)}</span>${icon(def.role, 14)}</div>
           <div class="sl-hp"><b style="width:${(100 * d.hp / maxHp).toFixed(0)}%"></b><span>${d.hp}</span></div>
+          ${mage ? `<div class="sl-mp" title="Mana: ${mana}/${def.mana.max}, +${def.mana.regen} a round"><b style="width:${(100 * mana / def.mana.max).toFixed(0)}%"></b><span>${mana}</span></div>` : ''}
           <div class="sl-s">${st.join('')}</div>`;
         el.className = 'sl' + (sel ? ' sel' : '') + (plan && d.owner === this.me ? ' ord' : '') + (d.dying !== undefined ? ' dim' : '') + (zoomedOut && !sel ? ' compact' : '');
         el._w = el.offsetWidth; el._h = el.offsetHeight;
@@ -1005,13 +1037,13 @@ class Game {
     const name = id => { const q = tl.pre.squads.find(x => x.id === id); if (!q) { const b = bld(id); return b ? `<b class="t${b.owner}">${b.owner === this.me ? 'Your' : 'Enemy'} ${esc(this.bname(b))}</b>` : '?'; } if (q.owner !== this.me && !tl.everSeen(id)) return `<b class="t${q.owner}">An unseen enemy</b>`; return `<b class="t${q.owner}">${q.owner === this.me ? 'Your' : 'Enemy'} ${esc(defOf(q).name)}</b>`; };
     const lines = [];
     for (const e of tl.events) {
-      const verb = { swing: 'cuts into', volley: 'shoots', lob: 'rains arrows on', storm: 'brings an Arrow Storm down on', sweep: 'sweeps through', pierce: 'drives a piercing bolt through', charge: 'charges into', blast: 'blasts', parting: 'lands a parting blow on', riposte: 'ripostes' };
+      const verb = { mighty: 'smashes', thunder: 'strikes with Dark Thunder', explode: 'blows up summoned bones on', leap: 'lands on', swing: 'cuts into', volley: 'shoots', lob: 'rains arrows on', storm: 'brings an Arrow Storm down on', sweep: 'sweeps through', pierce: 'drives a piercing bolt through', charge: 'charges into', blast: 'blasts', parting: 'lands a parting blow on', riposte: 'ripostes' };
       if (e.type === 'construct' && (e.owner === this.me || this.knownB.has(e.id))) lines.push({ T: e.T, html: `${name(e.id)} ${e.done ? 'goes up' : 'construction begins'}` });
       else if (e.type === 'built' && (e.owner === this.me || this.knownB.has(e.id))) lines.push({ T: e.T, html: `${name(e.id)} is finished` });
       else if (e.type === 'train' && e.owner === this.me) lines.push({ T: e.T, html: `${name(e.id)} starts training ${esc(FACTIONS[this.faction(e.owner)].units[e.role].name)}` });
       else if (e.type === 'trainCancel' && e.owner === this.me) lines.push({ T: e.T, html: `${name(e.id)} stops training ${esc(FACTIONS[this.faction(e.owner)].units[e.role].name)} (+${e.refund} refunded)` });
       else if (e.type === 'queueDrop' && e.owner === this.me) lines.push({ T: e.T, html: `Build queue: ${esc(BUILDINGS[e.btype].name[this.faction(e.owner)])} dropped (${esc(e.why)})` });
-      else if (e.type === 'spawn' && e.owner === this.me) lines.push({ T: e.T, html: `<b class="t${e.owner}">New ${esc(FACTIONS[this.faction(e.owner)].units[e.role].name)}</b> join your army` });
+      else if (e.type === 'spawn' && e.owner === this.me) lines.push({ T: e.T, html: e.summon ? `<b class="t${e.owner}">Summoned Skeletons</b> rise from the ground` : `<b class="t${e.owner}">New ${esc(FACTIONS[this.faction(e.owner)].units[e.role].name)}</b> join your army` });
       else if (e.type === 'bdown') lines.push({ T: e.T, html: `${name(e.id)} is destroyed` });
       else if (e.type === 'shrine') lines.push({ T: e.T, html: e.owner === this.me ? 'You claim a resource site' : e.owner < 0 ? 'A resource site is freed' : 'The enemy claims a resource site' });
       else if (e.type === 'income' && e.owner === this.me) lines.push({ T: e.T, html: `Income <span class="gain">+${e.amount}</span> ${this.ecoName()} (now ${e.supply})` });
@@ -1027,8 +1059,12 @@ class Game {
       else if (e.type === 'buff') lines.push({ T: e.T, html: `${name(e.id)} rallies ${e.ids.length} squad${e.ids.length > 1 ? 's' : ''}` });
       else if (e.type === 'raise') lines.push({ T: e.T, html: `${name(e.id)} raises the dead${e.ids.length ? `: ${e.ids.map(name).join(', ')}` : ' (nobody to raise)'}` });
       else if (e.type === 'land') lines.push({ T: e.T, html: `${name(e.id)} ${e.kind === 'leap' ? 'leaps' : 'steps through the shadows'}${e.pushed.length ? `, shoving ${e.pushed.map(name).join(', ')}` : ''}` });
+      else if (e.type === 'stun') lines.push({ T: e.T, html: `${name(e.id)} is stunned` });
+      else if (e.type === 'crumble') lines.push({ T: e.T, html: `${name(e.id)} crumble to dust` });
+      else if (e.type === 'fizzle') lines.push({ T: e.T, html: `${name(e.id)}: the spell fizzles${e.kind === 'explode' ? ' (no summoned skeletons there)' : ' (out of mana)'}` });
+      else if (e.type === 'release' && e.kind === 'summon') lines.push({ T: e.T, html: `${name(e.id)} calls ${e.count} squads of skeletons from the ground` });
       else if (e.type === 'wallOn') lines.push({ T: e.T, html: `${name(e.id)} braces a shield wall` });
-      else if (e.type === 'release' && !e.hit.length) lines.push({ T: e.T, html: `${name(e.id)}: ${e.kind} ${e.blocked ? 'blocked' : 'misses (nobody in the area)'}` });
+      else if (e.type === 'release' && !e.hit.length && e.kind !== 'summon') lines.push({ T: e.T, html: `${name(e.id)}: ${e.kind} ${e.blocked ? 'blocked' : 'misses (nobody in the area)'}` });
     }
     this.logLines = lines;
     $('log').innerHTML = `<button class="lg-head" id="lg-toggle">Battle log · ${lines.length}<span>▾</span></button><div class="lg-list">` + (lines.length ? lines.map((l, i) => `<div class="lg" data-i="${i}">${l.html}</div>`).join('') : '<div class="lg">No blows landed this round.</div>') + '</div>';
@@ -1063,7 +1099,7 @@ class Game {
           const q = at(e.dst);
           if (q) {
             this.texts.add(q.x, q.z, `−${e.dmg}`, 'dmg');
-            const tag = { charge: 'Charge!', parting: 'Parting blow', riposte: 'Riposte', blast: 'Bone Blast', storm: 'Arrow Storm', sweep: 'Sweep', pierce: 'Piercing Bolt' }[e.kind];
+            const tag = { charge: 'Charge!', parting: 'Parting blow', riposte: 'Riposte', blast: 'Bone Blast', storm: 'Arrow Storm', sweep: 'Sweep', pierce: 'Piercing Bolt', mighty: 'Mighty Swing', thunder: 'Dark Thunder', explode: 'Corpse Explosion', leap: 'Leap Strike' }[e.kind];
             if (e.walled) this.texts.add(q.x, q.z, 'Shields!', 'def', 2.1);
             if (tag) this.texts.add(q.x, q.z, tag, 'tag', 2.9);
             if (e.cover) this.texts.add(q.x, q.z, 'Cover', 'def', 1.9);
@@ -1074,10 +1110,17 @@ class Game {
         else if (e.type === 'parry') { const q = at(e.id); if (q) this.texts.add(q.x, q.z, 'Parried!', 'tag', 2.9, 1.6); }
         else if (e.type === 'disengage') { const q = at(e.id); if (q) this.texts.add(q.x, q.z, 'Disengage', 'def', 2.4); }
         else if (e.type === 'watchEnd') { const q = at(e.id); if (q) this.texts.add(q.x, q.z, 'Overwatch!', 'tag', 2.6); }
-        else if (e.type === 'buff') { for (const id of e.ids) { const q = at(id); if (q) { this.texts.add(q.x, q.z, 'Rallied', 'ok', 2.4); this.pulse(q.x, q.z, radiusOf(q) + 0.4, COL.rally); } } }
+        else if (e.type === 'buff') { for (const id of e.ids) { const q = at(id); if (q) { this.texts.add(q.x, q.z, e.armor ? `Rallied +${e.armor} armour` : 'Rallied', 'ok', 2.4); this.pulse(q.x, q.z, radiusOf(q) + 0.4, COL.rally); } } }
         else if (e.type === 'release' && (e.kind === 'blast' || e.kind === 'storm')) this.pulse(e.ex, e.ez, skillOf(defOf(this.tl.pre.squads.find(x => x.id === e.id)), e.kind).radius, COL[e.kind], true);
+        else if (e.type === 'release' && e.kind === 'thunder') this.lightning(e.chain);
+        else if (e.type === 'release' && e.kind === 'explode') { this.pulse(e.ex, e.ez, 2.5, COL.explode, true); this.pulse(e.ex, e.ez, 2.8, COL.explode); this.texts.add(e.ex, e.ez, 'Corpse Explosion!', 'tag', 2.9); }
+        else if (e.type === 'release' && e.kind === 'summon') { this.pulse(e.ex, e.ez, 1.6, COL.summon, true); this.texts.add(e.ex, e.ez, 'The dead rise…', 'ok', 2.6); }
+        else if (e.type === 'release' && e.kind === 'mighty') { const q = at(e.id); if (q) this.pulse(q.x, q.z, radiusOf(q) + 2.6, COL.mighty); }
+        else if (e.type === 'stun') { const q = at(e.id); if (q) { this.texts.add(q.x, q.z, 'Stunned!', 'tag', 2.4, 1.6); this.pulse(q.x, q.z, radiusOf(q) + 0.3, COL.stun); } }
+        else if (e.type === 'fizzle') { const q = at(e.id); if (q) this.texts.add(q.x, q.z, e.kind === 'explode' ? 'No skeletons there' : 'Out of mana', 'def', 2.2); }
+        else if (e.type === 'crumble') { const q = at(e.id); if (q) this.texts.add(q.x, q.z, 'Crumbles to dust', 'def', 2, 1.4); }
         else if (e.type === 'release' && e.kind === 'sweep') { const q = at(e.id); if (q) this.pulse(q.x, q.z, radiusOf(q) + 1.6, COL.sweep); }
-        else if (e.type === 'land') { const q = at(e.id); if (q) { this.pulse(e.ex, e.ez, radiusOf(q) + 0.6, COL[e.kind]); this.texts.add(e.ex, e.ez, e.kind === 'leap' ? 'Heroic Leap!' : 'Shadow Step', 'tag', 2.6); } for (const id of e.pushed) { const o = at(id); if (o) this.texts.add(o.x, o.z, 'Shoved', 'def', 2.2); } }
+        else if (e.type === 'land') { const q = at(e.id); if (q) { this.pulse(e.ex, e.ez, radiusOf(q) + 0.6, COL[e.kind]); this.texts.add(e.ex, e.ez, e.kind === 'leap' ? (e.dmg ? 'Leap Strike!' : 'Heroic Leap!') : 'Shadow Step', 'tag', 2.6); } for (const id of e.pushed) { const o = at(id); if (o) this.texts.add(o.x, o.z, 'Shoved', 'def', 2.2); } }
         else if (e.type === 'raise') { for (const id of e.ids) { const q = at(id); if (q) { this.texts.add(q.x, q.z, '+1 model', 'ok', 2.4); this.pulse(q.x, q.z, radiusOf(q) + 0.4, COL.raise); } } }
         else if (e.type === 'wallOn') { const q = at(e.id); if (q) this.texts.add(q.x, q.z, defOf(q).skills[0].name, 'ok', 2.4); }
         else if (e.type === 'release' && e.blocked) { const q = at(e.id); if (q) this.texts.add(e.ex, e.ez, 'Blocked', 'def', 1.2); }
@@ -1131,6 +1174,21 @@ class Game {
     }
   }
   clearWatches() { if (!this.watchMeshes) return; for (const m of this.watchMeshes.values()) { this.view.layers.fx.remove(m); m.geometry.dispose(); m.material.dispose(); } this.watchMeshes.clear(); }
+  // Dark Thunder: a jagged bolt from the caster through every target it jumped to
+  lightning(chain) {
+    if (!chain || chain.length < 2) return;
+    const pts = [];
+    for (let i = 0; i < chain.length - 1; i++) {
+      const a = chain[i], b = chain[i + 1];
+      for (let k = 0; k < 6; k++) { const t = k / 6, j = k ? (Math.random() - 0.5) * 0.7 : 0; pts.push({ x: a.x + (b.x - a.x) * t + j, z: a.z + (b.z - a.z) * t + j }); }
+    }
+    pts.push(chain[chain.length - 1]);
+    for (const [w, c] of [[0.34, COL.thunder], [0.12, 0xffffff]]) {
+      const m = ribbon(pts, w, c, 0.95, 0, 1.1);
+      this.view.addFx(m, 0.55, (o, k) => { o.material.opacity = 0.95 * (1 - k); });
+    }
+    for (const p of chain.slice(1)) this.pulse(p.x, p.z, 0.9, COL.thunder, true);
+  }
   // expanding ring / flash on the table
   pulse(x, z, r, color, fill = false) {
     const m = fill ? disc(r, color, 0.6) : ring(r, 0.16, color, 0.9);
@@ -1186,17 +1244,21 @@ class Game {
 Object.assign(Game.prototype, BaseUI, ProductionUI, OnlineUI, SettingsUI);
 
 const CAT_HEX = { move: '#34c759', attack: '#ff3b30', defense: '#3fa9ff' };
-const ACT_COL = { work: '#ffb020', swing: 'var(--swing)', volley: 'var(--volley)', lob: 'var(--volley)', charge: CAT_HEX.move, leap: CAT_HEX.move, step: CAT_HEX.move, blast: CAT_HEX.attack, storm: CAT_HEX.attack, sweep: CAT_HEX.attack, pierce: CAT_HEX.attack, rally: CAT_HEX.defense, raise: CAT_HEX.defense, wall: CAT_HEX.defense, wait: '#8a857c' };
-const SKILL_IC = { charge: 'dash', leap: 'shove', step: 'disrupt', blast: 'frag', storm: 'shoot', sweep: 'sweep', pierce: 'range', rally: 'rally', raise: 'heal', wall: 'fortify' };
+const ACT_COL = { work: '#ffb020', swing: 'var(--swing)', volley: 'var(--volley)', lob: 'var(--volley)', charge: CAT_HEX.move, leap: CAT_HEX.move, step: CAT_HEX.move, blast: CAT_HEX.attack, storm: CAT_HEX.attack, sweep: CAT_HEX.attack, pierce: CAT_HEX.attack, mighty: CAT_HEX.attack, thunder: CAT_HEX.attack, explode: CAT_HEX.attack, rally: CAT_HEX.defense, raise: CAT_HEX.defense, wall: CAT_HEX.defense, summon: CAT_HEX.defense, wait: '#8a857c' };
+const SKILL_IC = { charge: 'dash', leap: 'shove', step: 'disrupt', blast: 'frag', storm: 'shoot', sweep: 'sweep', pierce: 'range', rally: 'rally', raise: 'heal', wall: 'fortify', mighty: 'attack', summon: 'spawn', thunder: 'zone', explode: 'frag' };
 const SKILL_HELP = {
   charge: 'drag its knob to aim the lane: the squad rushes down it and slams into the first enemy squad.',
-  leap: 'drag its knob to a spot up to 7″ away: the hero jumps over walls and squads and shoves enemies at the landing.',
+  leap: 'drag its knob to a spot up to 7″ away: the hero jumps over walls and squads; the landing hits and shoves enemies around it.',
+  mighty: 'drag its knob to aim a heavy, wide swing with a long reach: it hits hard and stuns everyone it hits (their actions pause for a while).',
+  summon: 'drag its knob to a spot up to 4″ away: two squads of skeletons rise there at the end of the round. They march on the enemy and crumble after 3 rounds.',
+  thunder: 'drag its knob onto an enemy (it needs a clear line): the lightning strikes it, then jumps to up to 3 more enemies close by, weaker each jump.',
+  explode: 'drag its knob onto one of your summoned skeleton squads: it bursts, hitting every enemy around it.',
   step: 'drag its knob to a spot up to 7″ away: the hero vanishes and reappears there, with no parting blows.',
   blast: 'drag its knob to place the circle (within 9″).',
   storm: 'drag its knob to place the circle (within 15″): arrows arc over walls.',
   sweep: 'tap its knob: the hero swings all the way round, hitting every enemy close by.',
   pierce: 'drag its knob to aim the bolt: it hits every squad on the line until a wall.',
-  rally: 'tap its knob: allies in the circle get +1 defend and hit 25% harder this round.',
+  rally: 'tap its knob: allies in the circle get +1 defend and extra armour this round.',
   raise: 'tap its knob: wounded squads in the circle each get one fallen model back.',
   wall: 'tap its knob: from the start of the round, hits from the front deal only 30%.',
 };
@@ -1225,7 +1287,7 @@ const LEGEND = [
   ['Resources', [['gold', 'Gold (Kingdom)'], ['souls', 'Souls (Undead)'], ['cp', 'Command points'], ['army', 'Army size / cap'], ['ap', 'Action points'], ['goal', 'HQ: Keep / Crypt']]],
   ['Squads', [['hero', 'Hero'], ['tank', 'Tank'], ['fighter', 'Fighter'], ['ranged', 'Ranged'], ['fast', 'Fast'], ['builder', 'Builder']]],
   ['Orders', [['move', 'Move'], ['attack', 'Swing'], ['shoot', 'Volley'], ['defend', 'Defend'], ['parry', 'Parry'], ['overwatch', 'Overwatch'], ['tierup', 'Act earlier'], ['undo', 'Undo'], ['release', 'Clear'], ['control', 'Your orders']]],
-  ['Skills', [['dash', 'Charge'], ['shove', 'Heroic Leap'], ['disrupt', 'Shadow Step'], ['sweep', 'Sweep'], ['frag', 'Bone Blast'], ['shoot', 'Arrow Storm'], ['range', 'Piercing Bolt'], ['rally', 'Rally'], ['heal', 'Raise'], ['fortify', 'Lock Shields / Grave Wall']]],
+  ['Skills', [['dash', 'Charge'], ['shove', 'Leap Strike'], ['attack', 'Mighty Swing'], ['spawn', 'Summon Warband'], ['zone', 'Dark Thunder'], ['frag', 'Corpse Explosion'], ['shoot', 'Arrow Storm'], ['range', 'Piercing Bolt'], ['rally', 'Rally'], ['fortify', 'Lock Shields / Grave Wall']]],
   ['Stances', [['guard', 'Guard'], ['hold', 'Hold'], ['advance', 'Advance']]],
   ['Buildings', [['spawn', 'Barracks / Ossuary'], ['range', 'Watchtower / Bone Spire'], ['farm', 'Farm'], ['node', 'Mine'], ['souls', 'Soul Well'], ['cp', 'Banner / Obelisk'], ['fortify', 'Palisade / Bone Fence'], ['build', 'Build / work']]],
   ['Status', [['engaged', 'Engaged in melee'], ['cooldown', 'Skill recharging'], ['defend', 'Defends left'], ['army', 'Models in the squad']]],
@@ -1257,13 +1319,15 @@ const HELP = {
 <li><b>Buildings</b> can be hit by any attack and take extra damage. Towers and HQs shoot the nearest enemy they see after every round.</li>
 </ul>`,
   economy: () => `
+<p>The two armies play very differently.</p>
 <ul>
-<li><b>Kingdom: Gold.</b> A steady income: the Keep earns ${FACTIONS.kingdom.eco.hq} a round, every <b>Farm</b> ${BUILDINGS.farm.income}, every <b>Mine</b> (on a resource site) ${BUILDINGS.mine.income}.</li>
-<li><b>Undead: Souls.</b> Fed by death: the Crypt earns ${FACTIONS.undead.eco.hq} a round and each <b>Soul Well</b> (on a resource site) ${BUILDINGS.well.income}, and every model that dies (either side) within ${RULES.soulRange}″ of your squads, Crypt, Obelisks or Soul Wells gives <b>${RULES.soulPerModel} souls</b> (a hero ${RULES.soulPerHero}).</li>
-<li><b>Builders</b> (Peasants / Grave Thralls) put up every building. Select one: its panel shows what it will do, its own buttons and the building cards. Pick a building, move the see-through ghost (green = it fits, red = it doesn't, and why) and press <b>✓ Confirm</b>: it joins your <b>build queue</b> (numbered ghosts on the table). A free builder takes the next one, walks there and spends its AP as <b>work</b>; two builders work twice as fast.</li>
-<li><b>Production queues.</b> Your base has one build queue (up to ${RULES.queueMaxBuild} buildings, shared by all builders) and every HQ / Barracks has its own training queue (up to ${RULES.queueMax} squads). Nothing is paid when you queue: each item is <b>paid when it starts</b>. If you can't afford the next item, no builder is free or the army is at its cap, the queue <b>waits</b> (amber dot) and nothing behind it jumps ahead; a green dot means it starts this round. The <b>Production</b> bar above your squad cards shows every queue: tap an icon to remove it (tap the squad in training twice to stop it for a full refund), drag one sideways to change the order. Queues carry on by themselves over the rounds.</li>
-<li>With <b>no orders</b> a builder keeps at its job: it finishes its building over as many rounds as it takes, then <b>gathers</b> at the nearest farm or mine (Kingdom) or soul well or crypt (Undead) for extra income, two per building. Drag the <b>hammer</b> knob onto a site or damaged building, or the <b>gather</b> knob onto a farm, mine, well or crypt. <b>Hold</b> keeps it still. Train more builders at your HQ (max ${RULES.maxBuilders}).</li>
-<li><b>Barracks</b> train one squad at a time (tap a squad card several times to queue more): builders take 1 round, fighters, shooters and fast squads 2, tanks 3. <b>Watchtowers</b> see far and shoot. <b>Banners / Obelisks</b>: +1 command point. <b>Palisades</b> block paths and volleys. Army cap: ${RULES.armyCap} squads (more on the big maps).</li>
+<li><b>Kingdom: the all-rounder.</b> Sturdy, plain squads that are easy to learn. Its hero, <b>The Chosen</b>, leaps into fights (<b>Leap Strike</b> hits and shoves at the landing), <b>Rallies</b> nearby allies (+${FACTIONS.kingdom.units.hero.skills.find(k => k.kind === 'rally').armor} armour and a defend) and lands a <b>Mighty Swing</b>: big damage, long reach, and it <b>stuns</b> (the target's actions pause).</li>
+<li><b>Kingdom economy: gold and farms.</b> The Keep earns ${FACTIONS.kingdom.eco.hq} a round, every <b>Mine</b> (on a resource site) ${BUILDINGS.mine.income}. <b>Farms</b> are big (they take up land) and up to ${BUILDINGS.farm.slots} <b>peasants</b> work each one (1 gold per ${FACTIONS.kingdom.eco.gather.farm} AP each): the more peasants and farms, the stronger your late game. Peasants (up to ${FACTIONS.kingdom.maxBuilders}) don't count toward the army cap.</li>
+<li><b>Builders</b> (peasants) put up every Kingdom building. Pick a building, move the see-through ghost (green = it fits, red = it doesn't, and why) and press <b>✓ Confirm</b>: it joins your <b>build queue</b> (numbered ghosts). A free builder takes the next one and spends its AP as <b>work</b>; with no orders it keeps at its job, then farms or mines. Drag the <b>hammer</b> knob onto a site or damaged building, or the <b>gather</b> knob onto a farm or mine.</li>
+<li><b>Undead: cheap and many.</b> Every squad is weaker but costs about half as much. The <b>Necromancer</b> is a slow <b>mage</b>: it shoots magic bolts and casts with <b>mana</b> (${FACTIONS.undead.units.hero.mana.max} max, +${FACTIONS.undead.units.hero.mana.regen} a round) instead of cooldowns, so it can cast the same spell several times in a round while it has AP and mana: <b>Summon Warband</b> (two skeleton squads rise, march on the enemy and crumble after ${RULES.summonTtl} rounds), <b>Dark Thunder</b> (chain lightning that jumps to nearby enemies) and <b>Corpse Explosion</b> (blow up one of your summoned squads).</li>
+<li><b>Undead economy: souls.</b> The Crypt earns ${FACTIONS.undead.eco.hq} a round and each <b>Soul Well</b> (on a resource site) ${BUILDINGS.well.income}; every model that dies (either side) within ${RULES.soulRange}″ of your Soul Wells gives <b>${RULES.soulPerModel} souls</b> (a hero ${RULES.soulPerHero}). Fight near your wells. The Undead have <b>no builders</b>: buildings <b>rise out of the ground</b> on their own (${RULES.maxRising} at a time, over a few rounds) and slowly mend. The Crypt raises Skeleton Warbands.</li>
+<li><b>Production queues.</b> One build queue for your base (up to ${RULES.queueMaxBuild}) and a training queue at every HQ / Barracks (up to ${RULES.queueMax}). Each item is <b>paid when it starts</b>; if you can't afford it, no builder is free or the army is at its cap, the queue <b>waits</b> (amber dot). The <b>Production</b> bar above your squad cards shows every queue: tap an icon to remove it (tap the squad in training twice to stop it for a refund), drag one sideways to reorder.</li>
+<li><b>Barracks / Ossuaries</b> train fighters, shooters and fast squads in 2 rounds, tanks in 3. <b>Towers</b> see far and shoot. <b>Banners / Obelisks</b>: +1 command point. <b>Walls</b> block paths and volleys. Army cap: ${RULES.armyCap} squads (more on the big maps).</li>
 </ul>`,
   fog: () => `
 <p>The table is covered in <b>fog</b>: thick mist where you have never been, a thin haze where you have been but can't see right now. You only see enemies your squads and buildings can see: within their vision, not behind walls or rocks, and not deep in a forest (a squad inside a forest is only seen from close by). Hidden enemies show as faded <b>last seen</b> markers, and enemy buildings stay where you last saw them.</p>

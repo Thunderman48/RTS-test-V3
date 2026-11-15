@@ -42,7 +42,7 @@ export const MAPS = {
     sites: [{ x: 16.5, z: 16 }, { x: 27, z: 27.5 }, { x: 31, z: 4 }],
     hqSpots: [10, 20, 30],
     road: [[0, 20], [20, 14], [44, 26], [64, 20]],
-    capBonus: 1,
+    capBonus: 4,
   },
   highland: {
     id: 'highland', name: 'Highland Ruins', w: 64, h: 44, blurb: 'A maze of ruins around a mountain lake. Tight paths, good cover.',
@@ -62,7 +62,7 @@ export const MAPS = {
     sites: [{ x: 17, z: 29.5 }, { x: 25, z: 6 }, { x: 30, z: 37.5 }],
     hqSpots: [11, 22, 33],
     road: [[0, 22], [18, 30], [46, 14], [64, 22]],
-    capBonus: 1,
+    capBonus: 4,
   },
   greatfield: {
     id: 'greatfield', name: 'Great Field', w: 80, h: 52, blurb: 'A huge open battlefield with ponds, woods and a long stream. For big armies.',
@@ -82,7 +82,7 @@ export const MAPS = {
     sites: [{ x: 20, z: 17 }, { x: 30, z: 45 }, { x: 34, z: 24 }, { x: 26, z: 4 }],
     hqSpots: [12, 26, 40],
     road: [[0, 26], [24, 16], [56, 36], [80, 26]],
-    capBonus: 2,
+    capBonus: 8,
   },
 };
 export const MAP_ORDER = ['crossing', 'twinrivers', 'highland', 'greatfield'];
@@ -97,7 +97,8 @@ export const DEPLOY = [
   { role: 'fighter', x: 12.5, dz: 3.5 },
   { role: 'ranged', x: 9, dz: -5.5 },
   { role: 'fast', x: 9, dz: 6 },
-  { role: 'builder', x: 7, dz: 3.2 },
+  { role: 'builder', alt: 'fighter', x: 7, dz: 3.2 },          // the undead have no builders: a warband instead
+  { role: 'builder', x: 6.5, dz: -2.6, only: 'kingdom' },         // the kingdom starts with two peasant squads
 ];
 
 export const mirrorOn = (W, H) => p => ({ ...p, x: W - p.x, z: H - p.z });

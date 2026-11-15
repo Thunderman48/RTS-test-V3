@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!-- Rovina (temporary mark): a shield split Kingdom blue / Undead purple, a sword crossed with a bone -->
+  <path d="M32 3 L57 9.5 V29 C57 45.5 46 55.5 32 61 C18 55.5 7 45.5 7 29 V9.5 Z" fill="#1d1a24"/>
+  <path d="M32 7 L11 12.5 V29 C11 43 20.5 51.8 32 56.6 Z" fill="#3a78d8"/>
+  <path d="M32 7 L53 12.5 V29 C53 43 43.5 51.8 32 56.6 Z" fill="#9b59d0"/>
+  <path d="M32 7 L11 12.5 V29 C11 43 20.5 51.8 32 56.6 C43.5 51.8 53 43 53 29 V12.5 Z" fill="none" stroke="#f2efe6" stroke-width="2.4" stroke-linejoin="round"/>
+  <!-- bone (top right to bottom left) -->
+  <g fill="#ece4cf" stroke="#2a2430" stroke-width="1.4">
+    <path d="M42.5 17.5 L22.5 40.5" stroke-width="5.2" stroke-linecap="round" stroke="#2a2430"/>
+    <path d="M42.5 17.5 L22.5 40.5" stroke-width="3" stroke-linecap="round" stroke="#ece4cf"/>
+    <circle cx="44.6" cy="17.9" r="2.6"/><circle cx="42.1" cy="15.4" r="2.6"/>
+    <circle cx="20.4" cy="40.1" r="2.6"/><circle cx="22.9" cy="42.6" r="2.6"/>
+  </g>
+  <!-- sword (top left to bottom right) -->
+  <g stroke-linecap="round" stroke-linejoin="round">
+    <path d="M19 15 L41 41" stroke="#2a2430" stroke-width="6"/>
+    <path d="M19 15 L41 41" stroke="#dfe5ee" stroke-width="3.6"/>
+    <path d="M36.5 43.5 L44 36" stroke="#2a2430" stroke-width="5"/>
+    <path d="M36.5 43.5 L44 36" stroke="#e0b84f" stroke-width="3"/>
+    <path d="M42 42 L47 47" stroke="#2a2430" stroke-width="5"/>
+    <path d="M42 42 L47 47" stroke="#7a5230" stroke-width="3"/>
+    <circle cx="48" cy="48" r="2.4" fill="#e0b84f" stroke="#2a2430" stroke-width="1.4"/>
+  </g>
+</svg>

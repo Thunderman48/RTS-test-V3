@@ -193,8 +193,7 @@ button { font-family: inherit; color: inherit; cursor: pointer; touch-action: ma
 .brand p { margin: 4px 0 0; color: var(--muted); font-size: 13px; }
 .brand .tag { display: inline-block; margin-top: 8px; padding: 3px 10px; border-radius: 999px; background: rgba(255,255,255,.08); font-size: 11px; }
 .brand-mark { display: flex; justify-content: center; gap: 8px; }
-.brand-mark span { width: 26px; height: 26px; border-radius: 50%; background: var(--kingdom); box-shadow: inset 0 0 0 4px rgba(255,255,255,.85); }
-.brand-mark span + span { background: var(--undead); }
+.brand-mark img { width: 64px; height: 64px; filter: drop-shadow(0 4px 10px rgba(0,0,0,.45)); }
 .factions { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .fac { padding: 18px 14px; border-radius: 16px; text-align: left; display: flex; flex-direction: column; gap: 4px; color: #fff; }
 .fac b { font-size: 17px; } .fac small { opacity: .85; font-size: 12px; }
@@ -471,3 +470,12 @@ button { font-family: inherit; color: inherit; cursor: pointer; touch-action: ma
   .mapcards { grid-template-columns: repeat(2, 1fr); }
   .st-row { flex-wrap: wrap; } .st-ctl input[type=range] { width: 120px; }
 }
+
+/* mana (mages), stun, summoned */
+.sl-mp { position: relative; height: 6px; margin-top: 2px; border-radius: 3px; background: rgba(255,255,255,.12); overflow: hidden; }
+.sl-mp b { display: block; height: 100%; background: #5aa8ff; }
+.sl-mp span { display: none; }
+.sl .st.stun { color: #ffd23f; font-weight: 900; }
+.sl .st.sum { color: #7dff9a; font-weight: 900; }
+.sq .mn, i.mn { color: #7fb8ff; font-style: normal; font-weight: 800; }
+.knob b.mn { color: #7fb8ff; font-size: 13px; }

@@ -1,6 +1,6 @@
 // Builders: walk next to a site and spend the AP that is left as work.
 // Shared by the planner UI and the AI so both make the same orders.
-import { RULES } from '../data/units.js';
+import { RULES, gatherSlotsOf } from '../data/units.js';
 import { defOf, radiusOf } from './state.js';
 import { obstacles, navKey, footprint, edgeDist, gatherRate, bdef } from './base.js';
 import { Nav, pathAP, pointBlocked } from './nav.js';
@@ -53,7 +53,7 @@ export function builderPlan(s, q, f, apLeft) {
 // buildings builder q could gather at, nearest first, that still have a free slot
 export function gatherTarget(s, q) {
   const taken = b => s.squads.filter(o => o.id !== q.id && o.hp > 0 && o.owner === q.owner && o.task && o.task.kind === 'gather' && o.task.bid === b.id).length;
-  return (s.buildings || []).filter(b => b.owner === q.owner && gatherRate(s, b) && taken(b) < RULES.gatherSlots)
+  return (s.buildings || []).filter(b => b.owner === q.owner && gatherRate(s, b) && taken(b) < gatherSlotsOf(b.type))
     .sort((a, b) => dist(q.x, q.z, a.x, a.z) - dist(q.x, q.z, b.x, b.z))[0] || null;
 }
 // a builder's remembered task, while its building still needs it

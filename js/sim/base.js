@@ -1,6 +1,6 @@
 // Base & economy: buildings (footprints, obstacles, placement), shrine nodes, supply,
 // training. Deterministic, shared by the resolver, the planner UI and the AI.
-import { RULES, BUILDINGS, FACTIONS, squadRadius, trainCost } from '../data/units.js';
+import { RULES, BUILDINGS, FACTIONS, squadRadius, trainCost, trainsOf, maxBuildersOf } from '../data/units.js';
 import { dist, inRect } from './geom.js';
 import { pointBlocked } from './nav.js';
 
@@ -93,14 +93,17 @@ export function placeError(s, p, type, x, z, rot = 0, extra = [], squads = true)
   if (squads) for (const q of s.squads) if (q.hp > 0 && overlaps(f, { x: q.x, z: q.z, r: squadRadius(FACTIONS[q.faction].units[q.role], q.models) }, 0.1)) return 'A squad is standing there';
   const count = t => live.filter(b => b.owner === p && b.type === t).length;
   if (type === 'banner' && count('banner') >= RULES.maxBannerCp) return `At most ${RULES.maxBannerCp} ${d.name[s.players[p].faction].toLowerCase()}s`;
-  if (type === 'farm' && count('farm') >= RULES.maxFarms) return `At most ${RULES.maxFarms} farms`;
   return '';
 }
 export function bannerCount(s, p) { return (s.buildings || []).filter(b => b.owner === p && b.type === 'banner' && b.hp > 0).length; }
 export function bonusCp(s, p) { return Math.min(RULES.maxBannerCp, (s.buildings || []).filter(b => b.owner === p && b.type === 'banner' && b.hp > 0 && !b.build).length); }
 export const isBuilder = q => q.role === 'builder';
 export function builderCount(s, p) { return s.squads.filter(q => q.owner === p && q.hp > 0 && isBuilder(q)).length + (s.buildings || []).filter(b => b.owner === p && b.train && b.train.role === 'builder').length; }
-export function armySize(s, p) { return s.squads.filter(q => q.owner === p && q.hp > 0).length + (s.buildings || []).filter(b => b.owner === p && b.train).length; }
+// squads counted against the army cap: builders (their own cap) and summoned squads don't count
+export const inArmy = q => !isBuilder(q) && !q.ttl;
+export function armySize(s, p) { return s.squads.filter(q => q.owner === p && q.hp > 0 && inArmy(q)).length + (s.buildings || []).filter(b => b.owner === p && b.train && b.train.role !== 'builder').length; }
+// does side p's faction raise buildings out of the ground (no builders)?
+export const rises = (s, p) => !!FACTIONS[s.players[p].faction].rises;
 // income per round for side p (finished buildings only)
 export function incomeOf(s, p) {
   const eco = FACTIONS[s.players[p].faction].eco;
@@ -118,13 +121,13 @@ export function gatherRate(s, b) {
   return FACTIONS[s.players[b.owner].faction].eco.gather[b.type] || 0;
 }
 // can building b train `role` (ignoring supply)?
-export function trainsRole(b, role) { return (BUILDINGS[b.type].trains || []).includes(role); }
+export function trainsRole(b, role, faction) { return trainsOf(b.type, faction).includes(role); }
 
 // ---- production queues ------------------------------------------------------------------
 // Two kinds: one base build queue per side (s.bq[p], items { qid, type, x, z, rot }) that free
 // builders take from, and a queue of roles on every training building (b.queue). Items are paid
 // when they start (at the start of a round); a queue whose front item can't start waits.
-export const trainers = (s, p) => (s.buildings || []).filter(b => b.owner === p && b.hp > 0 && !b.build && (BUILDINGS[b.type].trains || []).length);
+export const trainers = (s, p) => (s.buildings || []).filter(b => b.owner === p && b.hp > 0 && !b.build && trainsOf(b.type, s.players[p].faction).length);
 const qfoot = (it, p) => ({ type: it.type, x: it.x, z: it.z, rot: it.rot, owner: p, ...footprint(it.type, it.x, it.z, it.rot) });
 export const buildQueue = (s, p) => (s.bq && s.bq[p]) || [];
 
@@ -133,7 +136,7 @@ export const buildQueue = (s, p) => (s.bq && s.bq[p]) || [];
 export function validateQueue(s, p, o = {}) {
   const fac = s.players[p].faction, oq = o.queue || {};
   const cur = buildQueue(s, p);
-  const hasBuilder = builderCount(s, p) > 0;
+  const hasBuilder = builderCount(s, p) > 0 || rises(s, p);
   const src = Array.isArray(oq.builds) ? oq.builds : cur.concat(Array.isArray(o.builds) ? o.builds : []);
   const bq = [], ids = new Set();
   for (const it of src) {
@@ -153,7 +156,7 @@ export function validateQueue(s, p, o = {}) {
   for (const b of trainers(s, p)) {
     const rep = oq.trains && oq.trains[b.id];
     const list = Array.isArray(rep) ? rep : (b.queue || []).concat(legacy.filter(t => t && t.bid === b.id).map(t => t.role));
-    tq[b.id] = list.filter(r => typeof r === 'string' && trainCost(fac, r) && trainsRole(b, r)).slice(0, RULES.queueMax);
+    tq[b.id] = list.filter(r => typeof r === 'string' && trainCost(fac, r) && trainsRole(b, r, fac)).slice(0, RULES.queueMax);
   }
   const cancel = [...new Set((Array.isArray(oq.cancel) ? oq.cancel : []).filter(bid => trainers(s, p).some(b => b.id === bid && b.train)))];
   return { bq, tq, cancel };
@@ -187,7 +190,8 @@ export function startQueues(s, p, opts = {}) {
   let supply = s.supply[p];
   for (const b of s.buildings) if (cancel.has(b.id) && b.owner === p && b.train) supply += trainCost(fac, b.train.role);
   const out = { builds: [], trains: {} };
-  const crews = s.squads.filter(q => q.owner === p && q.hp > 0 && isBuilder(q)).length;
+  // sites that can be under way at once: one per builder (undead: RULES.maxRising, they rise on their own)
+  const crews = rises(s, p) ? RULES.maxRising : s.squads.filter(q => q.owner === p && q.hp > 0 && isBuilder(q)).length;
   let sites = s.buildings.filter(b => b.owner === p && b.hp > 0 && b.build > 0).length;
   const extra = [], keep = [];
   let line = false;
@@ -201,7 +205,7 @@ export function startQueues(s, p, opts = {}) {
     }
     let wait = '', need = 0;
     if (line) wait = 'line';
-    else if (sites >= crews) wait = 'builders';
+    else if (sites >= crews) wait = rises(s, p) ? 'rising' : 'builders';
     else if (supply < d.cost) { wait = res; need = d.cost - supply; }
     else if (placeError(s, p, it.type, it.x, it.z, it.rot, extra, true)) wait = 'blocked';
     if (wait) { out.builds.push({ qid: it.qid, wait, need }); keep.push(it); line = true; continue; }
@@ -215,7 +219,7 @@ export function startQueues(s, p, opts = {}) {
   }
   if (apply) s.bq[p] = keep;
   let army = armySize(s, p), nb = builderCount(s, p);
-  for (const b of cancel.size ? s.buildings : []) if (cancel.has(b.id) && b.owner === p && b.train) { army--; if (b.train.role === 'builder') nb--; }
+  for (const b of cancel.size ? s.buildings : []) if (cancel.has(b.id) && b.owner === p && b.train) { if (b.train.role === 'builder') nb--; else army--; }
   for (const b of trainers(s, p).sort((a, c) => +a.id.slice(1) - +c.id.slice(1))) {
     const list = out.trains[b.id] = [];
     let busy = !!b.train && !cancel.has(b.id), started = false;
@@ -223,12 +227,12 @@ export function startQueues(s, p, opts = {}) {
       if (busy) { list.push({ wait: 'line' }); continue; }
       const c = trainCost(fac, role);
       let wait = '', need = 0;
-      if (army >= s.board.cap) wait = 'cap';
-      else if (role === 'builder' && nb >= RULES.maxBuilders) wait = 'builders';
+      if (role !== 'builder' && army >= s.board.cap) wait = 'cap';
+      else if (role === 'builder' && nb >= maxBuildersOf(fac)) wait = 'builders';
       else if (supply < c) { wait = res; need = c - supply; }
       busy = true;
       if (wait) { list.push({ wait, need }); continue; }
-      supply -= c; army++; if (role === 'builder') nb++;
+      supply -= c; if (role === 'builder') nb++; else army++;
       list.push({ starts: true }); started = true;
       if (apply) {
         s.supply[p] -= c;

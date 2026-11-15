@@ -9,7 +9,7 @@
 //  first enemy that moves in the front cone, in any tier), cover (forests halve volleys),
 //  line of sight (walls and rocks stop volleys; lobs arc over), skill cooldowns.
 // Produces the new state and a log used for scrubbable playback.
-import { RULES, isMelee, isShooter, skillOf, cdOf } from '../data/units.js';
+import { RULES, isMelee, isShooter, skillOf, cdOf, gatherSlotsOf, isMage } from '../data/units.js';
 import { dist, norm, segRect, segCircle } from './geom.js';
 import { clone, defOf, radiusOf, modelsFor, speedOf } from './state.js';
 import { validateOrders, actionCost } from './orders.js';
@@ -20,7 +20,7 @@ import { obstacles, navKey, hitRadius, bdef, applyQueue, startQueues, spawnSpot,
 import { approachSpot } from './builders.js';
 import { Nav } from './nav.js';
 import { BUILDINGS, FACTIONS, trainCost } from '../data/units.js';
-import { addSquad } from './state.js';
+import { addSquad, freeSpot } from './state.js';
 
 const r3 = v => Math.round(v * 1000) / 1000;
 const MELEE_HITS = ['swing', 'charge', 'parting'];
@@ -112,6 +112,8 @@ export function resolveRound(state0, ordersIn) {
       parry: !!plan.parry,
       watch: plan.overwatch ? { active: true } : null,
       mult: 1,
+      armor: 0,                    // extra armour this round (Rally)
+      stun0: q.stun || 0,          // stun carried over from last round
       parted: new Set(),           // enemies that already got a parting blow on this squad
       acted: false,
     });
@@ -182,11 +184,12 @@ export function resolveRound(state0, ordersIn) {
     }
     let defended = false;
     if (r && r.defends > 0) { r.defends--; defended = true; }
-    const dmg = damageAfter(h.dmg * (h.cover ? RULES.coverMult : 1) * (walled ? r.wall.mult : 1), defOf(q).armor, defended);
+    const dmg = damageAfter(h.dmg * (h.cover ? RULES.coverMult : 1) * (walled ? r.wall.mult : 1), defOf(q).armor + (r ? r.armor : 0), defended);
     const before = q.models;
     q.hp = Math.max(0, q.hp - dmg);
     q.models = modelsFor(q, q.hp);
-    if (before > q.models) deaths.push({ x: q.x, z: q.z, n: before - q.models, hero: defOf(q).models === 1, T });
+    if (before > q.models && !q.ttl) deaths.push({ x: q.x, z: q.z, n: before - q.models, hero: defOf(q).models === 1, T });
+    if (h.stun && q.hp > 0) { q.stun = Math.max(q.stun || 0, h.stun); ev({ type: 'stun', id: q.id, src: h.src, ap: h.stun }); }
     ev({ type: 'hit', src: h.src, dst: q.id, dmg, raw: Math.round(h.dmg), defended, cover: !!h.cover, walled, kind: h.kind, hp: q.hp, models: q.models, lost: before - q.models, defLeft: r ? r.defends : 0 });
   }
   function applyHits(batch) {
@@ -257,24 +260,79 @@ export function resolveRound(state0, ordersIn) {
     ev({ type: 'release', id: q.id, kind: 'pierce', hit: struck, ex: r3(ox + (bx - ox) * tCut), ez: r3(oz + (bz - oz) * tCut), blocked: !struck.length && tCut < 1 });
   }
 
+  // Dark Thunder: the first enemy squad at the aim point (in sight of the caster), then jumps to the
+  // nearest enemy squad not yet struck, each jump weaker
+  function thunder(r, cx, cz, sk) {
+    const q = r.q, struck = [], chain = [{ x: r3(q.x), z: r3(q.z) }];
+    let cur = null, bd = 1e9;
+    for (const e of living()) {
+      if (e.owner === q.owner) continue;
+      const d = dist(cx, cz, e.x, e.z) - radiusOf(e);
+      if (d <= sk.radius && d < bd && losCut(s.terrain, q.x, q.z, e.x, e.z) >= 1) { bd = d; cur = e; }
+    }
+    let dmg = atkDmg(r, sk.dmg);
+    for (let i = 0; cur && i <= sk.jumps; i++) {
+      hits.push({ src: q.id, dst: cur, dmg, kind: 'thunder' });
+      struck.push(cur.id); chain.push({ x: r3(cur.x), z: r3(cur.z) });
+      dmg *= sk.decay;
+      const from = cur; cur = null; bd = 1e9;
+      for (const e of living()) {
+        if (e.owner === q.owner || struck.includes(e.id)) continue;
+        const d = dist(from.x, from.z, e.x, e.z) - radiusOf(e) - radiusOf(from);
+        if (d <= sk.jump && d < bd) { bd = d; cur = e; }
+      }
+    }
+    ev({ type: 'release', id: q.id, kind: 'thunder', hit: struck, chain, ex: r3(cx), ez: r3(cz) });
+  }
+  // Corpse Explosion: one of the caster's summoned squads near the aim point bursts
+  function explode(r, cx, cz, sk) {
+    const q = r.q;
+    let best = null, bd = 1e9;
+    for (const o of living()) {
+      if (o.owner !== q.owner || !o.ttl) continue;
+      const d = dist(cx, cz, o.x, o.z) - radiusOf(o);
+      if (d <= 1.5 && d < bd) { bd = d; best = o; }
+    }
+    if (!best) { ev({ type: 'fizzle', id: q.id, kind: 'explode', ex: r3(cx), ez: r3(cz) }); return; }
+    const dmg = (sk.base + sk.perModel * best.models) * r.mult, struck = [];
+    for (const e of targets(q)) if (dist(best.x, best.z, e.x, e.z) <= sk.radius + rad(e) * 0.6) { hits.push({ src: q.id, dst: e, dmg, kind: 'explode' }); struck.push(e.id); }
+    best.hp = 0; best.models = 0;
+    ev({ type: 'release', id: q.id, kind: 'explode', hit: struck, ex: r3(best.x), ez: r3(best.z), burst: best.id });
+  }
+  const summons = [];      // Summon Warband casts this round: they rise at the end of the round
+
   // ---- one AP of an action ---------------------------------------------------------
   function step(r, moves, moved) {
     const q = r.q, a = r.actions[r.idx];
     const def = r.def;
+    // stunned: nothing advances (no movement, no wind-up) until the stun has run out
+    if (q.stun > 0) {
+      if (!r.stunned) { r.stunned = true; ev({ type: 'stunned', id: q.id, ap: q.stun }); }
+      q.stun--;
+      if (r.stun0 > 0) r.stun0--;
+      if (!q.stun) { delete q.stun; r.stunned = false; ev({ type: 'unstun', id: q.id }); }
+      return;
+    }
     if (r.el === 0) {
       r.st = { phase: 'go' };
       if (a.kind === 'move') r.st.pts = a.pts.map(p => ({ ...p }));
       const sk = skillOf(def, a.kind);
-      if (sk) q.cd = { ...(q.cd || {}), [a.kind]: sk.cd + 1 };
+      if (sk && isMage(def)) {
+        // mages pay mana when the cast starts (no cooldown); not enough mana: the spell fizzles
+        if ((q.mana || 0) < sk.mana) { ev({ type: 'fizzle', id: q.id, kind: a.kind }); r.idx++; r.el = 0; r.st = null; return; }
+        q.mana -= sk.mana;
+        ev({ type: 'mana', id: q.id, mana: q.mana, spent: sk.mana });
+      } else if (sk) q.cd = { ...(q.cd || {}), [a.kind]: sk.cd + 1 };
       r.st.sk = sk;
       const tele = (kind, extra) => ev({ type: 'tele', id: q.id, kind, ox: r3(q.x), oz: r3(q.z), dx: r3(q.fx), dz: r3(q.fz), t1: r3(T + a.cost), ...extra });
       const face = (x, z) => { const d = norm(x - q.x, z - q.z); if (d.l > 0.01) { q.fx = d.x; q.fz = d.z; } };
-      if (a.kind === 'swing' || a.kind === 'volley' || a.kind === 'charge' || a.kind === 'pierce') {
+      if (a.kind === 'swing' || a.kind === 'volley' || a.kind === 'charge' || a.kind === 'pierce' || a.kind === 'mighty') {
         face(a.x, a.z);
         r.st.dx = q.fx; r.st.dz = q.fz; r.st.ox = q.x; r.st.oz = q.z;
         rec(q, T);
         const at = def.attack;
         if (a.kind === 'swing') tele('swing', { shape: 'arc', R: r3(radiusOf(q) + at.reach), ch: at.cosHalf });
+        else if (a.kind === 'mighty') tele('mighty', { shape: 'arc', R: r3(radiusOf(q) + sk.reach), ch: sk.cosHalf });
         else if (a.kind === 'volley') tele('volley', { shape: 'line', len: at.range, w: at.width });
         else if (a.kind === 'pierce') tele('pierce', { shape: 'line', len: sk.range, w: sk.width });
         else {
@@ -282,7 +340,7 @@ export function resolveRound(state0, ordersIn) {
           tele('charge', { t1: r3(T + sk.wind), shape: 'line', len: sk.len, w: r3(radiusOf(q) * 2) });
         }
       }
-      if (a.kind === 'lob' || a.kind === 'blast' || a.kind === 'storm' || a.kind === 'leap' || a.kind === 'step') {
+      if (a.kind === 'lob' || a.kind === 'blast' || a.kind === 'storm' || a.kind === 'leap' || a.kind === 'step' || a.kind === 'summon' || a.kind === 'thunder' || a.kind === 'explode') {
         const range = a.kind === 'lob' ? def.attack.range : sk.range;
         const R = a.kind === 'lob' ? def.attack.radius : sk.radius || radiusOf(q) + 0.4;
         const c = clampAim(q.x, q.z, a.x, a.z, range);
@@ -382,7 +440,9 @@ export function resolveRound(state0, ordersIn) {
             const tx = e.x + v.x * sk.shove, tz = e.z + v.z * sk.shove;
             if (!pointBlocked(obs(), tx, tz, radiusOf(e) * 0.85)) { rec(e, T); e.x = tx; e.z = tz; rec(e, T + 1); pushed.push(e.id); moved.add(e.id); }
           }
-          ev({ type: 'land', id: q.id, kind: 'leap', ex: r3(q.x), ez: r3(q.z), pushed });
+          // Leap Strike: the landing also hits every enemy close around it
+          if (sk.dmg) for (const e of targets(q)) if (dist(q.x, q.z, e.x, e.z) <= radiusOf(q) + sk.radius + rad(e)) hits.push({ src: q.id, dst: e, dmg: atkDmg(r, sk.dmg), kind: 'leap' });
+          ev({ type: 'land', id: q.id, kind: 'leap', ex: r3(q.x), ez: r3(q.z), pushed, dmg: !!sk.dmg });
           st.phase = 'done';
         }
       }
@@ -417,10 +477,10 @@ export function resolveRound(state0, ordersIn) {
           if (st.mode && st.pts.length) moves.push({ r, st, d: speedOf(q) * terrainFactor(s.terrain, q.x, q.z) });
         } else {
           if (!st.started) {
-            // gathering: at most RULES.gatherSlots builders per building
+            // gathering: at most gatherSlotsOf(type) builders per building (farms 4, others 2)
             if (st.mode === 'gather') {
               const g = gatherers.get(b.id) || new Set();
-              if (g.size >= RULES.gatherSlots && !g.has(q.id)) { ev({ type: 'workFail', id: q.id, bid: b.id, full: true }); st.mode = null; q.task = null; }
+              if (g.size >= gatherSlotsOf(b.type) && !g.has(q.id)) { ev({ type: 'workFail', id: q.id, bid: b.id, full: true }); st.mode = null; q.task = null; }
               else { g.add(q.id); gatherers.set(b.id, g); }
             }
             if (st.mode) {
@@ -442,8 +502,9 @@ export function resolveRound(state0, ordersIn) {
           if (st.mode !== 'gather' && !b.build && b.hp >= bd0.hp && q.task?.bid === b.id) q.task = null;
         }
       }
-      if (r.el >= a.cost && st.mode === 'gather' && st.got > 0) {
-        // partial work carries over to the next round while the builder stays at it
+      if (r.el >= a.cost && st.mode === 'gather' && st.got > 0 && gatherRate(s, b) > 0) {
+        // partial work carries over to the next round while the builder stays at it (a building
+        // destroyed meanwhile pays nothing)
         const rate = gatherRate(s, b), acc = (q.gacc && q.gacc.bid === b.id ? q.gacc.ap : 0) + st.got;
         const amount = Math.floor(acc / rate);
         q.gacc = { bid: b.id, ap: acc - amount * rate };
@@ -460,7 +521,19 @@ export function resolveRound(state0, ordersIn) {
           if (arcHits(st.ox, st.oz, st.dx, st.dz, R, at.cosHalf, e.x, e.z, rad(e))) { hits.push({ src: q.id, dst: e, dmg: atkDmg(r, at.dmg), kind: 'swing' }); struck.push(e.id); }
         }
         ev({ type: 'release', id: q.id, kind: 'swing', hit: struck });
-      } else if (a.kind === 'volley') volley(r, st.ox, st.oz, st.dx, st.dz);
+      } else if (a.kind === 'mighty') {
+        const R = radiusOf(q) + sk.reach, struck = [];
+        for (const e of targets(q)) {
+          if (arcHits(st.ox, st.oz, st.dx, st.dz, R, sk.cosHalf, e.x, e.z, rad(e))) { hits.push({ src: q.id, dst: e, dmg: atkDmg(r, sk.dmg), kind: 'mighty', stun: sk.stun }); struck.push(e.id); }
+        }
+        ev({ type: 'release', id: q.id, kind: 'mighty', hit: struck });
+      } else if (a.kind === 'summon') {
+        // the summoned squads rise at the end of the round
+        summons.push({ owner: q.owner, x: st.cx, z: st.cz, count: sk.count, src: q.id });
+        ev({ type: 'release', id: q.id, kind: 'summon', hit: [], ex: r3(st.cx), ez: r3(st.cz), count: sk.count });
+      } else if (a.kind === 'thunder') thunder(r, st.cx, st.cz, sk);
+      else if (a.kind === 'explode') explode(r, st.cx, st.cz, sk);
+      else if (a.kind === 'volley') volley(r, st.ox, st.oz, st.dx, st.dz);
       else if (a.kind === 'lob') circleHit(r, 'lob', st.cx, st.cz, at.radius, atkDmg(r, at.dmg));
       else if (a.kind === 'blast' || a.kind === 'storm') circleHit(r, a.kind, st.cx, st.cz, sk.radius, atkDmg(r, sk.dmg));
       else if (a.kind === 'pierce') pierce(r, st.ox, st.oz, st.dx, st.dz, sk);
@@ -493,9 +566,9 @@ export function resolveRound(state0, ordersIn) {
         const ids = [];
         for (const o of rts) {
           if (o.q.owner !== q.owner || o.q.hp <= 0) continue;
-          if (dist(q.x, q.z, o.q.x, o.q.z) <= sk.radius + radiusOf(o.q)) { o.defends += sk.defends; o.mult = Math.max(o.mult, sk.dmgMult); ids.push(o.q.id); }
+          if (dist(q.x, q.z, o.q.x, o.q.z) <= sk.radius + radiusOf(o.q)) { o.defends += sk.defends; o.mult = Math.max(o.mult, sk.dmgMult || 1); o.armor = Math.max(o.armor, sk.armor || 0); ids.push(o.q.id); }
         }
-        ev({ type: 'buff', id: q.id, kind: 'rally', ids });
+        ev({ type: 'buff', id: q.id, kind: 'rally', ids, armor: sk.armor || 0 });
       }
     }
     if (r.el >= a.cost) { r.idx++; r.el = 0; r.st = null; }
@@ -697,6 +770,37 @@ export function resolveRound(state0, ordersIn) {
     const q = addSquad(s, b.owner, role, spot.x, spot.z);
     ev({ type: 'spawn', id: q.id, bid: b.id, role, owner: b.owner, x: r3(q.x), z: r3(q.z) });
   }
+  // summoned squads: older ones crumble after their last round, then this round's summons rise
+  for (const q of s.squads) if (q.ttl && --q.ttl <= 0) { q.hp = 0; ev({ type: 'crumble', id: q.id }); }
+  s.squads = s.squads.filter(q => q.hp > 0);
+  for (const c of summons) {
+    for (let i = 0; i < c.count; i++) {
+      const a = (i / c.count) * Math.PI * 2 + 0.6;
+      const q = addSquad(s, c.owner, 'summon', c.x + Math.cos(a) * 0.9 * (c.count > 1 ? 1 : 0), c.z + Math.sin(a) * 0.9 * (c.count > 1 ? 1 : 0));
+      q.fx = c.owner === 0 ? 1 : -1; q.stance = 'advance';   // summoned skeletons march on the enemy
+      freeSpot(s, q);
+      ev({ type: 'spawn', id: q.id, bid: c.src, role: 'summon', owner: c.owner, x: r3(q.x), z: r3(q.z), summon: true });
+    }
+  }
+  // undead buildings rise out of the ground on their own, and finished ones mend
+  for (const b of s.buildings) {
+    if (!FACTIONS[s.players[b.owner].faction].rises) continue;
+    const d = bdef(b);
+    if (b.build > 0) {
+      const w = Math.min(b.build, RULES.riseWork);
+      b.build -= w;
+      b.hp = Math.min(d.hp, Math.round(b.hp + d.hp * (1 - RULES.siteHp) * w / d.work));
+      ev({ type: 'rise', id: b.id, build: b.build });
+      if (b.build <= 0) { b.build = 0; b.vision = d.vision; ev({ type: 'built', id: b.id, btype: b.type, owner: b.owner, by: null }); }
+    } else if (b.hp < d.hp && b.type !== 'hq') b.hp = Math.min(d.hp, Math.round(b.hp + d.hp * RULES.undeadMend));
+  }
+  // mages regain mana; stun carried over from last round and still left is dropped, new stun carries once
+  for (const q of s.squads) {
+    const d = defOf(q);
+    if (d.mana) q.mana = Math.min(d.mana.max, (q.mana || 0) + d.mana.regen);
+    const r = rtById.get(q.id);
+    if (q.stun > 0 && r && r.stun0 > 0) delete q.stun;
+  }
   // resource sites belong to whoever has a finished mine / soul well on them
   for (const sh of s.shrines || []) {
     const b = s.buildings.find(b => bdef(b).site && !b.build && dist(b.x, b.z, sh.x, sh.z) < 0.6);
@@ -706,8 +810,8 @@ export function resolveRound(state0, ordersIn) {
   // souls: models that fell near an undead squad or collector (either side's dead)
   for (const p of [0, 1]) {
     if (FACTIONS[s.players[p].faction].eco.res !== 'souls') continue;
-    const col = s.squads.filter(q => q.owner === p).map(q => ({ x: q.x, z: q.z }))
-      .concat(s.buildings.filter(b => b.owner === p && bdef(b).souls).map(b => ({ x: b.x, z: b.z })));
+    // collectors: finished own Soul Wells only
+    const col = s.buildings.filter(b => b.owner === p && bdef(b).souls && !b.build).map(b => ({ x: b.x, z: b.z }));
     for (const d of deaths) {
       if (!col.some(c => dist(c.x, c.z, d.x, d.z) <= RULES.soulRange)) continue;
       const amount = d.hero ? RULES.soulPerHero : d.n * RULES.soulPerModel;

@@ -1,5 +1,5 @@
 // Order costs and validation (shared by the planner UI, the AI and the resolver).
-import { RULES, isMelee, isShooter, skillOf, cdOf, SKILL_KINDS as SK } from '../data/units.js';
+import { RULES, isMelee, isShooter, skillOf, cdOf, isMage, SKILL_KINDS as SK } from '../data/units.js';
 import { defOf, emptyPlan, apFor } from './state.js';
 import { validateQueue, bonusCp } from './base.js';
 
@@ -29,7 +29,9 @@ export function sanitizePlan(q, plan) {
   let used = prepaidCost(p);
   const budget = apFor(q);
   if (used > budget) return emptyPlan();
-  const used1 = new Set();          // each skill at most once per round
+  const used1 = new Set();          // each skill at most once per round (mages: as often as their mana allows)
+  const mage = isMage(def);
+  let mana = q.mana || 0;
   for (const a0 of plan.actions || []) {
     let a;
     if (a0.kind === 'move') {
@@ -40,8 +42,14 @@ export function sanitizePlan(q, plan) {
     else if (a0.kind === 'work' && q.role === 'builder') a = { kind: 'work', x: num(a0.x), z: num(a0.z), ap: Math.max(1, Math.round(num(a0.ap))) };
     else if (a0.kind === def.attack.kind) a = { kind: a0.kind, x: num(a0.x), z: num(a0.z) };
     else if (skillOf(def, a0.kind)) {
-      if (used1.has(a0.kind) || cdOf(q, a0.kind) > 0) continue;
-      used1.add(a0.kind);
+      if (mage) {
+        const m = skillOf(def, a0.kind).mana || 0;
+        if (m > mana) continue;
+        mana -= m;
+      } else {
+        if (used1.has(a0.kind) || cdOf(q, a0.kind) > 0) continue;
+        used1.add(a0.kind);
+      }
       a = { kind: a0.kind, x: num(a0.x), z: num(a0.z) };
     } else continue;
     const c = actionCost(q, a);

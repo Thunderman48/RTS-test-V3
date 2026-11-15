@@ -30,7 +30,10 @@ export function createGame(seed = 1, factions = ['kingdom', 'undead'], mapId = '
   for (const p of [0, 1]) { const h = p === 0 ? { x: HQ_X, z: hqz[0] } : mirror({ x: HQ_X, z: hqz[1] }); addBuilding(s, p, 'hq', h.x, h.z, 0, true); }
   // the army deploys in front of its HQ with a small seeded shuffle, so games differ
   for (const p of [0, 1]) {
-    for (const d of DEPLOY) {
+    for (const d0 of DEPLOY) {
+      if (d0.only && d0.only !== factions[p]) continue;
+      const d = FACTIONS[factions[p]].units[d0.role] ? d0 : { ...d0, role: d0.alt };
+      if (!d.role) continue;
       const z0 = Math.max(2.5, Math.min(def.h - 2.5, hqz[p] + d.dz));
       const pos = p === 0 ? { x: d.x, z: z0 } : mirror({ x: d.x, z: z0 });
       const jit = d.role === 'builder' ? 0 : 16;
@@ -52,6 +55,8 @@ export function addSquad(s, owner, role, x, z) {
     stance: 'guard',
     cd: {},                            // skill cooldowns: kind -> rounds left
   };
+  if (def.mana) q.mana = def.mana.start; // mages: mana left
+  if (def.summoned) q.ttl = RULES.summonTtl;   // summoned squads: rounds left before they crumble
   s.squads.push(q);
   return q;
 }

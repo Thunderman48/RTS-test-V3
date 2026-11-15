@@ -1,7 +1,7 @@
 // Base UI: building and resource-site views, builders' Build menu (ghost + Confirm),
 // training docks, building nameplates and the economy readout. Mixed into Game.
 import * as THREE from 'three';
-import { RULES, FACTIONS, BUILDINGS, trainCost } from '../data/units.js';
+import { RULES, FACTIONS, BUILDINGS, trainCost, trainsOf } from '../data/units.js';
 import { footprint, hitRadius, armySize, nearestFreeSite, siteTaken, bdef, incomeOf, gatherRate, startQueues, placeError } from '../sim/base.js';
 import { buildingsSeenBy } from '../sim/vision.js';
 import { defOf } from '../sim/state.js';
@@ -16,23 +16,25 @@ import { TEAM } from './teams.js';
 const FX = (type, fac) => {
   const eco = FACTIONS[fac].eco, d = BUILDINGS[type];
   return {
-    hq: `Your base: lose it and you lose the battle. Earns ${eco.hq} ${eco.name.toLowerCase()} a round, trains builders, and shoots nearby enemies.` + (eco.res === 'souls' ? ` Collects souls from deaths within ${RULES.soulRange}″.` : ''),
+    hq: `Your base: lose it and you lose the battle. Earns ${eco.hq} ${eco.name.toLowerCase()} a round, ${eco.res === 'souls' ? 'raises Skeleton Warbands' : 'trains peasants (builders and farmers)'}, and shoots nearby enemies.`,
     barracks: 'Trains squads: one at a time, taking 2 or 3 rounds each.',
     tower: `Sees ${d.vision}″ and shoots the nearest enemy within ${d.fire?.range}″ after every round.`,
-    banner: '+1 command point while it stands (max +2).' + (eco.res === 'souls' ? ` Collects souls from deaths within ${RULES.soulRange}″.` : ''),
+    banner: '+1 command point while it stands (max +2).',
     wall: 'Blocks movement and volleys.',
-    farm: `+${d.income} gold every round.`,
+    farm: `A big field: +${d.income} gold every round, and up to ${d.slots} peasants farm it (1 gold per ${FACTIONS.kingdom.eco.gather.farm} AP each).`,
     mine: `Built on a resource site: +${d.income} gold every round.`,
-    well: `Built on a resource site: +${d.income} souls every round, and collects souls from deaths within ${RULES.soulRange}″.`,
+    well: `Built on a resource site: +${d.income} souls every round, and every model that dies within ${RULES.soulRange}″ (either side) gives ${RULES.soulPerModel} souls (a hero ${RULES.soulPerHero}).`,
   }[type];
 };
-const SHORT = { barracks: 'Trains squads', tower: 'Sees far · shoots', banner: '+1 command point', wall: 'Blocks paths and shots', farm: `+${BUILDINGS.farm.income} gold a round`, mine: `On a site · +${BUILDINGS.mine.income} gold`, well: `On a site · +${BUILDINGS.well.income} souls` };
+const SHORT = { barracks: 'Trains squads', tower: 'Sees far · shoots', banner: '+1 command point', wall: 'Blocks paths and shots', farm: `Big · ${BUILDINGS.farm.slots} farmers`, mine: `On a site · +${BUILDINGS.mine.income} gold`, well: `On a site · souls from deaths` };
 
 export const BaseUI = {
   // ---------------------------------------------------------------- views
   faction(owner) { return this.state.players[owner].faction; },
   paint(owner) { return this.state.players[owner].paint || this.state.players[owner].faction; },
   eco(p = this.me) { return FACTIONS[this.faction(p)].eco; },
+  // undead: buildings rise out of the ground (no builders)
+  rises(p = this.me) { return !!FACTIONS[this.faction(p)].rises; },
   ecoName(p = this.me) { return this.eco(p).name.toLowerCase(); },
   bname(b) { return BUILDINGS[b.type].name[this.faction(b.owner)]; },
 
@@ -149,6 +151,11 @@ export const BaseUI = {
     const sel = this.selectedSquad?.();
     const bs = this.myBuilders();
     const q = sel && sel.role === 'builder' && sel.owner === this.me ? sel : bs.find(x => !this.planner.plan(x.id)) || bs[0];
+    if (this.rises()) {
+      // no builders: the base build panel (buildings rise out of the ground on their own)
+      this.select(null); this.selB = 'build'; this.buildBy = null; this.flashCards = true; this.changed();
+      return;
+    }
     if (!q) {
       this.toast(`You have no builders. Train one at your ${BUILDINGS.hq.name[this.faction(this.me)]}.`, true);
       const hq = this.state.buildings.find(b => b.owner === this.me && b.type === 'hq');
@@ -160,7 +167,7 @@ export const BaseUI = {
     this.flashCards = true;
     this.changed();
   },
-  gatherNames() { return this.eco().res === 'gold' ? 'farm or mine' : 'soul well or your crypt'; },
+  gatherNames() { return this.eco().res === 'gold' ? 'farm or mine' : 'soul well'; },
   // first spot for a new building: next to the builder, toward home (sites: the nearest free one)
   defaultSpot(type, rot) {
     const q = this.builderSq();
@@ -287,21 +294,23 @@ export const BaseUI = {
   },
 
   // ---------------------------------------------------------------- the builder's own dock
+  // q = null: the base build panel (no builder selected; the undead's only build panel)
   renderBuilderDock(q) {
     const dock = $('dock'), info = $('info');
     info.classList.add('hidden'); dock.classList.remove('hidden');
-    this.buildBy = q.id;
-    const fac = this.faction(this.me), eco = this.eco(), def = defOf(q);
-    const plan = this.planner.plan(q.id);
-    const task = this.planner.builderTask(q);
-    const st = this.planner.stanceOf(q);
+    this.buildBy = q ? q.id : null;
+    const fac = this.faction(this.me), eco = this.eco(), def = q && defOf(q);
+    const plan = q && this.planner.plan(q.id);
+    const task = q ? this.planner.builderTask(q) : null;
+    const st = q && this.planner.stanceOf(q);
     const pm = this.buildMode;
-    const head = `<div class="dk-head"><div><div class="nm">${icon('builder', 16)} ${esc(def.name)}</div><div class="sub">${q.models}/${def.models} models · ${q.hp} HP · Builder: free to command</div></div><button class="ib x" data-bd="close">✕</button></div>
-      <div class="bd-task ${task.mode || ''}">${esc(task.text)}</div>`;
+    const head = q ? `<div class="dk-head"><div><div class="nm">${icon('builder', 16)} ${esc(def.name)}</div><div class="sub">${q.models}/${def.models} models · ${q.hp} HP · Builder: free to command</div></div><button class="ib x" data-bd="close">✕</button></div>
+      <div class="bd-task ${task.mode || ''}">${esc(task.text)}</div>`
+      : `<div class="dk-head"><div><div class="nm">${icon('build', 16)} Build</div><div class="sub">${this.rises() ? `Your buildings rise out of the ground by themselves: ${RULES.maxRising} at a time, ${RULES.riseWork} work a round` : 'Free builders take the next building in the queue'}</div></div><button class="ib x" data-bd="close">✕</button></div>`;
     if (pm) {
       const d = BUILDINGS[pm.type], pv = pm.prev;
       const stt = pm.err ? esc(pm.err)
-        : `<b>#${pm.pos + 1} in the build queue</b> · ${esc(this.waitText(pm.fc))}${pm.fc?.starts && pv ? ` · ${pv.arrive ? `the nearest builder walks ${pv.arrive} AP, then ` : ''}${Math.min(pv.work, pv.need)}/${pv.need} work this round → <b>${pv.rounds <= 1 ? 'finished this round' : pv.rounds + ' rounds'}</b>` : ''}`;
+        : `<b>#${pm.pos + 1} in the build queue</b> · ${esc(this.waitText(pm.fc))}${this.rises() ? ` · rises in <b>${Math.ceil(d.work / RULES.riseWork)} round${Math.ceil(d.work / RULES.riseWork) > 1 ? 's' : ''}</b>` : pm.fc?.starts && pv ? ` · ${pv.arrive ? `the nearest builder walks ${pv.arrive} AP, then ` : ''}${Math.min(pv.work, pv.need)}/${pv.need} work this round → <b>${pv.rounds <= 1 ? 'finished this round' : pv.rounds + ' rounds'}</b>` : ''}`;
       dock.innerHTML = head + `<div class="bd-place"><div class="bb-t">${icon(d.icon, 22)}<div><b>${esc(d.name[fac])}</b> · ${d.cost} ${esc(eco.name.toLowerCase())} when it starts<div class="bb-st ${pm.err ? 'bad' : 'ok'}">${stt}</div><div class="bb-tip">Drag the ghost or tap the table to move it.</div></div></div>
         <div class="bd-pbtns">${d.shape === 'circle' ? '' : '<button class="chip" data-bd="rot">⟳ Rotate</button>'}<button class="chip" data-bd="cancel">✕ Cancel</button><button class="ready sm ok" data-bd="confirm" ${pm.err ? 'disabled' : ''}>✓ ${pm.replace !== undefined ? 'Move here' : 'Add to queue'}</button></div></div>`;
     } else {
@@ -310,33 +319,34 @@ export const BaseUI = {
       const needs = this.state.buildings.filter(b => this.needsWork(b));
       const gb = this.state.buildings.filter(b => b.owner === this.me && gatherRate(this.state, b));
       const btn = (act, ic, label, sub, on = false, dis = false) => `<button class="act cat-none${on ? ' on' : ''}" data-bd="${act}" ${dis ? 'disabled' : ''}>${icon(ic, 20)}${label}<small>${sub}</small></button>`;
-      dock.innerHTML = head + `<div class="dk-btns bd-btns">
+      dock.innerHTML = head + (!q ? '' : `<div class="dk-btns bd-btns">
           ${btn('move', 'move', 'Move', 'or tap', this.mode === 'move' && !!plan && plan.actions.some(a => a.kind === 'move'))}
           ${btn('gather', eco.icon, 'Gather', gb.length ? 'nearest' : 'none yet', task.mode === 'gather' && !!plan, !gb.length)}
           ${btn('fix', 'build', needs.length ? (needs.some(b => b.build) ? 'Finish' : 'Repair') : 'Repair', needs.length ? esc(this.bname(needs.sort((a, b) => Math.hypot(a.x - q.x, a.z - q.z) - Math.hypot(b.x - q.x, b.z - q.z))[0])) : 'none', false, !needs.length)}
           ${btn('hold', 'hold', st === 'hold' ? 'Holding' : 'Hold', st === 'hold' ? 'tap: work' : 'stay put', st === 'hold' && !plan)}
           ${btn('undo', 'undo', 'Undo', '', false, !plan)}
           ${btn('clear', 'release', 'Clear', 'automatic', false, !plan)}
-        </div>
-        <div class="bd-sec">Build queue · ${this.planner.bqList().length}/${RULES.queueMaxBuild} · shared by all your builders</div>
+        </div>`) + `
+        <div class="bd-sec">Build queue · ${this.planner.bqList().length}/${RULES.queueMaxBuild}${this.rises() ? '' : ' · shared by all your builders'}</div>
         <div class="pq-row in-dock">${this.queueRowHTML('b') || '<span class="pq-empty">Empty: pick a building below</span>'}</div>
         <div class="bd-sec${this.flashCards ? ' flash' : ''}">Add a building · ${icon(eco.icon, 12)} ${left} ${esc(eco.name.toLowerCase())} after this round's starts</div>
         <div class="bb-cards bd-cards">${FACTIONS[fac].buildings.map(t => {
           const d = BUILDINGS[t];
           const n = live.filter(b => b.type === t).length;
-          const max = t === 'banner' ? RULES.maxBannerCp : t === 'farm' ? RULES.maxFarms : 0;
+          const max = t === 'banner' ? RULES.maxBannerCp : 0;
           const nosite = d.site && !nearestFreeSite(this.state, 24, 16, this.planner.queued());
           const max2 = max && n >= max, dis = full || max2 || nosite;
-          return `<button class="bcard" data-bt="${t}" ${dis ? 'disabled' : ''} title="${esc(FX(t, fac))}">${icon(d.icon, 20)}<b>${esc(d.name[fac])}</b><small>${d.cost} · ${d.work} work</small><small class="fx">${full ? 'Queue full' : max2 ? 'Max reached' : nosite ? 'No free site' : SHORT[t]}</small></button>`;
+          return `<button class="bcard" data-bt="${t}" ${dis ? 'disabled' : ''} title="${esc(FX(t, fac))}">${icon(d.icon, 20)}<b>${esc(d.name[fac])}</b><small>${d.cost} · ${this.rises() ? `${Math.ceil(d.work / RULES.riseWork)} rd` : `${d.work} work`}</small><small class="fx">${full ? 'Queue full' : max2 ? 'Max reached' : nosite ? 'No free site' : SHORT[t]}</small></button>`;
         }).join('')}</div>
-        <div class="hint">Buildings are paid when they start. A builder with no orders keeps at its job, takes the next started building from the queue, then gathers ${esc(eco.name.toLowerCase())} at the nearest ${esc(this.gatherNames())}. Tap one of your buildings to send it there.</div>`;
+        <div class="hint">${this.rises() ? `Buildings are paid when they start, then rise out of the ground by themselves (at most ${RULES.maxRising} at a time) and slowly mend when damaged. Souls come from every model that dies near your Soul Wells.` : `Buildings are paid when they start. A builder with no orders keeps at its job, takes the next started building from the queue, then gathers ${esc(eco.name.toLowerCase())} at the nearest ${esc(this.gatherNames())}. Tap one of your buildings to send it there.`}</div>`;
     }
     this.flashCards = false;
     this.wireQueueRows(dock);
     dock.querySelectorAll('[data-bt]').forEach(el => el.onclick = () => { this.startPlace(el.dataset.bt); });
     dock.querySelectorAll('[data-bd]').forEach(el => el.onclick = () => {
       const a = el.dataset.bd;
-      if (a === 'close') this.select(null);
+      if (a === 'close') { this.select(null); this.selB = null; }
+      else if (!q && ['move', 'gather', 'fix', 'hold', 'undo', 'clear'].includes(a)) return;
       else if (a === 'rot') this.rotatePlace();
       else if (a === 'cancel') { this.buildMode = null; this.view.clear('ghost'); }
       else if (a === 'confirm') this.confirmPlace();
@@ -370,7 +380,7 @@ export const BaseUI = {
       });
       return;
     }
-    const roles = b.owner === this.me && !b.stale ? d.trains || [] : [];
+    const roles = b.owner === this.me && !b.stale ? trainsOf(b.type, fac) : [];
     const work = this.needsWork(b) ? `<div style="margin-top:8px"><button class="chip" data-x="work">${icon('builder', 14)} ${b.build ? 'Send a builder to finish it' : 'Send a builder to repair it'}</button></div>` : '';
     if (!roles.length) {
       dock.classList.add('hidden'); info.classList.remove('hidden');
@@ -431,7 +441,7 @@ export const BaseUI = {
       const tr = mine ? this.planner.training(b) : b.owner === this.me ? b.train : null;
       const nq = mine && b.queue ? this.planner.tqList(b).length : 0;
       const sel = b.id === this.selB;
-      const status = b.queued !== undefined ? `#${b.queued + 1} queued · ${b.fc?.starts ? 'starts now' : (this.waitText(b.fc).replace(/^Waits:? ?/, 'waits ') || 'waits')}` : b.ghost ? 'planned' : b.stale ? 'last seen' : b.build ? `${Math.round(d.work - b.build)}/${d.work} work` : tr ? `training ${FACTIONS[fac].units[tr.role].name}${tr.left > 1 ? ` · ${tr.left} rd` : ''}${nq ? ` · +${nq} queued` : ''}` : nq ? `${nq} queued` : '';
+      const status = b.queued !== undefined ? `#${b.queued + 1} queued · ${b.fc?.starts ? 'starts now' : (this.waitText(b.fc).replace(/^Waits:? ?/, 'waits ') || 'waits')}` : b.ghost ? 'planned' : b.stale ? 'last seen' : b.build ? (this.rises(b.owner) ? `rising · ${Math.ceil(b.build / RULES.riseWork)} rd` : `${Math.round(d.work - b.build)}/${d.work} work`) : tr ? `training ${FACTIONS[fac].units[tr.role].name}${tr.left > 1 ? ` · ${tr.left} rd` : ''}${nq ? ` · +${nq} queued` : ''}` : nq ? `${nq} queued` : '';
       const key = `${Math.round(b.hp)}|${status}|${sel}|${zoomedOut}|${b.dying !== undefined}`;
       if (el.dataset.key !== key) {
         el.dataset.key = key;

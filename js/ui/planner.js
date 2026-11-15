@@ -1,5 +1,5 @@
 // Draft orders for this round + predictions for drawing them.
-import { RULES, isMelee, isShooter, skillOf, skillsOf, cdOf } from '../data/units.js';
+import { RULES, isMelee, isShooter, skillOf, skillsOf, cdOf, isMage, trainsOf } from '../data/units.js';
 import { emptyOrders, emptyPlan, defOf, radiusOf, apFor } from '../sim/state.js';
 import { planCost, actionCost, cpUsage, SKILL_KINDS } from '../sim/orders.js';
 import { clampAim, engagedWith } from '../sim/resolve.js';
@@ -19,7 +19,19 @@ export class Planner {
   cp() { return cpUsage(this.s, this.g.me, this.draft); }
   apLeft(q) { const p = this.plan(q.id); return apFor(q) - (p ? planCost(q, p) : 0); }
   skillUsed(id, kind) { const p = this.plan(id); return !!p && p.actions.some(a => a.kind === kind); }
-  skillReady(q, kind) { return !!skillOf(defOf(q), kind) && cdOf(q, kind) === 0 && !this.skillUsed(q.id, kind); }
+  skillReady(q, kind) {
+    const sk = skillOf(defOf(q), kind);
+    if (!sk) return false;
+    if (isMage(defOf(q))) return this.manaLeft(q) >= sk.mana;
+    return cdOf(q, kind) === 0 && !this.skillUsed(q.id, kind);
+  }
+  // mages: mana left after the spells already planned this round
+  manaLeft(q) {
+    const def = defOf(q), p = this.plan(q.id);
+    let m = q.mana || 0;
+    if (p) for (const a of p.actions) { const k = skillOf(def, a.kind); if (k && k.mana) m -= k.mana; }
+    return m;
+  }
   enemies(q) { return this.s.squads.filter(e => e.owner !== q.owner && e.hp > 0 && (!this.g.canSeeEnemy || this.g.canSeeEnemy(e.id))); }
 
   // Take control (1 CP, hero free). Returns the plan or null.
@@ -68,7 +80,7 @@ export class Planner {
         const d = norm(a.x - x, a.z - z);
         if (d.l > 0.01) { fx = d.x; fz = d.z; }
         legs.push({ kind: a.kind, ox: x, oz: z, dx: fx, dz: fz, t0: t, t1: t + c, R: radiusOf(q) + (def.attack.reach || 0), ch: def.attack.cosHalf, len: def.attack.range, w: def.attack.width });
-      } else if (a.kind === 'lob' || a.kind === 'blast' || a.kind === 'storm') {
+      } else if (a.kind === 'lob' || a.kind === 'blast' || a.kind === 'storm' || a.kind === 'summon' || a.kind === 'thunder' || a.kind === 'explode') {
         const sk = skillOf(def, a.kind);
         const range = a.kind === 'lob' ? def.attack.range : sk.range;
         const c2 = clampAim(x, z, a.x, a.z, range);
@@ -77,6 +89,10 @@ export class Planner {
         legs.push({ kind: a.kind, ox: x, oz: z, cx: c2.x, cz: c2.z, R: a.kind === 'lob' ? def.attack.radius : sk.radius, range, t0: t, t1: t + c });
       } else if (a.kind === 'rally' || a.kind === 'raise') {
         legs.push({ kind: a.kind, cx: x, cz: z, R: skillOf(def, a.kind).radius, t0: t, t1: t + c });
+      } else if (a.kind === 'mighty') {
+        const sk = skillOf(def, 'mighty'), d = norm(a.x - x, a.z - z);
+        if (d.l > 0.01) { fx = d.x; fz = d.z; }
+        legs.push({ kind: 'mighty', ox: x, oz: z, dx: fx, dz: fz, R: radiusOf(q) + sk.reach, ch: sk.cosHalf, t0: t, t1: t + c });
       } else if (a.kind === 'sweep') {
         legs.push({ kind: 'sweep', ox: x, oz: z, dx: fx, dz: fz, R: radiusOf(q) + skillOf(def, 'sweep').reach, ch: -1, t0: t, t1: t + c });
       } else if (a.kind === 'wall') {
@@ -164,8 +180,12 @@ export class Planner {
     const q = this.squad(id), sk = skillOf(defOf(q), kind);
     if (!sk) return false;
     const cd = cdOf(q, kind);
-    if (cd > 0) { this.g.toast(`${sk.name} is recharging (${cd} round${cd > 1 ? 's' : ''})`, true); return false; }
-    if (this.skillUsed(id, kind)) { this.g.toast(`${sk.name} can be used once per round`, true); return false; }
+    if (isMage(defOf(q))) {
+      if (this.manaLeft(q) < sk.mana) { this.g.toast(`Not enough mana (${sk.mana} needed, ${this.manaLeft(q)} left)`, true); return false; }
+    } else {
+      if (cd > 0) { this.g.toast(`${sk.name} is recharging (${cd} round${cd > 1 ? 's' : ''})`, true); return false; }
+      if (this.skillUsed(id, kind)) { this.g.toast(`${sk.name} can be used once per round`, true); return false; }
+    }
     if (this.plan(id) && this.apLeft(q) < sk.ap) { this.g.toast(`Not enough AP (${sk.ap} needed)`, true); return false; }
     const plan = this.ensure(id); if (!plan) return false;
     if (this.apLeft(q) < sk.ap) { this.g.toast(`Not enough AP (${sk.ap} needed)`, true); return false; }
@@ -277,7 +297,7 @@ export class Planner {
   // can a building go into the queue here? (`except` = the queue item being moved)
   buildError(type, x, z, rot = 0, except = -1) {
     if (except < 0 && this.bqList().length >= RULES.queueMaxBuild) return `The build queue is full (${RULES.queueMaxBuild})`;
-    if (!builderCount(this.s, this.g.me)) return 'You need a builder: train one at your HQ';
+    if (!builderCount(this.s, this.g.me) && !this.g.rises?.()) return 'You need a builder: train one at your HQ';
     return placeError(this.s, this.g.me, type, x, z, rot, this.queued(except), false);
   }
   editBq(fn) { const l = this.bqList().map(x => ({ ...x })); fn(l); this.draft.bq = l; this.g.changed(); }
@@ -299,7 +319,7 @@ export class Planner {
   moveBuild(i, j) { this.editBq(l => { if (j < 0 || j >= l.length) return; const [x] = l.splice(i, 1); l.splice(j, 0, x); }); }
   trainError(b, role) {
     if (b.build) return 'Still under construction';
-    if (!trainsRole(b, role)) return 'It can\'t train that';
+    if (!trainsRole(b, role, this.fac)) return 'It can\'t train that';
     if (this.tqList(b).length >= RULES.queueMax) return `Queue full (${RULES.queueMax})`;
     return '';
   }

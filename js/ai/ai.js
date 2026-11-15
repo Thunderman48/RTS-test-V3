@@ -1,6 +1,6 @@
 // AI: advances as a battle line, directly controls its hero and the 3 squads
 // closest to the enemy, and aims a little ahead of enemies that moved last round.
-import { RULES, isMelee, isShooter, skillOf, cdOf } from '../data/units.js';
+import { RULES, FACTIONS, isMelee, isShooter, skillOf, cdOf, isMage, maxBuildersOf, trainsOf } from '../data/units.js';
 import { losCut, engagedWith } from '../sim/resolve.js';
 import { emptyOrders, emptyPlan, defOf, radiusOf, apFor } from '../sim/state.js';
 import { nearestEnemy, meleePlan, trimPath } from '../sim/stances.js';
@@ -17,7 +17,8 @@ export function aiOrders(s, p, memory = aiMemory(), opts = {}) {
   const level = opts.level || 'normal';
   const o = emptyOrders();
   memory.seen = memory.seen || {}; memory.prev = memory.prev || {};
-  const mine = s.squads.filter(q => q.owner === p && q.hp > 0 && q.role !== 'builder');
+  // builders work on their own; summoned skeletons march on their own (stance advance)
+  const mine = s.squads.filter(q => q.owner === p && q.hp > 0 && q.role !== 'builder' && !q.ttl);
   // fog: the AI only knows what its side sees, plus where it last saw the others (up to 3 rounds)
   const vis = visibleTo(s, p);
   const alive = new Set(s.squads.map(q => q.id));
@@ -51,7 +52,7 @@ export function aiOrders(s, p, memory = aiMemory(), opts = {}) {
   const army = mine.filter(q => q.role !== 'fast' || hqTarget);
   const atRally = army.filter(q => dist(q.x, q.z, rally.x, rally.z) < 6).length;
   const frac = { easy: 0.75, normal: 0.6, hard: 0.5 }[level] || 0.6;
-  const atCap = s.squads.filter(q => q.owner === p && q.hp > 0).length >= s.board.cap;
+  const atCap = armySize(s, p) >= s.board.cap;
   if (wave.phase === 'gather') {
     const enough = army.length >= 4 && atRally >= Math.ceil(army.length * frac);
     if (s.round >= 3 && army.length >= 3 && (enough || atCap || s.round - wave.since >= (level === 'hard' ? 3 : 4))) {
@@ -154,7 +155,9 @@ export function aiOrders(s, p, memory = aiMemory(), opts = {}) {
     const L = lead(t);
     const tx = t.x + (L ? L.x : 0), tz = t.z + (L ? L.z : 0);
     const gap = dist(q.x, q.z, t.x, t.z) - radiusOf(t) - radiusOf(q);
-    const ready = kind => { const k = skillOf(def, kind); return k && cdOf(q, kind) === 0 ? k : null; };
+    let mana = q.mana || 0;
+    const ready = kind => { const k = skillOf(def, kind); return k && (isMage(def) ? mana >= k.mana && left >= k.ap : cdOf(q, kind) === 0) ? k : null; };
+    const cast = (kind, x, z) => { const k = skillOf(def, kind); plan.actions.push({ kind, x, z }); left -= k.ap; if (isMage(def)) mana -= k.mana; };
     const engaged = engagedWith(q, enemies);
     // already locked in melee: prepare a parry
     if (def.parry && engaged.length) { plan.parry = true; left -= RULES.parryCost; }
@@ -175,6 +178,23 @@ export function aiOrders(s, p, memory = aiMemory(), opts = {}) {
       const d = Math.max(0.1, gap - 0.4), l = dist(q.x, q.z, t.x, t.z);
       plan.actions.push({ kind: 'leap', x: q.x + (t.x - q.x) / l * d, z: q.z + (t.z - q.z) / l * d }); left -= sk.ap;
     }
+    // the Chosen: Mighty Swing (stuns) when an enemy stands in its wide arc
+    if ((sk = ready('mighty')) && !t.isHq && gap <= sk.reach - 0.2) cast('mighty', t.x, t.z);
+    // necromancer: burst summoned skeletons that stand among enemies (or are about to crumble)
+    if (ready('explode')) {
+      const k = skillOf(def, 'explode');
+      for (const o of s.squads.filter(o => o.owner === p && o.ttl && o.hp > 0 && dist(o.x, o.z, q.x, q.z) <= k.range)) {
+        const n = enemies.filter(e => !e.isHq && dist(e.x, e.z, o.x, o.z) <= k.radius + radiusOf(e) * 0.6).length;
+        if ((n >= 2 || (n >= 1 && o.ttl <= 1)) && ready('explode')) cast('explode', o.x, o.z);
+      }
+    }
+    // necromancer: summon skeletons toward the enemy when it is close
+    if ((sk = ready('summon')) && !t.isHq && gap < 12 && s.squads.filter(o => o.owner === p && o.ttl).length < 4 && mana >= sk.mana + 25) {
+      const l = Math.max(0.1, dist(q.x, q.z, t.x, t.z)), d = Math.min(sk.range, Math.max(1.5, gap - 1));
+      cast('summon', q.x + (t.x - q.x) / l * d, q.z + (t.z - q.z) / l * d);
+    }
+    // necromancer: Dark Thunder at the target, as often as mana allows (keeping the bolt for the rest)
+    for (let i = 0; i < 2 && (sk = ready('thunder')) && !t.isHq && dist(q.x, q.z, t.x, t.z) - radiusOf(t) <= sk.range && losCut(s.terrain, q.x, q.z, t.x, t.z) >= 1; i++) cast('thunder', t.x, t.z);
     if ((sk = ready('sweep')) && enemies.filter(e => dist(e.x, e.z, q.x, q.z) <= radiusOf(q) + sk.reach + radiusOf(e)).length >= 2) { plan.actions.push({ kind: 'sweep', x: q.x, z: q.z }); left -= sk.ap; }
     // archers: Arrow Storm when two squads fit under it, or the target hides behind a wall
     if ((sk = ready('storm')) && dist(q.x, q.z, tx, tz) <= sk.range + 1) {
@@ -260,11 +280,13 @@ function economy(s, p, known, orders) {
     if (!bp.actions.length) continue;
     const plan = emptyPlan(); plan.actions = bp.actions; orders.squads[q.id] = plan; busy.add(q.id);
   }
+  const rising = !!FACTIONS[fac].rises;
   const place = (type, prefer) => {
     const free = builders.filter(x => !busy.has(x.id));
+    if (rising && mine.filter(b => b.build > 0).length + queued.length >= RULES.maxRising) return false;   // undead: at most 2 rising
     // once there is a barracks, keep enough back to train a squad (except for its own site)
     const reserve = count('barracks') && mine.some(b => b.type === 'barracks' && !b.build) && type !== 'barracks' ? 24 : 0;
-    if (!free.length || supply - reserve < BUILDINGS[type].cost) return false;
+    if ((!free.length && !rising) || supply - reserve < BUILDINGS[type].cost) return false;
     const cand = [];
     if (BUILDINGS[type].site) {
       const sh = nearestFreeSite(s, hq.x, hq.z, queued);
@@ -278,6 +300,7 @@ function economy(s, p, known, orders) {
     for (const c of cand) for (const rot of [0, 1]) {
       if (placeError(s, p, type, c.x, c.z, rot, queued)) continue;
       const f = { type, x: c.x, z: c.z, rot, owner: p, ...footprint(type, c.x, c.z, rot) };
+      if (rising) { queued.push(f); out.builds.push({ type, x: c.x, z: c.z, rot }); supply -= BUILDINGS[type].cost; return true; }
       const q = free.sort((a, b) => dist(a.x, a.z, c.x, c.z) - dist(b.x, b.z, c.x, c.z))[0];
       const bp = builderPlan(s, q, f, apFor(q));
       if (!bp.actions.length) continue;
@@ -303,23 +326,28 @@ function economy(s, p, known, orders) {
       (!count(site) && place(site)) ||
       (count('barracks') && !count('tower') && s.round >= 3 && place('tower', forward)) ||
       (count(site) < 2 && s.round >= 4 && place(site)) ||
-      (gold && count('farm') < 3 && s.round >= 4 && place('farm', side)) ||
+      // kingdom late game: one big farm per ~3 peasants (4 can work one)
+      (gold && count('farm') < Math.min(6, Math.ceil(builderCount(s, p) / 3)) && s.round >= 3 && place('farm', side)) ||
+      // rich with a bigger army cap: more barracks so the money turns into squads
+      (count('barracks') && count('barracks') < Math.min(4, 1 + Math.floor(supply / 60)) && s.round >= 5 && place('barracks', (x, z) => -Math.abs(z - hq.z) * 0.4 - Math.abs(fwd * (x - hq.x) - 3))) ||
       (count('banner') < RULES.maxBannerCp && s.round >= 5 && supply >= BUILDINGS.banner.cost + 20 && place('banner', (x, z) => -dist(x, z, hq.x, hq.z))) ||
       (count('tower') < 2 && s.round >= 6 && supply >= BUILDINGS.tower.cost + 30 && place('tower', forward));
     if (!ok) break;
   }
   // idle builders stay home (hold), next to the HQ
-  // training: a second builder early, then soldiers from the barracks
+  // training: kingdom peasants grow with the game (farmers), then soldiers from every training building
   let army = armySize(s, p), nb = builderCount(s, p);
-  if (nb < 2 && s.round >= 2 && !hq.train && !(hq.queue || []).length && supply >= trainCost(fac, 'builder') + 10 && army < s.board.cap) {
-    out.trains.push({ bid: hq.id, role: 'builder' }); supply -= trainCost(fac, 'builder'); army++;
+  const wantB = Math.min(maxBuildersOf(fac), 2 + Math.floor(s.round / 3), 8);
+  if (trainsOf('hq', fac).includes('builder') && nb < wantB && s.round >= 2 && !hq.train && !(hq.queue || []).length && supply >= trainCost(fac, 'builder') + 10) {
+    out.trains.push({ bid: hq.id, role: 'builder' }); supply -= trainCost(fac, 'builder');
   }
   const shooters = known.filter(e => isShooter(defOf(e))).length;
-  for (const b of mine.filter(b => b.type === 'barracks' && !b.build && !b.train && !(b.queue || []).length)) {
+  for (const b of mine.filter(b => !b.build && !b.train && !(b.queue || []).length && trainsOf(b.type, fac).some(r => r !== 'builder'))) {
     if (army >= s.board.cap) break;
     const myRoles = s.squads.filter(q => q.owner === p).map(q => q.role);
     const n = r => myRoles.filter(x => x === r).length;
-    const role = shooters >= 2 && n('fast') < 2 ? 'fast' : n('tank') < 1 ? 'tank' : n('ranged') < n('fighter') ? 'ranged' : 'fighter';
+    let role = shooters >= 2 && n('fast') < 2 ? 'fast' : n('tank') < 1 ? 'tank' : n('ranged') < n('fighter') ? 'ranged' : 'fighter';
+    if (!trainsOf(b.type, fac).includes(role)) role = trainsOf(b.type, fac).find(r => r !== 'builder');
     if (supply < trainCost(fac, role)) continue;
     out.trains.push({ bid: b.id, role }); supply -= trainCost(fac, role); army++;
   }

@@ -4,12 +4,16 @@ A turn-based strategy game played like a miniatures wargame: two armies of low-p
 minis on a games table, simultaneous orders, and speed tiers that decide who acts first.
 It is a static site with no build step and no server, so it runs on GitHub Pages.
 
-* **Kingdom vs Undead Legion.** Each side has a hero with three skills, tanks, fighters,
-  shooters, fast squads and builders. Every attack is an aimed skillshot that hits whatever is
-  in its shape when it lands, so faster tiers can dodge.
-* **Two economies.** The Kingdom earns **gold** from its Keep, farms and mines. The Undead earn
-  **souls** from the Crypt and soul wells, and from every model that dies near them. **Builders**
-  put up every building, finish over several rounds on their own, and gather resources when idle.
+* **Two very different armies.** The **Kingdom** is a sturdy all-rounder for beginners: peasants
+  build everything and farm big fields for a strong late economy, and its hero, The Chosen, leaps,
+  rallies and stuns with a Mighty Swing. The **Undead Legion** is a cheap, weaker horde with no
+  builders (its buildings rise out of the ground), souls from deaths near its Soul Wells, and a slow
+  Necromancer mage who spends mana on summoned skeletons, chain lightning and corpse explosions.
+* Every attack is an aimed skillshot that hits whatever is in its shape when it lands, so faster
+  tiers can dodge. Armies grow up to 30 squads (more on big maps).
+* **Two economies.** The Kingdom earns **gold** from its Keep, mines and farms worked by up to 4
+  peasants each. The Undead earn **souls** from the Crypt and from every model that dies near their
+  Soul Wells.
 * **Production queues.** Queue up to 5 buildings for your base (free builders take the next one) and up
   to 5 squads at each HQ / Barracks. Everything is paid when it starts, and the **Production** bar above
   your squad cards shows every queue: tap to cancel, drag to reorder.

@@ -169,6 +169,7 @@ export class BuildingView {
     this.group.add(this.ring);
     this.group.position.set(b.x, 0, b.z);
     this.height = { hq: 5, tower: 5, banner: 3.6, wall: 1.6, farm: 1.6, mine: 1.4, well: 1.4 }[b.type] || 2.6;
+    this.rises = String(faction).startsWith('undead');   // undead sites rise out of the ground (no scaffold)
     if (b.type === 'well') { this.glow = new THREE.Mesh(new THREE.CircleGeometry(0.6, 10).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: 0x9dffb4, transparent: true, opacity: 0.85 })); this.glow.position.y = 0.4; this.group.add(this.glow); }
     layer.add(this.group);
   }
@@ -176,11 +177,12 @@ export class BuildingView {
   update(d) {
     this.group.visible = d.visible !== false;
     const site = d.build > 0;
-    this.scaf.visible = site && !d.ghost;
+    this.scaf.visible = site && !d.ghost && !this.rises;
     const op = d.ghost ? 0.5 : site ? 0.62 : 1;
     if (this.op !== op) { const t = op < 1; if (this.mat.transparent !== t) this.mat.needsUpdate = true; this.op = op; this.mat.transparent = t; this.mat.opacity = op; this.mat.depthWrite = !t; this.mesh.castShadow = !d.ghost; }
     // a site rises as the builders work on it
-    this.mesh.scale.y = site ? 0.25 + 0.6 * (d.work || 0) : 1;
+    if (this.rises) { this.mesh.scale.y = 1; this.mesh.position.y = site ? -(1 - (d.work || 0)) * this.height * 0.85 : 0; }
+    else this.mesh.scale.y = site ? 0.25 + 0.6 * (d.work || 0) : 1;
     if (this.glow) this.glow.visible = !site && !d.ghost;
     if (d.dying !== undefined) { const k = Math.min(1, d.dying); this.mesh.scale.y = Math.max(0.15, 1 - k); if (!this.mat.transparent) { this.mat.transparent = true; this.mat.needsUpdate = true; } this.op = -1; this.mat.opacity = 1 - k * 0.8; }
   }
