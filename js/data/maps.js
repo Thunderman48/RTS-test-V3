@@ -91,14 +91,12 @@ export const mapDef = id => MAPS[id] || MAPS.crossing;
 export const HQ_X = 3.5;
 // Deployment for player 0 (left edge); player 1 is mirrored. The army stands in front of its HQ:
 // positions are relative to the HQ's z (the HQ starts at one of the map's hqSpots, chosen per game).
+// Small starting armies: the rest comes from your base.
 export const DEPLOY = [
   { role: 'hero', x: 9.5, dz: 0 },
-  { role: 'tank', x: 12.5, dz: -3 },
-  { role: 'fighter', x: 12.5, dz: 3.5 },
-  { role: 'ranged', x: 9, dz: -5.5 },
-  { role: 'fast', x: 9, dz: 6 },
-  { role: 'builder', alt: 'swarm', x: 7, dz: 3.2 },            // the undead have no builders: a swarm pair instead
-  { role: 'builder', x: 6.5, dz: -2.6, only: 'kingdom' },         // the kingdom starts with two peasant squads
+  { role: 'fighter', x: 12.5, dz: 2.5, only: 'kingdom' },          // Kingdom: a squad of Men-at-arms...
+  { role: 'builder', x: 7, dz: 3.2, only: 'kingdom' },             // ...and one peasant squad
+  { role: 'swarm', x: 12.5, dz: 0, only: 'undead' },               // Undead: one Skeleton Warband pair (2 squads)
 ];
 
 export const mirrorOn = (W, H) => p => ({ ...p, x: W - p.x, z: H - p.z });

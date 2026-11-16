@@ -2,7 +2,8 @@
 // training docks, building nameplates and the economy readout. Mixed into Game.
 import * as THREE from 'three';
 import { RULES, FACTIONS, BUILDINGS, trainCost, trainsOf } from '../data/units.js';
-import { footprint, hitRadius, armySize, nearestFreeSite, siteTaken, bdef, incomeOf, gatherRate, startQueues, placeError } from '../sim/base.js';
+import { footprint, hitRadius, armySize, nearestFreeSite, siteTaken, bdef, incomeOf, gatherRate, startQueues, placeError, graveCircles } from '../sim/base.js';
+import { makeMini } from '../render/minis.js';
 import { buildingsSeenBy } from '../sim/vision.js';
 import { defOf } from '../sim/state.js';
 import { BuildingView, ShrineView } from '../render/buildings.js';
@@ -37,6 +38,29 @@ export const BaseUI = {
   rises(p = this.me) { return !!FACTIONS[this.faction(p)].rises; },
   ecoName(p = this.me) { return this.eco(p).name.toLowerCase(); },
   bname(b) { return BUILDINGS[b.type].name[this.faction(b.owner)]; },
+
+  // a fallen hero lies where it fell (its revive point) until it returns
+  syncBodies(state) {
+    this.bodies = this.bodies || new Map();
+    const keep = new Set();
+    for (const p of [0, 1]) {
+      const z = state && state.revive && state.revive[p];
+      if (!z) continue;
+      if (p !== this.me && this.fogMap && !this.fogMap.isExplored(z.x, z.z)) continue;
+      const key = p + ':' + z.x + ',' + z.z;
+      keep.add(key);
+      if (this.bodies.has(key)) continue;
+      const def = FACTIONS[this.faction(p)].units.hero;
+      const m = makeMini(def.look, this.paint(p), 7);
+      const fig = m.userData.rig.fig;
+      fig.rotation.set(-Math.PI / 2 * 0.94, 0, 0.18);   // fallen on its back
+      fig.position.y = 0.3;
+      m.position.set(z.x, 0, z.z); m.rotation.y = 0.6 + p * Math.PI;
+      this.view.layers.units.add(m);
+      this.bodies.set(key, m);
+    }
+    for (const [k, m] of this.bodies) if (!keep.has(k)) { this.view.layers.units.remove(m); this.bodies.delete(k); }
+  },
 
   makeShrines() {
     for (const v of this.shrineViews || []) this.view.layers.units.remove(v.group);
@@ -421,6 +445,8 @@ export const BaseUI = {
   drawBuildZone(L) {
     if (!this.buildMode) return;
     const W = this.state.board.w, H = this.state.board.h;
+    // undead: show where your graves are (every undead building must stand on them)
+    if (this.rises()) for (const c of graveCircles(this.state, this.me)) { const r = ring(c.r, 0.08, 0x9dffb4, 0.5, 0.1, 64); r.position.x = c.x; r.position.z = c.z; L.add(r); }
     if (BUILDINGS[this.buildMode.type].site) {
       for (const sh of this.state.shrines) if (!siteTaken(this.state, sh, this.planner.queued())) { const r = ring(1.4, 0.1, 0xffc400, 0.7, 0.1, 48); r.position.x = sh.x; r.position.z = sh.z; L.add(r); }
     }

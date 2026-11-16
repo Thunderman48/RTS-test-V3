@@ -3,6 +3,7 @@ import { RULES, FACTIONS, squadRadius, unitDef } from '../data/units.js';
 import { DEPLOY, HQ_X, mapDef, buildMapTerrain, mapSites, mirrorOn, boardOf } from '../data/maps.js';
 import { addBuilding, obstacles } from './base.js';
 import { pointBlocked } from './nav.js';
+import { initSeen } from './vision.js';
 import { rng } from './rng.js';
 
 export function createGame(seed = 1, factions = ['kingdom', 'undead'], mapId = 'crossing', opts = {}) {
@@ -51,6 +52,7 @@ export function createGame(seed = 1, factions = ['kingdom', 'undead'], mapId = '
       }
     }
   }
+  initSeen(s);
   return s;
 }
 

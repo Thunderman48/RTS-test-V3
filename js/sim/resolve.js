@@ -841,10 +841,11 @@ export function resolveRound(state0, ordersIn) {
       if (c.b) { const base = bdef(c.b).grave; c.b.graveCap = r3(Math.min(base * RULES.graveCapMult, (c.b.graveCap || base) + grow)); c.b.grave = r3(Math.min(c.b.graveCap, c.b.grave + grow)); }
       else c.patch.r = r3(Math.min(c.patch.cap || RULES.gravePatchCap, c.patch.r + grow));
     }
+    // graves spread almost at once: every undead building (rising or finished) reaches its full graveyard
     for (const b of s.buildings) {
-      if (b.owner !== p || b.build || !bdef(b).grave) continue;
+      if (b.owner !== p || !bdef(b).grave) continue;
       const cap = b.graveCap || bdef(b).grave;
-      if ((b.grave || 0) < cap) { b.grave = r3(Math.min(cap, (b.grave || 0) + RULES.graveGrow)); ev({ type: 'graves', id: b.id, r: b.grave }); }
+      if ((b.grave || 0) < cap) { b.grave = r3(cap); ev({ type: 'graves', id: b.id, r: b.grave }); }
     }
   }
   // revive: any of its squads standing in the zone at the end of a round adds progress; enemies inside don't stop it

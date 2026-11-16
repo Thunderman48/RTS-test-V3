@@ -4,7 +4,7 @@ import { RULES, FACTIONS, isMelee, isShooter, skillOf, cdOf, isMage, maxBuilders
 import { losCut, engagedWith } from '../sim/resolve.js';
 import { emptyOrders, emptyPlan, defOf, radiusOf, apFor } from '../sim/state.js';
 import { nearestEnemy, meleePlan, trimPath } from '../sim/stances.js';
-import { obstacles, navKey, placeError, bonusCp, armySize, armyValue, BUILDINGS, trainCost, footprint, nearestFreeSite, builderCount, trainsRole, edgeDist, bdef, buildQueue } from '../sim/base.js';
+import { obstacles, navKey, placeError, bonusCp, armySize, armyValue, BUILDINGS, trainCost, footprint, nearestFreeSite, builderCount, trainsRole, edgeDist, bdef, buildQueue, siteTaken, seenBy, graveCircles } from '../sim/base.js';
 import { builderPlan } from '../sim/builders.js';
 import { autoSkills } from '../sim/skills.js';
 import { Nav, pointBlocked } from '../sim/nav.js';
@@ -79,7 +79,9 @@ export function aiOrders(s, p, memory = aiMemory(), opts = {}) {
   const attacking = useWaves ? wave.phase === 'attack' : s.round >= 6 && (myVal0 >= theirVal0 * 1.15 || s.round >= 12);
   memory.rally = rally;
   // stances: everyone advances in a wave; while gathering, squads hold their ground (guard)
-  for (const q of mine) { const st = attacking || !useWaves ? 'advance' : 'guard'; if (q.stance !== st) o.stances[q.id] = st; }
+  // small starting armies: hold at home (guard) until there are at least 4 squads to attack with
+  const ready = army.length >= 4;
+  for (const q of mine) { const st = (attacking || !useWaves) && ready ? 'advance' : 'guard'; if (q.stance !== st) o.stances[q.id] = st; }
   // home defence: enemies close to our HQ get answered first, whatever the phase
   const threatHome = myHq ? enemies.filter(e => !e.isHq && dist(e.x, e.z, myHq.x, myHq.z) < 12) : [];
   // lead targets by their last movement (only for squads seen both rounds)
@@ -246,13 +248,17 @@ function economy(s, p, known, orders) {
     const free = builders.filter(x => !busy.has(x.id));
     if (rising && mine.filter(b => b.build > 0).length + queued.length >= RULES.maxRising) return false;   // undead: at most 2 rising
     // once there is a barracks, keep enough back to train a squad (except for its own site)
-    const reserve = count('barracks') && mine.some(b => b.type === 'barracks' && !b.build) && type !== 'barracks' ? 24 : 0;
+    // (except for the first farm: the kingdom's economy comes first)
+    const reserve = count('barracks') && mine.some(b => b.type === 'barracks' && !b.build) && type !== 'barracks' && !(type === 'farm' && !count('farm')) ? 24 : 0;
     if ((!free.length && !rising) || supply - reserve < BUILDINGS[type].cost) return false;
     const cand = [];
     if (BUILDINGS[type].site) {
-      const sh = nearestFreeSite(s, hq.x, hq.z, queued);
-      if (sh) cand.push({ x: sh.x, z: sh.z, score: 0 });
-    } else for (const b of mine) for (let r = 4; r <= 8; r += 1.5) for (let k = 0; k < 12; k++) {
+      // free sites the side has seen, nearest first (placeError checks seen ground and, for the undead, graves)
+      const sites = (s.shrines || []).filter(sh => !siteTaken(s, sh, queued) && seenBy(s, p, sh.x, sh.z)).sort((a, b) => dist(a.x, a.z, hq.x, hq.z) - dist(b.x, b.z, hq.x, hq.z));
+      for (const sh of sites) cand.push({ x: sh.x, z: sh.z, score: -dist(sh.x, sh.z, hq.x, hq.z) });
+      // undead: the nearest seen site isn't on graves yet -> spread graves toward it with a cheap Bone Fence
+      if (rising && sites.length && !sites.some(sh => !placeError(s, p, type, sh.x, sh.z, 0, queued)) && type !== 'wall') return expandToward(sites[0]);
+    } else for (const b of mine) for (let r = 2.5; r <= 8; r += 1.5) for (let k = 0; k < 12; k++) {
       const a = k / 12 * Math.PI * 2;
       const x = b.x + Math.cos(a) * r, z = b.z + Math.sin(a) * r;
       cand.push({ x, z, score: prefer(x, z) });
@@ -273,6 +279,26 @@ function economy(s, p, known, orders) {
     }
     return false;
   };
+  // undead: place a Bone Fence on the edge of its graves closest to `target`, so the graves reach it
+  let expanded = false;
+  const expandToward = target => {
+    // one step at a time: wait for the last fence's graves before the next
+    if (expanded || supply < BUILDINGS.wall.cost || mine.some(b => b.type === 'wall' && b.build > 0) || mine.filter(b => b.build > 0).length + queued.length >= RULES.maxRising) return false;
+    expanded = true;
+    const pts = [];
+    for (const c of graveCircles(s, p)) for (let k = 0; k < 16; k++) {
+      const a = k / 16 * Math.PI * 2, rr = Math.max(0.5, c.r - 0.25);
+      pts.push({ x: c.x + Math.cos(a) * rr, z: c.z + Math.sin(a) * rr });
+    }
+    pts.sort((a, b) => dist(a.x, a.z, target.x, target.z) - dist(b.x, b.z, target.x, target.z));
+    for (const c of pts.slice(0, 12)) for (const rot of [0, 1]) {
+      if (placeError(s, p, 'wall', c.x, c.z, rot, queued)) continue;
+      queued.push({ type: 'wall', x: c.x, z: c.z, rot, owner: p, ...footprint('wall', c.x, c.z, rot) });
+      out.builds.push({ type: 'wall', x: c.x, z: c.z, rot }); supply -= BUILDINGS.wall.cost;
+      return true;
+    }
+    return false;
+  };
   const forward = (x, z) => fwd * (x - hq.x) - Math.abs(z - hq.z) * 0.3;
   const side = (x, z) => -Math.abs(fwd * (x - hq.x) - 1) - Math.abs(Math.abs(z - hq.z) - 5) * 0.5;
   const threat = known.filter(e => dist(e.x, e.z, hq.x, hq.z) < 14);
@@ -281,9 +307,10 @@ function economy(s, p, known, orders) {
   for (let i = 0; i < 3; i++) {
     const ok =
       (threat.length && count('wall') < 2 && place('wall', (x, z) => forward(x, z) - Math.min(...threat.map(e => dist(e.x, e.z, x, z))) * 0.5)) ||
-      (gold && !count('farm') && place('farm', side)) ||
       (!gold && !count(site) && place(site)) ||
-      (!count('barracks') && place('barracks', (x, z) => -Math.abs(z - hq.z - 3) - Math.abs(fwd * (x - hq.x) - 2))) ||
+      // a Barracks first (small starting armies); the undead only once they have a Soul Well
+      (!count('barracks') && (gold || count(site)) && place('barracks', (x, z) => -Math.abs(z - hq.z - 3) - Math.abs(fwd * (x - hq.x) - 2))) ||
+      (gold && !count('farm') && place('farm', side)) ||
       (!count(site) && place(site)) ||
       (count('barracks') && !count('tower') && s.round >= 3 && place('tower', forward)) ||
       (count(site) < 2 && s.round >= 4 && place(site)) ||
@@ -298,11 +325,17 @@ function economy(s, p, known, orders) {
   // idle builders stay home (hold), next to the HQ
   // training: kingdom peasants grow with the game (farmers), then soldiers from every training building
   let army = armySize(s, p), nb = builderCount(s, p);
-  const wantB = Math.min(maxBuildersOf(fac), 2 + Math.floor(s.round / 3), 8);
+  // few peasants until a Barracks stands (soldiers first), then more for the farms
+  const hasBarracks = mine.some(b => b.type === 'barracks' && !b.build);
+  // peasants only as needed: 1 to build, plus farmers for the farms (3 each) and miners (2 each)
+  const jobs = 1 + 3 * mine.filter(b => b.type === 'farm' && !b.build).length + 2 * mine.filter(b => b.type === 'mine' && !b.build).length;
+  const wantB = Math.min(maxBuildersOf(fac), hasBarracks ? Math.max(2, jobs) : 2, 8);
   if (trainsOf('hq', fac).includes('builder') && nb < wantB && s.round >= 2 && !hq.train && !(hq.queue || []).length && supply >= trainCost(fac, 'builder') + 10) {
     out.trains.push({ bid: hq.id, role: 'builder' }); supply -= trainCost(fac, 'builder');
   }
   const shooters = known.filter(e => isShooter(defOf(e))).length;
+  // undead without a Soul Well: keep enough souls to spread graves to a site and raise a well there
+  if (rising && !count(site)) supply -= BUILDINGS.well.cost + 2 * BUILDINGS.wall.cost;
   for (const b of mine.filter(b => !b.build && !b.train && !(b.queue || []).length && trainsOf(b.type, fac).some(r => r !== 'builder'))) {
     if (army >= s.board.cap) break;
     const myRoles = s.squads.filter(q => q.owner === p).map(q => q.role);

@@ -74,6 +74,9 @@ export function placeError(s, p, type, x, z, rot = 0, extra = [], squads = true)
   if (!d || !canBuild(s, p, type)) return 'Your side can\'t build that';
   const f = footprint(type, x, z, rot), half = f.r !== undefined ? f.r : Math.max(f.w, f.d) / 2;
   if (x - half < 0.3 || z - half < 0.3 || x + half > W - 0.3 || z + half > H - 0.3) return 'Off the board';
+  // only on ground the side has seen; undead buildings only on their own graves (like blight / creep)
+  if (type !== 'hq' && !seenBy(s, p, x, z)) return 'You haven\'t seen that spot yet';
+  if (type !== 'hq' && FACTIONS[s.players[p].faction].graves && !graveAt(s, p, x, z)) return 'Undead buildings must stand on your graves';
   const live = (s.buildings || []).filter(b => b.hp > 0).concat(extra);
   if (d.site) {
     const sh = siteAt(s, x, z);
@@ -105,6 +108,13 @@ export function armySize(s, p) { return s.squads.filter(q => q.owner === p && q.
 export function graveCircles(s, p) {
   return (s.buildings || []).filter(b => b.owner === p && b.hp > 0 && b.grave > 0).map(b => ({ x: b.x, z: b.z, r: b.grave, b }))
     .concat(((s.graves && s.graves[p]) || []).map(g => ({ x: g.x, z: g.z, r: g.r, patch: g })));
+}
+// has side p ever seen the ground at (x, z)? (no memory recorded: yes)
+export function seenBy(s, p, x, z) {
+  if (!s.explored || !s.board) return true;
+  const i = Math.floor(x), j = Math.floor(z);
+  if (i < 0 || j < 0 || i >= s.board.w || j >= s.board.h) return false;
+  return s.explored[p][j * s.board.w + i] === '1';
 }
 export function graveAt(s, p, x, z) { return graveCircles(s, p).find(c => dist(c.x, c.z, x, z) <= c.r) || null; }
 // does side p's faction raise buildings out of the ground (no builders)?
@@ -226,6 +236,7 @@ export function startQueues(s, p, opts = {}) {
     if (apply) {
       s.supply[p] -= d.cost;
       const b = addBuilding(s, p, it.type, it.x, it.z, it.rot, !d.work);
+      if (FACTIONS[fac].graves && d.grave) b.grave = Math.round(d.grave * RULES.graveStart * 1000) / 1000;   // graves spread at once
       ev({ type: 'construct', id: b.id, btype: b.type, owner: p, x: b.x, z: b.z, rot: b.rot, hp: b.hp, build: b.build, done: !b.build, qid: it.qid });
     } else extra.push(qfoot(it, p));
   }

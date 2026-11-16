@@ -77,6 +77,7 @@ export function buildingsSeenBy(s, p, obs = observers(s, p)) {
 const snap = b => ({ id: b.id, owner: b.owner, type: b.type, rot: b.rot, x: b.x, z: b.z, w: b.w, d: b.d, r: b.r, hp: b.hp, build: b.build });
 export function updateIntel(s) {
   s.intel = s.intel || [{ known: {} }, { known: {} }];
+  markSeen(s);
   for (const p of [0, 1]) {
     const obs = observers(s, p), known = s.intel[p].known;
     for (const id of buildingsSeenBy(s, p, obs)) known[id] = snap(s.buildings.find(b => b.id === id));
@@ -86,5 +87,32 @@ export function updateIntel(s) {
       if (obs.some(o => canSee(s.terrain, o.x, o.z, o.range + 1, k.x, k.z))) delete known[id];
     }
   }
+}
+// ground each side has seen at least once: s.explored[p], one char per 1" cell ('1' = seen). Buildings
+// may only be placed on seen ground (placeError). Marked from every observer at each intel update.
+export function markSeen(s) {
+  if (!s.board || !s.explored) return;
+  const W = s.board.w, H = s.board.h;
+  for (const p of [0, 1]) {
+    const g = s.explored[p].split('');
+    let changed = false;
+    for (const o of observers(s, p)) {
+      const r = o.range + 0.5;
+      const i0 = Math.max(0, Math.floor(o.x - r)), i1 = Math.min(W - 1, Math.floor(o.x + r));
+      const j0 = Math.max(0, Math.floor(o.z - r)), j1 = Math.min(H - 1, Math.floor(o.z + r));
+      for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) {
+        const k = j * W + i;
+        if (g[k] === '1') continue;
+        if (canSee(s.terrain, o.x, o.z, o.range + 0.5, i + 0.5, j + 0.5)) { g[k] = '1'; changed = true; }
+      }
+    }
+    if (changed) s.explored[p] = g.join('');
+  }
+}
+// a fresh map: each side has seen its own third of the table
+export function initSeen(s) {
+  const W = s.board.w, H = s.board.h, zone = s.board.zone;
+  s.explored = [0, 1].map(p => { let out = ''; for (let j = 0; j < H; j++) for (let i = 0; i < W; i++) { const x = i + 0.5; out += (p === 0 ? x < zone : x > W - zone) ? '1' : '0'; } return out; });
+  markSeen(s);
 }
 export const knownEnemyHq = (s, p) => Object.values((s.intel && s.intel[p].known) || {}).find(b => b.type === 'hq') || null;

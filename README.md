@@ -10,8 +10,10 @@ It is a static site with no build step and no server, so it runs on GitHub Pages
   skeleton swarm trained two squads at a time, no builders (its buildings rise out of the ground and
   spread graveyards), souls from everything that dies on its graves, and a slow Necromancer mage who
   spends mana on summoned skeletons, chain lightning and corpse explosions.
-* A fallen hero can be revived by holding the spot where it fell. Squads use their skills on their
-  own (switchable per squad). Build anywhere on the table.
+* Small starting armies (a hero and a squad or two); the rest comes from your base.
+* A fallen hero lies where it fell; hold that spot to revive it. Squads use their skills on their
+  own (switchable per squad). Build anywhere you have seen; the Undead only on their graves, which
+  spread almost at once around their buildings (like blight or creep).
 * Every attack is an aimed skillshot that hits whatever is in its shape when it lands, so faster
   tiers can dodge. Armies grow up to 30 squads (more on big maps).
 * **Two economies.** The Kingdom earns **gold** from its Keep, mines and farms worked by up to 4
