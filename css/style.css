@@ -484,3 +484,6 @@ button { font-family: inherit; color: inherit; cursor: pointer; touch-action: ma
 .rep-row { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 8px; }
 .pq-it.rep { border-style: dashed; }
 .pq-rep { display: flex; align-items: center; gap: 2px; font-size: 13px; font-weight: 900; color: var(--muted); padding: 0 2px; }
+
+.sq.fallen { border-color: #ffd23f; border-style: dashed; opacity: .95; }
+.sq.fallen .tr { background: #8a6d1f; }

@@ -10,6 +10,7 @@ import { RULES, isMelee, isShooter } from '../data/units.js';
 import { defOf, radiusOf, emptyPlan, apFor } from './state.js';
 import { obstacles, navKey, hitRadius } from './base.js';
 import { builderIdleTarget } from './builders.js';
+import { autoSkills } from './skills.js';
 import { knownEnemyHq, observers, canSee } from './vision.js';
 import { HQ_X, mirrorOn } from '../data/maps.js';
 import { Nav, pathAP, walkAP } from './nav.js';
@@ -95,6 +96,9 @@ export function buildStancePlan(s, q, enemies) {
     if (b) plan.actions.push({ kind: 'work', x: b.x, z: b.z, ap: left });
     return plan;
   }
+  // auto skills (on unless switched off; never on Hold): the AI's skill rules against target t
+  const mine = s.squads.filter(o => o.owner === q.owner && o.hp > 0);
+  const skills = (t, l) => (q.auto === false || st === 'hold' || !t) ? { left: l, charged: null } : autoSkills(s, q, t, enemies, mine, plan, l);
   const walkTo = (x, z, stop = 0) => {
     const nav = Nav.for(obstacles(s), radiusOf(q), navKey(s));
     const pts = trimPath(q.x, q.z, nav.path(q.x, q.z, x, z), stop);
@@ -103,6 +107,8 @@ export function buildStancePlan(s, q, enemies) {
   };
   // attack target t (a squad or a building target) with everything
   const attack = t => {
+    const sk = skills(t, left); left = sk.left;
+    if (sk.charged) { fillDefends(plan, left); return plan; }
     if (isShooter(def)) {
       const range = def.attack.range, d = dist(q.x, q.z, t.x, t.z) - (t.r ?? radiusOf(t));
       if (d > range - 0.3) {
@@ -131,7 +137,7 @@ export function buildStancePlan(s, q, enemies) {
     if (q.goal) {
       // march to its target point, then guard there (fight what comes close)
       if (dist(q.x, q.z, q.goal.x, q.goal.z) > RULES.goalReach && walkTo(q.goal.x, q.goal.z)) return plan;
-      return guardPlan(s, q, enemies, plan, left);
+      return guardPlan(s, q, enemies, plan, left, skills);
     }
     // no target point: march on the enemy HQ if we know where it is, else search its possible spots
     let hq = knownEnemyHq(s, q.owner);
@@ -144,7 +150,7 @@ export function buildStancePlan(s, q, enemies) {
       hq = spots[0] || { x: q.owner === 0 ? s.board.w - 8 : 8, z: s.board.h / 2 };
     }
     if (walkTo(hq.x, hq.z, 3.2)) return plan;
-    return guardPlan(s, q, enemies, plan, left);
+    return guardPlan(s, q, enemies, plan, left, skills);
   }
   if (st === 'retreat') {
     // fall back to the nearest own mine / soul well (resource site), else the HQ, and guard there
@@ -154,19 +160,20 @@ export function buildStancePlan(s, q, enemies) {
     if (home && dist(q.x, q.z, home.x, home.z) - hitRadius(home) > RULES.retreatReach) {
       if (walkTo(home.x, home.z, hitRadius(home) + radiusOf(q) + 0.6)) { const used = plan.actions.reduce((n, a) => n + a.ap, 0); fillDefends(plan, Math.max(0, apFor(q) - used)); return plan; }
     }
-    return guardPlan(s, q, enemies, plan, left);
+    return guardPlan(s, q, enemies, plan, left, skills);
   }
-  return guardPlan(s, q, enemies, plan, left);
+  return guardPlan(s, q, enemies, plan, left, skills);
 }
 
 // guard (and hold): fight what comes close; shooters volley what is in range or watch the nearest
-function guardPlan(s, q, enemies, plan, left) {
+function guardPlan(s, q, enemies, plan, left, skills = (t, l) => ({ left: l, charged: null })) {
   const def = defOf(q), st = q.stance;
   if (st === 'hold' || !enemies.length) { fillDefends(plan, left); return plan; }
   if (isShooter(def)) {
     const range = def.attack.range;
     const t = nearestEnemy(s, q, enemies, range);
     if (t) {
+      left = skills(t, left).left;
       while (left >= def.attack.ap) { plan.actions.push({ kind: def.attack.kind, x: t.x, z: t.z }); left -= def.attack.ap; }
       fillDefends(plan, left);
       return plan;
@@ -180,6 +187,7 @@ function guardPlan(s, q, enemies, plan, left) {
   const t = nearestEnemy(s, q, enemies, GUARD_RANGE);
   // already in contact: prepare a parry before trading blows
   if (t && def.parry && nearestEnemy(s, q, enemies, RULES.engageGap)) { plan.parry = true; left -= RULES.parryCost; }
+  if (t) { const sk = skills(t, left); left = sk.left; if (sk.charged) { fillDefends(plan, left); return plan; } }
   if (t) left = meleePlan(s, q, t, plan, left);
   fillDefends(plan, left);
   return plan;

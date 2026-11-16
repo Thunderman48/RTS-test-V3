@@ -162,6 +162,18 @@ function tree(k, R, x, z, s) {
     k.cone(r, h, greens[Math.floor(R() * greens.length)], { x: x + (R() - 0.5) * 0.08, y: (0.85 + i * 0.5) * s, z: z + (R() - 0.5) * 0.08, ry: R() * 3, j: r * 0.12, sh: 0.09 }, 6 + (i % 2));
   }
 }
+// a tall low-poly tree: a thin trunk up to a canopy well above mini height (minis read underneath)
+function tallTree(k, kc, R, x, z, s) {
+  const greens = [0x3f6e36, 0x4c7d3c, 0x335f2e, 0x5a8a48];
+  const h = 2.0 * s;
+  k.chunk(0.1 * s, 0.17 * s, h, 0.14 * s, 0x6b4a2b, { x, y: h / 2, z, j: 0.015 }, 5);
+  k.cone(0.3 * s, 0.25, 0x5a3e24, { x, y: 0.1, z, j: 0.03 }, 5);               // root flare
+  const n = 2 + (R() < 0.5 ? 1 : 0);
+  for (let i = 0; i < n; i++) {
+    const r = (0.95 - i * 0.22) * s, ch = (0.85 - i * 0.1) * s;
+    kc.cone(r, ch, greens[Math.floor(R() * greens.length)], { x: x + (R() - 0.5) * 0.1, y: h + (i * 0.45 - 0.05) * s, z: z + (R() - 0.5) * 0.1, ry: R() * 3, j: r * 0.12, sh: 0.09 }, 6 + (i % 2));
+  }
+}
 function bush(k, R, x, z, s) {
   const greens = [0x4c7d3c, 0x5a8a48, 0x3f6e36];
   for (let i = 0; i < 3; i++) k.ball((0.28 + R() * 0.15) * s, greens[i], { x: x + (R() - 0.5) * 0.5 * s, y: 0.18 * s, z: z + (R() - 0.5) * 0.5 * s, sy: 0.75, sh: 0.1 });
@@ -203,18 +215,27 @@ export function buildTable(view, terrain, mapId = 'crossing') {
   L.add(ks.mesh(paintMat('board')));
   const R = rng(11);
   const k = new Kit(3);
-  const waters = [];
+  const waters = [], forests = [];
   for (const t of terrain) {
     if (t.kind === 'forest') {
-      k.cyl(t.r, t.r + 0.3, 0.22, 0x55703a, { x: t.x, y: 0.1, z: t.z, j: 0.09, sh: 0.08 }, 11);
-      k.cyl(t.r * 0.7, t.r * 0.95, 0.16, 0x4d6834, { x: t.x, y: 0.26, z: t.z, j: 0.08, sh: 0.08 }, 9);
-      const n = Math.round(t.r * 2.4);
-      for (let i = 0; i < n; i++) {
-        const a = R() * Math.PI * 2, rr = Math.sqrt(R()) * (t.r - 0.7);
-        tree(k, R, t.x + Math.cos(a) * rr, t.z + Math.sin(a) * rr, 1.05 + R() * 0.6);
+      // a flat forest floor flush with the ground (squads walk on it, not into a mound): a few
+      // overlapping irregular patches of dark moss and leaf litter
+      k.cyl(t.r, t.r + 0.15, 0.03, 0x3f5a2f, { x: t.x, y: 0.03, z: t.z, j: 0.18, sh: 0.06 }, 12);
+      for (let i = 0; i < 5; i++) {
+        const a = R() * Math.PI * 2, rr = R() * t.r * 0.55, s = t.r * (0.35 + R() * 0.3);
+        k.cyl(s, s + 0.1, 0.03, [0x4a6a35, 0x5a5a32, 0x46622f][i % 3], { x: t.x + Math.cos(a) * rr, y: 0.045, z: t.z + Math.sin(a) * rr, j: 0.08, sh: 0.06 }, 8);
       }
-      for (let i = 0; i < 3; i++) { const a = R() * Math.PI * 2; bush(k, R, t.x + Math.cos(a) * (t.r - 0.2), t.z + Math.sin(a) * (t.r - 0.2), 1); }
-      for (let i = 0; i < 3; i++) { const a = R() * Math.PI * 2; k.ball(0.18, 0x8a8072, { x: t.x + Math.cos(a) * t.r * 0.8, y: 0.3, z: t.z + Math.sin(a) * t.r * 0.8, sy: 0.6 }); }
+      // trunks, roots and edge bushes go in the table mesh; the canopies get their own mesh per forest
+      // so they can turn see-through while squads stand under them
+      const kc = new Kit(5 + forests.length);
+      const n = Math.round(t.r * 1.6);
+      for (let i = 0; i < n; i++) {
+        const a = (i / n) * Math.PI * 2 + R() * 0.6, rr = (0.25 + 0.7 * Math.sqrt(R())) * (t.r - 0.5);
+        tallTree(k, kc, R, t.x + Math.cos(a) * rr, t.z + Math.sin(a) * rr, 1 + R() * 0.45);
+      }
+      for (let i = 0; i < 4; i++) { const a = R() * Math.PI * 2; bush(k, R, t.x + Math.cos(a) * (t.r - 0.15), t.z + Math.sin(a) * (t.r - 0.15), 0.8); }
+      for (let i = 0; i < 3; i++) { const a = R() * Math.PI * 2; k.ball(0.16, 0x8a8072, { x: t.x + Math.cos(a) * t.r * 0.9, y: 0.08, z: t.z + Math.sin(a) * t.r * 0.9, sy: 0.6 }); }
+      forests.push({ t, kc });
     } else if (t.kind === 'ruin') {
       // broken stone wall: chunky blocks with mossy tops and rubble
       const along = t.w > t.d, len = along ? t.w : t.d, n = Math.max(2, Math.round(len / 0.7));
@@ -265,6 +286,13 @@ export function buildTable(view, terrain, mapId = 'crossing') {
   }
   const terrainMesh = k.mesh(paintMat('terrain'));
   L.add(terrainMesh);
+  // forest canopies: one mesh (and material) each, faded by the game while squads are under them
+  view.forests = forests.map(f => {
+    const m = f.kc.mesh(paintMat('terrain'));
+    m.castShadow = true;
+    L.add(m);
+    return { t: f.t, mesh: m, op: 1 };
+  });
   for (const t of waters) {
     const kw = new Kit(21);
     const g = t.kind === 'lake' ? new THREE.CircleGeometry(t.r + 0.3, 18) : new THREE.PlaneGeometry(t.w + 0.7, t.d - 0.02, 5, Math.round(t.d * 1.5));

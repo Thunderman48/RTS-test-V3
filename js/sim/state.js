@@ -24,10 +24,16 @@ export function createGame(seed = 1, factions = ['kingdom', 'undead'], mapId = '
     intel: [{ known: {} }, { known: {} }],
     // production: the base build queue per side (items are paid when they start)
     bq: [[], []], nextQid: 0,
+    graves: [[], []],    // undead: leftover graveyard patches { x, z, r, cap } (from destroyed buildings)
+    revive: [null, null], // a fallen hero's revive zone { x, z, progress, round }
   };
   // each HQ starts at one of three spots along its back edge (so it has to be scouted)
   const hqz = [0, 1].map(() => def.hqSpots[Math.floor(R() * def.hqSpots.length) % def.hqSpots.length]);
-  for (const p of [0, 1]) { const h = p === 0 ? { x: HQ_X, z: hqz[0] } : mirror({ x: HQ_X, z: hqz[1] }); addBuilding(s, p, 'hq', h.x, h.z, 0, true); }
+  for (const p of [0, 1]) {
+    const h = p === 0 ? { x: HQ_X, z: hqz[0] } : mirror({ x: HQ_X, z: hqz[1] });
+    const b = addBuilding(s, p, 'hq', h.x, h.z, 0, true);
+    if (FACTIONS[factions[p]].graves) b.grave = RULES.graveHqStart;   // the Crypt starts on a small graveyard
+  }
   // the army deploys in front of its HQ with a small seeded shuffle, so games differ
   for (const p of [0, 1]) {
     for (const d0 of DEPLOY) {
@@ -38,8 +44,11 @@ export function createGame(seed = 1, factions = ['kingdom', 'undead'], mapId = '
       const pos = p === 0 ? { x: d.x, z: z0 } : mirror({ x: d.x, z: z0 });
       const jit = d.role === 'builder' ? 0 : 16;
       const jx = Math.round((R() - 0.5) * jit) / 10, jz = Math.round((R() - 0.5) * jit) / 10;
-      const q = addSquad(s, p, d.role, pos.x + jx, pos.z + jz);
-      freeSpot(s, q);
+      const n = FACTIONS[factions[p]].units[d.role].pair || 1;   // the swarm deploys as a pair
+      for (let i = 0; i < n; i++) {
+        const q = addSquad(s, p, d.role, pos.x + jx, pos.z + jz + (n > 1 ? (i - (n - 1) / 2) * 2.6 : 0));
+        freeSpot(s, q);
+      }
     }
   }
   return s;

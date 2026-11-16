@@ -10,7 +10,7 @@ const cache = new Map();
 export function terrainFactor(terrain, x, z) {
   let f = 1;
   for (const t of terrain) {
-    if (t.kind === 'forest' && dist(x, z, t.x, t.z) <= t.r) f = Math.min(f, 0.6);
+    if (t.kind === 'forest' && dist(x, z, t.x, t.z) <= t.r) f = Math.min(f, RULES.forestSlow);
     else if (t.kind === 'river' && inRect(x, z, t)) {
       const ford = (t.fords || []).some(fd => Math.abs(z - fd.z) <= fd.d / 2);
       if (!ford) f = Math.min(f, 0.5);

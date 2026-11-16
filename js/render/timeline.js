@@ -21,9 +21,24 @@ export class Timeline {
     this.blds = (pre.buildings || []).map(b => ({ ...b, T0: 0 }));
     this.bhp = new Map(this.blds.map(b => [b.id, [[0, b.hp]]]));
     this.bdown = new Map(); this.bbuilt = new Map(); this.shrineAt = [];
+    // squads in play this round: the starting ones plus any that appear mid-round (Summon Warband)
+    this.squads = pre.squads.slice();
     for (const q of pre.squads) {
       this.keys.set(q.id, [[0, q.x, q.z, q.fx, q.fz]]);
       this.hp.set(q.id, [[0, q.hp, q.models]]);
+    }
+    {
+      let T0 = 0;
+      for (const seg of log.segments) {
+        if (seg.kind === 'tier') T0 += GAP;
+        for (const e of seg.events) if (e.type === 'spawn' && e.mid) {
+          const born = T0 + e.t;
+          this.squads.push({ id: e.id, owner: e.owner, faction: e.faction, paint: e.paint, role: e.role, x: e.x, z: e.z, fx: e.fx || 1, fz: 0, models: e.models, hp: e.hp, cd: {}, ttl: 1, stance: 'advance', born });
+          this.keys.set(e.id, [[born, e.x, e.z, e.fx || 1, 0]]);
+          this.hp.set(e.id, [[born, e.hp, e.models]]);
+        }
+        T0 += seg.len;
+      }
     }
     let T = 0;
     for (const seg of log.segments) {
@@ -93,7 +108,8 @@ export class Timeline {
     const out = [];
     const sec = this.sectionAt(T);
     const acting = sec && T >= sec.t0 ? new Set(sec.squads) : null;
-    for (const q of this.pre.squads) {
+    for (const q of this.squads) {
+      if (q.born !== undefined && T < q.born) continue;   // summoned mid-round: not there yet
       const p = this.pose(q.id, T);
       const h = this.health(q.id, T);
       const dT = this.down.get(q.id);
@@ -133,7 +149,7 @@ export class Timeline {
     const key = 'p' + x + ',' + z + '|' + Math.floor(T / 4);
     if (this.visCache.has(key)) return this.visCache.get(key);
     let v = false;
-    for (const o of this.pre.squads) {
+    for (const o of this.squads) {
       if (o.owner !== this.fog.me) continue;
       const dT = this.down.get(o.id);
       if (dT !== undefined && T >= dT) continue;
@@ -177,13 +193,13 @@ export class Timeline {
   // can my side see squad `id` at time T? (my own squads always count as visible)
   visibleAt(id, T) {
     if (!this.fog) return true;
-    const q = this.pre.squads.find(x => x.id === id);
+    const q = this.squads.find(x => x.id === id);
     if (!q || q.owner === this.fog.me) return true;
     const key = id + '|' + Math.floor(T);
     if (this.visCache.has(key)) return this.visCache.get(key);
     const tp = this.pose(id, T);
     let v = false;
-    for (const o of this.pre.squads) {
+    for (const o of this.squads) {
       if (o.owner !== this.fog.me) continue;
       const dT = this.down.get(o.id);
       if (dT !== undefined && T >= dT) continue;

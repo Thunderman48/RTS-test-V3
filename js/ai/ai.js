@@ -1,11 +1,12 @@
 // AI: advances as a battle line, directly controls its hero and the 3 squads
 // closest to the enemy, and aims a little ahead of enemies that moved last round.
-import { RULES, FACTIONS, isMelee, isShooter, skillOf, cdOf, isMage, maxBuildersOf, trainsOf } from '../data/units.js';
+import { RULES, FACTIONS, isMelee, isShooter, skillOf, cdOf, isMage, maxBuildersOf, trainsOf, pairOf } from '../data/units.js';
 import { losCut, engagedWith } from '../sim/resolve.js';
 import { emptyOrders, emptyPlan, defOf, radiusOf, apFor } from '../sim/state.js';
 import { nearestEnemy, meleePlan, trimPath } from '../sim/stances.js';
 import { obstacles, navKey, placeError, bonusCp, armySize, armyValue, BUILDINGS, trainCost, footprint, nearestFreeSite, builderCount, trainsRole, edgeDist, bdef, buildQueue } from '../sim/base.js';
 import { builderPlan } from '../sim/builders.js';
+import { autoSkills } from '../sim/skills.js';
 import { Nav, pointBlocked } from '../sim/nav.js';
 import { dist } from '../sim/geom.js';
 import { visibleTo, knownEnemyHq, observers, canSee } from '../sim/vision.js';
@@ -104,10 +105,21 @@ export function aiOrders(s, p, memory = aiMemory(), opts = {}) {
   let cp = RULES.cp + bonusCp(s, p) + (level === 'easy' ? -1 : level === 'hard' ? 1 : 0);
   const myVal = mine.reduce((n, q) => n + q.hp, 0), theirVal = enemies.filter(e => !e.isHq).reduce((n, e) => n + (e.hp || 0), 0);
   const assault = s.round >= 6 && (myVal >= theirVal * 1.15 || s.round >= 12);
+  // a fallen hero: the 2 nearest squads not in a fight go and hold its revive zone
+  const rz = s.revive && s.revive[p];
+  const holders = rz ? mine.filter(q => !enemies.some(e => !e.isHq && dist(e.x, e.z, q.x, q.z) < 6)).sort((a, b) => dist(a.x, a.z, rz.x, rz.z) - dist(b.x, b.z, rz.x, rz.z)).slice(0, 2) : [];
+  if (holders.length) ranked.sort((a, b) => (holders.includes(b) ? 1 : 0) - (holders.includes(a) ? 1 : 0));
   for (const q of ranked) {
     if (q.role !== 'hero') { if (cp <= 0) break; cp--; }
     const def = defOf(q);
     const plan = emptyPlan();
+    if (holders.includes(q)) {
+      if (dist(q.x, q.z, rz.x, rz.z) > RULES.reviveRadius * 0.6) {
+        const pts = Nav.for(obstacles(s), radiusOf(q), navKey(s)).path(q.x, q.z, rz.x, rz.z);
+        if (pts.length) { plan.actions.push({ kind: 'move', pts: trimPath(q.x, q.z, pts, 0.5), ap: apFor(q) }); o.squads[q.id] = plan; continue; }
+      }
+      plan.defends = RULES.maxDefends; o.squads[q.id] = plan; continue;
+    }
     let left = apFor(q);
     // squads go for the HQ only when it is the closest thing (or nothing else is known)
     const squadsOnly = enemies.filter(e => !e.isHq);
@@ -155,66 +167,15 @@ export function aiOrders(s, p, memory = aiMemory(), opts = {}) {
     const L = lead(t);
     const tx = t.x + (L ? L.x : 0), tz = t.z + (L ? L.z : 0);
     const gap = dist(q.x, q.z, t.x, t.z) - radiusOf(t) - radiusOf(q);
-    let mana = q.mana || 0;
-    const ready = kind => { const k = skillOf(def, kind); return k && (isMage(def) ? mana >= k.mana && left >= k.ap : cdOf(q, kind) === 0) ? k : null; };
-    const cast = (kind, x, z) => { const k = skillOf(def, kind); plan.actions.push({ kind, x, z }); left -= k.ap; if (isMage(def)) mana -= k.mana; };
     const engaged = engagedWith(q, enemies);
     // already locked in melee: prepare a parry
     if (def.parry && engaged.length) { plan.parry = true; left -= RULES.parryCost; }
-    let sk;
-    // shield wall when shooters or a melee squad face us
-    if ((sk = ready('wall')) && (engaged.length || enemies.some(e => isShooter(defOf(e)) && dist(e.x, e.z, q.x, q.z) < defOf(e).attack.range + 2))) { plan.actions.push({ kind: 'wall', x: q.x, z: q.z }); left -= sk.ap; }
-    // necromancer: step out of a losing melee
-    if ((sk = ready('step')) && engaged.length && q.hp < defOf(q).hpPer * 0.5) {
-      const home = p === 0 ? -1 : 1;
-      plan.actions.push({ kind: 'step', x: q.x + home * sk.range, z: q.z }); left -= sk.ap;
-    }
-    // raise fallen skeletons nearby
-    if ((sk = ready('raise')) && mine.filter(o => defOf(o).models > 1 && o.models < defOf(o).models && dist(o.x, o.z, q.x, q.z) <= sk.radius + radiusOf(o)).length >= 1) { plan.actions.push({ kind: 'raise', x: q.x, z: q.z }); left -= sk.ap; }
-    // hero rally when friends are close
-    if ((sk = ready('rally')) && mine.filter(o => o !== q && dist(o.x, o.z, q.x, q.z) <= sk.radius + radiusOf(o)).length >= 2) { plan.actions.push({ kind: 'rally', x: q.x, z: q.z }); left -= sk.ap; }
-    // lord: leap into a target just out of reach, then sweep or swing
-    if ((sk = ready('leap')) && !engaged.length && gap > 1 && gap < sk.range) {
-      const d = Math.max(0.1, gap - 0.4), l = dist(q.x, q.z, t.x, t.z);
-      plan.actions.push({ kind: 'leap', x: q.x + (t.x - q.x) / l * d, z: q.z + (t.z - q.z) / l * d }); left -= sk.ap;
-    }
-    // the Chosen: Mighty Swing (stuns) when an enemy stands in its wide arc
-    if ((sk = ready('mighty')) && !t.isHq && gap <= sk.reach - 0.2) cast('mighty', t.x, t.z);
-    // necromancer: burst summoned skeletons that stand among enemies (or are about to crumble)
-    if (ready('explode')) {
-      const k = skillOf(def, 'explode');
-      for (const o of s.squads.filter(o => o.owner === p && o.ttl && o.hp > 0 && dist(o.x, o.z, q.x, q.z) <= k.range)) {
-        const n = enemies.filter(e => !e.isHq && dist(e.x, e.z, o.x, o.z) <= k.radius + radiusOf(e) * 0.6).length;
-        if ((n >= 2 || (n >= 1 && o.ttl <= 1)) && ready('explode')) cast('explode', o.x, o.z);
-      }
-    }
-    // necromancer: summon skeletons toward the enemy when it is close
-    if ((sk = ready('summon')) && !t.isHq && gap < 12 && s.squads.filter(o => o.owner === p && o.ttl).length < 4 && mana >= sk.mana + 25) {
-      const l = Math.max(0.1, dist(q.x, q.z, t.x, t.z)), d = Math.min(sk.range, Math.max(1.5, gap - 1));
-      cast('summon', q.x + (t.x - q.x) / l * d, q.z + (t.z - q.z) / l * d);
-    }
-    // necromancer: Dark Thunder at the target, as often as mana allows (keeping the bolt for the rest)
-    for (let i = 0; i < 2 && (sk = ready('thunder')) && !t.isHq && dist(q.x, q.z, t.x, t.z) - radiusOf(t) <= sk.range && losCut(s.terrain, q.x, q.z, t.x, t.z) >= 1; i++) cast('thunder', t.x, t.z);
-    if ((sk = ready('sweep')) && enemies.filter(e => dist(e.x, e.z, q.x, q.z) <= radiusOf(q) + sk.reach + radiusOf(e)).length >= 2) { plan.actions.push({ kind: 'sweep', x: q.x, z: q.z }); left -= sk.ap; }
-    // archers: Arrow Storm when two squads fit under it, or the target hides behind a wall
-    if ((sk = ready('storm')) && dist(q.x, q.z, tx, tz) <= sk.range + 1) {
-      const packed = enemies.filter(e => dist(e.x, e.z, tx, tz) <= sk.radius + radiusOf(e) * 0.6).length;
-      if (packed >= 2 || losCut(s.terrain, q.x, q.z, t.x, t.z) < 1) { plan.actions.push({ kind: 'storm', x: tx, z: tz }); left -= sk.ap; }
-    }
-    // crossbows: piercing bolt at the target in range with a clear line
-    if ((sk = ready('pierce')) && dist(q.x, q.z, tx, tz) - radiusOf(t) <= sk.range && losCut(s.terrain, q.x, q.z, t.x, t.z) >= 1) { plan.actions.push({ kind: 'pierce', x: tx, z: tz }); left -= sk.ap; }
-    // necromancer: blast the nearest enemy when it is in range
-    if ((sk = ready('blast')) && dist(q.x, q.z, tx, tz) <= sk.range + 1) { plan.actions.push({ kind: 'blast', x: tx, z: tz }); left -= sk.ap; }
-    // cavalry / wraiths: charge down a clear lane
-    // charge targets: slower enemies (they still stand there when we act), in a clear lane
-    sk = ready('charge');
-    const ct = sk && !engaged.length ? enemies.filter(e => {
-      const g = dist(q.x, q.z, e.x, e.z) - radiusOf(e) - radiusOf(q);
-      return defOf(e).tier < def.tier && g > 0.5 && g < sk.len - 1 && losCut(s.terrain, q.x, q.z, e.x, e.z) >= 1;
-    }).sort((a, b) => dist(q.x, q.z, a.x, a.z) - dist(q.x, q.z, b.x, b.z))[0] : null;
+    // skills (shared with stance squads on auto skills)
+    const auto = autoSkills(s, q, t, enemies, mine, plan, left, L);
+    left = auto.left;
+    const ct = auto.charged;
     if (ct) {
-      plan.actions.push({ kind: 'charge', x: ct.x, z: ct.z }); left -= sk.ap;
-      while (left >= def.attack.ap) { plan.actions.push({ kind: 'swing', x: ct.x, z: ct.z }); left -= def.attack.ap; }
+      // charged: autoSkills already added the swings after the impact
     } else if (def.attack.kind === 'volley' || def.attack.kind === 'lob') {
       const rgap = dist(q.x, q.z, t.x, t.z) - radiusOf(t);
       const blocked = def.attack.kind === 'volley' && losCut(s.terrain, q.x, q.z, t.x, t.z) < 1;
@@ -346,10 +307,13 @@ function economy(s, p, known, orders) {
     if (army >= s.board.cap) break;
     const myRoles = s.squads.filter(q => q.owner === p).map(q => q.role);
     const n = r => myRoles.filter(x => x === r).length;
-    let role = shooters >= 2 && n('fast') < 2 ? 'fast' : n('tank') < 1 ? 'tank' : n('ranged') < n('fighter') ? 'ranged' : 'fighter';
+    // undead: half the time a cheap swarm pair (the horde), else the usual mix
+    const swarm = trainsOf(b.type, fac).includes('swarm') && (b.type === 'hq' || n('swarm') <= n('fighter') + n('ranged'));
+    let role = swarm ? 'swarm' : shooters >= 2 && n('fast') < 2 ? 'fast' : n('tank') < 1 ? 'tank' : n('ranged') < n('fighter') ? 'ranged' : 'fighter';
     if (!trainsOf(b.type, fac).includes(role)) role = trainsOf(b.type, fac).find(r => r !== 'builder');
     if (supply < trainCost(fac, role)) continue;
-    out.trains.push({ bid: b.id, role }); supply -= trainCost(fac, role); army++;
+    if (army + pairOf(fac, role) > s.board.cap) continue;
+    out.trains.push({ bid: b.id, role }); supply -= trainCost(fac, role); army += pairOf(fac, role);
   }
   return out;
 }

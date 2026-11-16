@@ -80,7 +80,7 @@ export function cpUsage(s, p, orders) {
 
 export function validateOrders(s, p, orders0) {
   const orders = orders0 || {};
-  const out = { squads: {}, stances: {}, goals: {}, queue: null };
+  const out = { squads: {}, stances: {}, goals: {}, auto: {}, queue: null };
   if (s.buildings) out.queue = validateQueue(s, p, orders);
   const plans = {};
   for (const [id, plan] of Object.entries(orders.squads || {})) {
@@ -91,6 +91,11 @@ export function validateOrders(s, p, orders0) {
   for (const [id, st] of Object.entries(orders.stances || {})) {
     const q = s.squads.find(x => x.id === id);
     if (q && q.owner === p && STANCES.includes(st)) out.stances[id] = st;
+  }
+  // auto skills on / off per squad
+  for (const [id, v] of Object.entries(orders.auto || {})) {
+    const q = s.squads.find(x => x.id === id);
+    if (q && q.owner === p) out.auto[id] = !!v;
   }
   // advance target points: { x, z } (clamped to the board) or null to clear
   for (const [id, g] of Object.entries(orders.goals || {})) {

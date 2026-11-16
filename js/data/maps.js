@@ -97,7 +97,7 @@ export const DEPLOY = [
   { role: 'fighter', x: 12.5, dz: 3.5 },
   { role: 'ranged', x: 9, dz: -5.5 },
   { role: 'fast', x: 9, dz: 6 },
-  { role: 'builder', alt: 'fighter', x: 7, dz: 3.2 },          // the undead have no builders: a warband instead
+  { role: 'builder', alt: 'swarm', x: 7, dz: 3.2 },            // the undead have no builders: a swarm pair instead
   { role: 'builder', x: 6.5, dz: -2.6, only: 'kingdom' },         // the kingdom starts with two peasant squads
 ];
 

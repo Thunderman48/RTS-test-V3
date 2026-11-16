@@ -12,7 +12,7 @@ import { norm, segCircle, dist } from '../sim/geom.js';
 export class Planner {
   constructor(g) { this.g = g; this.reset(); }
   // draft.bq / draft.tq[bid] are edited copies of the queues (null = unchanged); draft.cancel stops training
-  reset() { this.draft = { ...emptyOrders(), goals: {}, bq: null, tq: {}, cancel: [], repeat: {} }; this._fc = null; }
+  reset() { this.draft = { ...emptyOrders(), goals: {}, auto: {}, bq: null, tq: {}, cancel: [], repeat: {} }; this._fc = null; }
   get s() { return this.g.state; }
   squad(id) { return this.s.squads.find(q => q.id === id); }
   plan(id) { return this.draft.squads[id] || null; }
@@ -266,6 +266,9 @@ export class Planner {
     if (q.stance === 'advance') delete this.draft.stances[id]; else this.draft.stances[id] = 'advance';
     this.g.changed();
   }
+  // auto skills (on unless switched off)
+  autoOf(q) { return q.id in this.draft.auto ? this.draft.auto[q.id] : q.auto !== false; }
+  toggleAuto(id) { const q = this.squad(id), v = !this.autoOf(q); if (v === (q.auto !== false)) delete this.draft.auto[id]; else this.draft.auto[id] = v; this.g.changed(); }
   clearGoal(id) { const q = this.squad(id); if (q.goal) this.draft.goals[id] = null; else delete this.draft.goals[id]; this.g.changed(); }
 
   // ---- base: production queues ------------------------------------------------------------

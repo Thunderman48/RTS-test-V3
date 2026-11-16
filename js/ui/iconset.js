@@ -19,6 +19,7 @@ export const ICONSET = {
   // unit types
   hero: { c: GOLD, d: 'M3 18 4.5 7l5 5L12 4l2.5 8 5-5L21 18Z', x: 'M3 21h18' },
   tank: { c: STEEL, d: SHIELD, x: 'M12 5v14M7.5 10h9' },
+  swarm: { c: ORANGE, d: 'M6 4a3 3 0 1 1-.01 0ZM18 4a3 3 0 1 1-.01 0ZM12 9a3 3 0 1 1-.01 0ZM3.5 11h5v8h-5ZM15.5 11h5v8h-5ZM9.5 15h5v7h-5Z' },
   fighter: { c: ORANGE, d: 'M18.5 2H22v3.5L10.5 17 7 13.5ZM4.5 12.5l7 7-1.6 1.6-2.2-2.2L5 21.6 2.4 19l2.7-2.7-2.2-2.2Z' },
   ranged: { c: RED, d: 'M6 2.5c8 2.5 11 10.5 8.5 19M6 2.5l8.5 19M2 12h18M17 8.5 20.5 12 17 15.5', s: true, w: 2.2 },
   fast: { c: CYAN, d: 'M6 21V11a6 6 0 0 1 12 0v10', s: true, w: 3.4 },

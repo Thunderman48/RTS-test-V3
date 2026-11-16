@@ -423,10 +423,8 @@ export const BaseUI = {
     const W = this.state.board.w, H = this.state.board.h;
     if (BUILDINGS[this.buildMode.type].site) {
       for (const sh of this.state.shrines) if (!siteTaken(this.state, sh, this.planner.queued())) { const r = ring(1.4, 0.1, 0xffc400, 0.7, 0.1, 48); r.position.x = sh.x; r.position.z = sh.z; L.add(r); }
-    } else {
-      const x = this.me === 0 ? this.state.board.zone : W - this.state.board.zone;
-      L.add(ribbon([{ x, z: 0.3 }, { x, z: H - 0.3 }], 0.08, 0xffc400, 0.6));
     }
+    void W; void H;   // other buildings can go anywhere on the table
   },
 
   // nameplates for buildings (added to the squad label pass)

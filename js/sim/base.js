@@ -1,6 +1,6 @@
 // Base & economy: buildings (footprints, obstacles, placement), shrine nodes, supply,
 // training. Deterministic, shared by the resolver, the planner UI and the AI.
-import { RULES, BUILDINGS, FACTIONS, squadRadius, trainCost, trainsOf, maxBuildersOf } from '../data/units.js';
+import { RULES, BUILDINGS, FACTIONS, squadRadius, trainCost, trainsOf, maxBuildersOf, pairOf } from '../data/units.js';
 import { dist, inRect } from './geom.js';
 import { pointBlocked } from './nav.js';
 
@@ -80,7 +80,6 @@ export function placeError(s, p, type, x, z, rot = 0, extra = [], squads = true)
     if (!sh) return 'Must stand on a resource site';
     if (siteTaken(s, sh, extra)) return 'That site is already taken';
   } else {
-    if (p === 0 ? x > s.board.zone : x < W - s.board.zone) return 'Only in your third of the table';
     for (const sh of s.shrines || []) if (overlaps(f, { x: sh.x, z: sh.z, r: RULES.shrineRadius * 0.6 }, 0)) return 'Too close to a resource site';
   }
   for (const t of s.terrain) {
@@ -101,7 +100,13 @@ export const isBuilder = q => q.role === 'builder';
 export function builderCount(s, p) { return s.squads.filter(q => q.owner === p && q.hp > 0 && isBuilder(q)).length + (s.buildings || []).filter(b => b.owner === p && b.train && b.train.role === 'builder').length; }
 // squads counted against the army cap: builders (their own cap) and summoned squads don't count
 export const inArmy = q => !isBuilder(q) && !q.ttl;
-export function armySize(s, p) { return s.squads.filter(q => q.owner === p && q.hp > 0 && inArmy(q)).length + (s.buildings || []).filter(b => b.owner === p && b.train && b.train.role !== 'builder').length; }
+export function armySize(s, p) { return s.squads.filter(q => q.owner === p && q.hp > 0 && inArmy(q)).length + (s.buildings || []).filter(b => b.owner === p && b.train && b.train.role !== 'builder').reduce((n, b) => n + pairOf(s.players[p].faction, b.train.role), 0); }
+// undead grave ground of side p: graveyards around its buildings and leftover patches
+export function graveCircles(s, p) {
+  return (s.buildings || []).filter(b => b.owner === p && b.hp > 0 && b.grave > 0).map(b => ({ x: b.x, z: b.z, r: b.grave, b }))
+    .concat(((s.graves && s.graves[p]) || []).map(g => ({ x: g.x, z: g.z, r: g.r, patch: g })));
+}
+export function graveAt(s, p, x, z) { return graveCircles(s, p).find(c => dist(c.x, c.z, x, z) <= c.r) || null; }
 // does side p's faction raise buildings out of the ground (no builders)?
 export const rises = (s, p) => !!FACTIONS[s.players[p].faction].rises;
 // income per round for side p (finished buildings only)
@@ -238,12 +243,12 @@ export function startQueues(s, p, opts = {}) {
       if (busy) { list.push({ wait: 'line' }); continue; }
       const c = trainCost(fac, role);
       let wait = '', need = 0;
-      if (role !== 'builder' && army >= s.board.cap) wait = 'cap';
+      if (role !== 'builder' && army + pairOf(fac, role) > s.board.cap) wait = 'cap';
       else if (role === 'builder' && nb >= maxBuildersOf(fac)) wait = 'builders';
       else if (supply < c) { wait = res; need = c - supply; }
       busy = true;
       if (wait) { list.push({ wait, need }); continue; }
-      supply -= c; if (role === 'builder') nb++; else army++;
+      supply -= c; if (role === 'builder') nb++; else army += pairOf(fac, role);
       list.push({ starts: true, repeat: fromRepeat }); started = true;
       if (apply) {
         s.supply[p] -= c;

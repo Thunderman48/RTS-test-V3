@@ -170,6 +170,16 @@ export class BuildingView {
     this.group.position.set(b.x, 0, b.z);
     this.height = { hq: 5, tower: 5, banner: 3.6, wall: 1.6, farm: 1.6, mine: 1.4, well: 1.4 }[b.type] || 2.6;
     this.rises = String(faction).startsWith('undead');   // undead sites rise out of the ground (no scaffold)
+    if (this.rises && def.work) {
+      // heaving earth around a rising site: chunks of dirt and broken stone that bob while it rises
+      const kd = new Kit(19), Rr = rng(Math.round(b.x * 17 + b.z * 29));
+      const rr = def.shape === 'circle' ? def.r + 0.25 : Math.max(b.w, b.d) / 2 + 0.2;
+      for (let i = 0; i < 14; i++) { const a = i / 14 * Math.PI * 2 + Rr() * 0.3, d = rr * (0.85 + Rr() * 0.3); kd.ball(0.16 + Rr() * 0.14, [0x5a4636, 0x6b5642, 0x4a3a2e, 0x8a8478][i % 4], { x: Math.cos(a) * d, y: 0.06, z: Math.sin(a) * d, sy: 0.7, j: 0.05 }); }
+      this.dirt = kd.mesh(paintMat('terrain'));
+      this.group.add(this.dirt);
+      this.glowSite = new THREE.Mesh(new THREE.CircleGeometry(rr, 20).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: 0x7dff9a, transparent: true, opacity: 0.18, depthWrite: false }));
+      this.glowSite.position.y = 0.07; this.group.add(this.glowSite);
+    }
     if (b.type === 'well') { this.glow = new THREE.Mesh(new THREE.CircleGeometry(0.6, 10).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: 0x9dffb4, transparent: true, opacity: 0.85 })); this.glow.position.y = 0.4; this.group.add(this.glow); }
     layer.add(this.group);
   }
@@ -181,13 +191,20 @@ export class BuildingView {
     const op = d.ghost ? 0.5 : site ? 0.62 : 1;
     if (this.op !== op) { const t = op < 1; if (this.mat.transparent !== t) this.mat.needsUpdate = true; this.op = op; this.mat.transparent = t; this.mat.opacity = op; this.mat.depthWrite = !t; this.mesh.castShadow = !d.ghost; }
     // a site rises as the builders work on it
-    if (this.rises) { this.mesh.scale.y = 1; this.mesh.position.y = site ? -(1 - (d.work || 0)) * this.height * 0.85 : 0; }
+    if (this.rises) {
+      // erupting: the building pushes up through the ground, shaking, with the earth heaving round it
+      const now = performance.now() / 1000, shake = site && !d.ghost ? 0.035 : 0;
+      this.mesh.scale.y = 1;
+      this.mesh.position.set(Math.sin(now * 31) * shake, site ? -(1 - (d.work || 0)) * this.height * 0.85 + Math.abs(Math.sin(now * 7)) * shake * 2 : 0, Math.cos(now * 27) * shake);
+      if (this.dirt) { this.dirt.visible = site && !d.ghost; this.dirt.position.y = Math.abs(Math.sin(now * 5)) * 0.06; this.dirt.rotation.y = Math.sin(now * 2) * 0.05; }
+      if (this.glowSite) { this.glowSite.visible = site && !d.ghost; this.glowSite.material.opacity = 0.12 + 0.08 * Math.sin(now * 4); }
+    }
     else this.mesh.scale.y = site ? 0.25 + 0.6 * (d.work || 0) : 1;
     if (this.glow) this.glow.visible = !site && !d.ghost;
     if (d.dying !== undefined) { const k = Math.min(1, d.dying); this.mesh.scale.y = Math.max(0.15, 1 - k); if (!this.mat.transparent) { this.mat.transparent = true; this.mat.needsUpdate = true; } this.op = -1; this.mat.opacity = 1 - k * 0.8; }
   }
   top() { return { x: this.group.position.x, y: this.height + 0.4, z: this.group.position.z }; }
-  destroy() { this.layer.remove(this.group); this.mat.dispose(); this.scaf.material.dispose(); this.ring.geometry.dispose(); this.ring.material.dispose(); if (this.glow) { this.glow.geometry.dispose(); this.glow.material.dispose(); } }
+  destroy() { if (this.dirt) { this.dirt.geometry.dispose(); this.dirt.material.dispose(); } if (this.glowSite) { this.glowSite.geometry.dispose(); this.glowSite.material.dispose(); } this.layer.remove(this.group); this.mat.dispose(); this.scaf.material.dispose(); this.ring.geometry.dispose(); this.ring.material.dispose(); if (this.glow) { this.glow.geometry.dispose(); this.glow.material.dispose(); } }
 }
 
 // shrine node: a ring of standing stones with a floating crystal in the owner's colour

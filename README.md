@@ -6,14 +6,17 @@ It is a static site with no build step and no server, so it runs on GitHub Pages
 
 * **Two very different armies.** The **Kingdom** is a sturdy all-rounder for beginners: peasants
   build everything and farm big fields for a strong late economy, and its hero, The Chosen, leaps,
-  rallies and stuns with a Mighty Swing. The **Undead Legion** is a cheap, weaker horde with no
-  builders (its buildings rise out of the ground), souls from deaths near its Soul Wells, and a slow
-  Necromancer mage who spends mana on summoned skeletons, chain lightning and corpse explosions.
+  rallies and stuns with a Mighty Swing. The **Undead Legion** is a cheap, never-ending horde: a
+  skeleton swarm trained two squads at a time, no builders (its buildings rise out of the ground and
+  spread graveyards), souls from everything that dies on its graves, and a slow Necromancer mage who
+  spends mana on summoned skeletons, chain lightning and corpse explosions.
+* A fallen hero can be revived by holding the spot where it fell. Squads use their skills on their
+  own (switchable per squad). Build anywhere on the table.
 * Every attack is an aimed skillshot that hits whatever is in its shape when it lands, so faster
   tiers can dodge. Armies grow up to 30 squads (more on big maps).
 * **Two economies.** The Kingdom earns **gold** from its Keep, mines and farms worked by up to 4
-  peasants each. The Undead earn **souls** from the Crypt and from every model that dies near their
-  Soul Wells.
+  peasants each. The Undead earn **souls** from every model that dies on their graveyards, plus a
+  trickle from Soul Wells.
 * **Production queues.** Queue up to 5 buildings for your base (free builders take the next one) and up
   to 5 squads at each HQ / Barracks. Everything is paid when it starts, and the **Production** bar above
   your squad cards shows every queue: tap to cancel, drag to reorder.
@@ -55,5 +58,6 @@ node tests/sim.test.mjs          # simulation tests
 * Every tunable number lives in `js/data/units.js`; the maps in `js/data/maps.js`.
 
 ## To do
+* Upgrades (planned): first, Skeleton Warbands trained in threes instead of pairs.
 * Phone and tablet layout pass: dock size, crowded nameplates, and the builder panel covering
   half the screen on phones.

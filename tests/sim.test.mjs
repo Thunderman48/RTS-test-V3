@@ -38,10 +38,10 @@ console.log('Simulation');
 
 test('createGame deploys both armies with full models (kingdom: 2 peasant squads; undead: no builders)', () => {
   const s = createGame(1);
-  eq(s.squads.filter(q => q.owner === 0).length, 7); eq(s.squads.filter(q => q.owner === 1).length, 6);
+  eq(s.squads.filter(q => q.owner === 0).length, 7); eq(s.squads.filter(q => q.owner === 1).length, 7, 'the swarm deploys as a pair');
   eq(s.squads.filter(q => q.owner === 0 && q.role === 'builder').length, 2);
   eq(s.squads.filter(q => q.owner === 1 && q.role === 'builder').length, 0);
-  eq(s.squads.filter(q => q.owner === 1 && q.role === 'fighter').length, 2, 'a second warband instead');
+  eq(s.squads.filter(q => q.owner === 1 && q.role === 'swarm').length, 2, 'a swarm pair instead of a builder');
   for (const q of s.squads) { eq(q.models, defOf(q).models); eq(q.hp, defOf(q).models * defOf(q).hpPer); }
 });
 
@@ -416,13 +416,20 @@ test('Dark Thunder strikes the target, then chains to nearby enemies with weaker
   ok(raw[0] > raw[1] && raw[1] > raw[2], 'each jump is weaker: ' + raw);
 });
 
-test('Summon Warband: two summoned squads rise at the end of the round and crumble after 3 rounds; not in the army cap', () => {
-  const s = arena([[1, 'hero', 30, 16]]);
+test('Summon Warband: two squads rise when it is cast (hittable, but they don\'t act that round) and crumble after 3 more rounds; not in the army cap', () => {
+  // a kingdom tower fires after all the tiers: at the nearest enemy, which by then is a summoned squad
+  const s = arena([[1, 'hero', 31, 4]]);
+  addBuilding(s, 0, 'tower', 22, 4, 0, true);
   const o = holdAll(s);
-  o[1].squads.q1 = plan([{ kind: 'summon', x: 27, z: 16 }]);
+  o[1].squads.q1 = plan([{ kind: 'summon', x: 27.5, z: 4 }]);
   let r = resolveRound(s, o);
+  const mid = events(r.log).filter(e => e.type === 'spawn' && e.mid);
+  eq(mid.length, 2, 'they appear during the round');
+  ok(!events(r.log).some(e => e.type === 'act' && mid.some(m => m.id === e.id)), 'and do nothing that round');
+  ok(events(r.log).some(e => e.type === 'hit' && mid.some(m => m.id === e.dst)), 'but can be hit at once');
+  r.state.buildings = r.state.buildings.filter(b => b.type !== 'tower');   // no more tower fire from here on
   const sum = r.state.squads.filter(q => q.role === 'summon');
-  eq(sum.length, 2, 'two squads'); ok(sum.every(q => q.ttl === RULES.summonTtl));
+  eq(sum.length, 2, 'two squads'); ok(sum.every(q => q.ttl === RULES.summonTtl), 'ttl ' + sum.map(q => q.ttl));
   eq(armySize(r.state, 1), 1, 'summons are not in the army cap');
   for (let i = 0; i < 2; i++) r = resolveRound(r.state, holdAll(r.state));
   eq(r.state.squads.filter(q => q.role === 'summon').length, 2, 'still there after 2 more rounds');
@@ -495,6 +502,55 @@ test('stance squads ignore enemies they cannot see', () => {
   ok(!visibleTo(s, 0).has('q2'), 'hidden behind the wall');
   const { log } = resolveRound(s, [orders({}, { q1: 'guard' }), { squads: {}, stances: { q2: 'hold' } }]);
   ok(!events(log).some(e => e.type === 'act' && e.id === 'q1'), 'guard squad does not react');
+});
+
+console.log('Revive, auto skills, the swarm, forests');
+test('a fallen hero comes back after its side holds the spot for 3 rounds (enemies inside don\'t stop it)', () => {
+  const s = arena([[0, 'hero', 20, 4, { hp: 1 }], [1, 'ranged', 30, 4], [0, 'fighter', 17, 4]]);
+  const o = holdAll(s); o[1].squads.q2 = plan([{ kind: 'volley', x: 20, z: 4 }]);
+  let r = resolveRound(s, o);
+  ok(!r.state.squads.some(q => q.role === 'hero' && q.owner === 0), 'the hero fell');
+  const z = r.state.revive[0]; ok(z && Math.abs(z.x - 20) < 0.5 && Math.abs(z.z - 4) < 0.5, 'a revive zone where it fell');
+  // nobody inside: no progress
+  const away = r.state; away.squads.find(q => q.id === 'q3').x = 8;
+  let r2 = resolveRound(away, holdAll(away));
+  eq(r2.state.revive[0].progress, 0, 'empty zone: no progress');
+  // a squad (and an enemy) inside: 3 rounds
+  const st = r.state; st.squads.find(q => q.id === 'q3').x = 19; st.squads.find(q => q.id === 'q2').x = 22; st.squads.find(q => q.id === 'q2').z = 5;
+  r = { state: st };
+  for (let i = 0; i < 3; i++) r = resolveRound(r.state, holdAll(r.state));
+  const h = r.state.squads.find(q => q.owner === 0 && q.role === 'hero');
+  ok(h, 'revived'); eq(h.hp, Math.round(FACTIONS.kingdom.units.hero.hpPer * RULES.reviveHp), 'at half HP');
+  ok(!r.state.revive[0], 'the zone is gone');
+});
+
+test('stance squads use their skills on their own unless auto skills is switched off', () => {
+  const mk = auto => { const s = arena([[0, 'hero', 20, 4], [1, 'fighter', 22.6, 4]]); if (!auto) s.squads[0].auto = false; s.squads[0].stance = 'guard'; return s; };
+  const used = s => events(resolveRound(s, [orders(), { squads: {}, stances: { q2: 'hold' } }]).log).some(e => e.type === 'act' && e.id === 'q1' && ['mighty', 'rally', 'leap'].includes(e.kind));
+  ok(used(mk(true)), 'auto: the hero swings its Mighty Swing');
+  ok(!used(mk(false)), 'off: basic swings only');
+  const s = mk(true);
+  const r = resolveRound(s, [{ squads: {}, stances: {}, auto: { q1: false } }, orders()]);
+  eq(r.state.squads[0].auto, false, 'switched off by order');
+});
+
+test('the Skeleton Warband swarm trains in pairs (one round), fragile and fast; Skeleton Warriors are the old warband', () => {
+  const U = FACTIONS.undead.units;
+  eq(U.swarm.pair, 2); ok(U.swarm.hpPer < U.fighter.hpPer && U.swarm.tier > U.fighter.tier); eq(U.fighter.name, 'Skeleton Warriors');
+  eq(RULES.trainRounds.swarm, 1);
+  const s = arena([[1, 'fighter', 40, 4]]); s.supply[1] = 100;
+  const crypt = s.buildings.find(b => b.owner === 1 && b.type === 'hq');
+  const r = resolveRound(s, [orders(), { squads: {}, stances: {}, queue: { trains: { [crypt.id]: ['swarm'] } } }]);
+  eq(r.state.squads.filter(q => q.owner === 1 && q.role === 'swarm').length, 2, 'two squads from one training');
+  eq(armySize(r.state, 1), 3, 'both count toward the cap');
+  const full = arena([[1, 'fighter', 40, 4]]); full.supply[1] = 100; full.board.cap = 2;
+  eq(startQueues(full, 1, { tq: { [crypt.id]: ['swarm'] } }).trains[crypt.id][0].wait, 'cap', 'needs room for both');
+});
+
+test('forests slow movement less, and you can build anywhere', () => {
+  eq(RULES.forestSlow, 0.75);
+  const s = arena([[0, 'builder', 7, 9], [1, 'fighter', 41, 23]]);
+  eq(placeError(s, 0, 'tower', 34, 10), '', 'a tower in the enemy half is allowed');
 });
 
 console.log('Stances');
@@ -708,7 +764,7 @@ test('builders cost no command points; the HQ trains builders, barracks soldiers
   eq(v.queue.tq[hq.id].length, 1);
   eq(validateOrders(s, 0, ob([], [{ bid: hq.id, role: 'fighter' }])).queue.tq[hq.id].length, 0, 'no soldiers from the keep');
   const hq1 = s.buildings.find(b => b.owner === 1 && b.type === 'hq');
-  eq(validateOrders(s, 1, ob([], [{ bid: hq1.id, role: 'fighter' }])).queue.tq[hq1.id].length, 1, 'the crypt raises skeleton warbands');
+  eq(validateOrders(s, 1, ob([], [{ bid: hq1.id, role: 'swarm' }])).queue.tq[hq1.id].length, 1, 'the crypt raises skeleton warbands (the swarm)');
   eq(validateOrders(s, 1, ob([], [{ bid: hq1.id, role: 'builder' }])).queue.tq[hq1.id].length, 0, 'the undead have no builders');
 });
 
@@ -844,18 +900,37 @@ test('gold: a finished mine owns its site and pays every round', () => {
   ok(placeError(r.state, 1, 'well', 16.5, 19.5), 'the site is taken');
 });
 
-test('souls: only models dying near a finished Soul Well pay (either side); elsewhere nothing', () => {
-  // a kingdom model dies near the undead's soul well (souls); another dies next to the warband far from any well (none)
+test('souls: only models dying on undead grave ground pay (either side); the graveyard widens; no Crypt income', () => {
+  // a kingdom model dies inside the soul well's graveyard (souls); another dies next to the warriors far from any graves (none)
   const s = arena([[1, 'fighter', 18.4, 19.5], [0, 'fighter', 20.3, 19.5, { hp: 5, models: 1 }], [1, 'fighter', 30, 29], [0, 'fighter', 31.9, 29, { hp: 5, models: 1 }]]);
-  addBuilding(s, 1, 'well', 16.5, 19.5, 0, true);
+  const w = addBuilding(s, 1, 'well', 16.5, 19.5, 0, true); w.grave = 5;
   const o = holdAll(s);
   o[1].squads.q1 = plan([{ kind: 'swing', x: 20.3, z: 19.5 }]);
   o[1].squads.q3 = plan([{ kind: 'swing', x: 31.9, z: 29 }]);
   const r = resolveRound(s, o);
   const souls = events(r.log).filter(e => e.type === 'souls');
   ok(events(r.log).filter(e => e.type === 'hit' && e.lost).length === 2, 'two models fell');
-  ok(souls.length === 1 && souls[0].owner === 1 && souls[0].amount === RULES.soulPerModel, 'only the one near the well: ' + JSON.stringify(souls));
-  eq(r.state.supply[1], FACTIONS.undead.eco.start + RULES.soulPerModel + FACTIONS.undead.eco.hq + BUILDINGS.well.income);
+  ok(souls.length === 1 && souls[0].owner === 1 && souls[0].amount === RULES.soulPerModel, 'only the one on the graves: ' + JSON.stringify(souls));
+  eq(FACTIONS.undead.eco.hq, 0, 'the Crypt earns nothing by itself');
+  eq(r.state.supply[1], FACTIONS.undead.eco.start + RULES.soulPerModel + BUILDINGS.well.income);
+  const w2 = r.state.buildings.find(b => b.id === w.id);
+  ok(w2.grave > 5 + RULES.graveGrow - 1e-6, 'it widened (death + growth): ' + w2.grave);
+});
+
+test('graveyards spread a little every round up to their building\'s reach; a destroyed building leaves its graves', () => {
+  const s = arena([[1, 'fighter', 40, 4]]);
+  const crypt = s.buildings.find(b => b.owner === 1 && b.type === 'hq');
+  eq(createGame(1).buildings.find(b => b.owner === 1).grave, RULES.graveHqStart, 'the Crypt starts on graves');
+  const w = addBuilding(s, 1, 'well', 31.5, 12.5, 0, true);
+  let r = resolveRound(s, holdAll(s));
+  eq(r.state.buildings.find(b => b.id === w.id).grave, RULES.graveGrow, 'the well starts spreading');
+  for (let i = 0; i < 14; i++) r = resolveRound(r.state, holdAll(r.state));
+  eq(r.state.buildings.find(b => b.id === w.id).grave, BUILDINGS.well.grave, 'up to 10"');
+  eq(r.state.buildings.find(b => b.id === crypt.id).grave, BUILDINGS.hq.grave, 'the Crypt up to 6"');
+  r.state.buildings.find(b => b.id === w.id).hp = 0;
+  r = resolveRound(r.state, holdAll(r.state));
+  ok(r.state.graves[1].some(g => g.x === 31.5 && g.r === BUILDINGS.well.grave), 'its graveyard stays');
+  ok(placeError(r.state, 1, 'barracks', 24, 16) === '' || placeError(r.state, 1, 'barracks', 24, 16) !== 'Only in your third of the table', 'and you can build anywhere');
 });
 
 test('undead buildings rise out of the ground with no builders (two at a time) and mend', () => {
@@ -992,7 +1067,8 @@ test('AI waves: on a big map the AI gathers, then its wave reaches a passive pla
   for (let r = 0; r < 30 && s.winner === null; r++) {
     const ai = aiOrders(s, 1, mem);
     phases.add(mem.wave.phase);
-    s = resolveRound(s, [ob(), ai]).state;
+    const passive = { squads: {}, stances: Object.fromEntries(s.squads.filter(q => q.owner === 0).map(q => [q.id, 'hold'])) };   // squads start on Advance now
+    s = resolveRound(s, [passive, ai]).state;
     const h = hq0(); if (h) for (const q of s.squads.filter(q => q.owner === 1 && q.role !== 'builder')) closest = Math.min(closest, Math.hypot(q.x - h.x, q.z - h.z));
   }
   ok(phases.has('gather') && phases.has('attack'), 'gathers and attacks: ' + [...phases]);

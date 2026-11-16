@@ -16,7 +16,7 @@ import { validateOrders, actionCost } from './orders.js';
 import { buildStancePlan } from './stances.js';
 import { terrainFactor, pointBlocked, blocks, blocksMove, boardOf } from './nav.js';
 import { visibleTo, canSee, updateIntel } from './vision.js';
-import { obstacles, navKey, hitRadius, bdef, applyQueue, startQueues, spawnSpot, armyValue, incomeOf, edgeDist, gatherRate } from './base.js';
+import { obstacles, navKey, hitRadius, bdef, applyQueue, startQueues, graveAt, spawnSpot, armyValue, incomeOf, edgeDist, gatherRate } from './base.js';
 import { approachSpot } from './builders.js';
 import { Nav } from './nav.js';
 import { BUILDINGS, FACTIONS, trainCost } from '../data/units.js';
@@ -86,6 +86,10 @@ export function resolveRound(state0, ordersIn) {
 
   for (const p of [0, 1]) for (const [id, st] of Object.entries(orders[p].stances)) {
     const q = s.squads.find(x => x.id === id); if (q) q.stance = st;
+  }
+  for (const p of [0, 1]) for (const [id, v] of Object.entries(orders[p].auto || {})) {
+    const q = s.squads.find(x => x.id === id); if (!q) continue;
+    if (v) delete q.auto; else q.auto = false;      // auto skills: on unless switched off
   }
   // advance target points (setting one puts the squad on Advance)
   for (const p of [0, 1]) for (const [id, g] of Object.entries(orders[p].goals || {})) {
@@ -304,7 +308,6 @@ export function resolveRound(state0, ordersIn) {
     best.hp = 0; best.models = 0;
     ev({ type: 'release', id: q.id, kind: 'explode', hit: struck, ex: r3(best.x), ez: r3(best.z), burst: best.id });
   }
-  const summons = [];      // Summon Warband casts this round: they rise at the end of the round
 
   // ---- one AP of an action ---------------------------------------------------------
   function step(r, moves, moved) {
@@ -533,9 +536,17 @@ export function resolveRound(state0, ordersIn) {
         }
         ev({ type: 'release', id: q.id, kind: 'mighty', hit: struck });
       } else if (a.kind === 'summon') {
-        // the summoned squads rise at the end of the round
-        summons.push({ owner: q.owner, x: st.cx, z: st.cz, count: sk.count, src: q.id });
+        // the summoned squads rise at once: they block and can be hit, but don't act this round
         ev({ type: 'release', id: q.id, kind: 'summon', hit: [], ex: r3(st.cx), ez: r3(st.cz), count: sk.count });
+        for (let i = 0; i < sk.count; i++) {
+          const ang = (i / sk.count) * Math.PI * 2 + 0.6, off = sk.count > 1 ? 0.9 : 0;
+          const z = addSquad(s, q.owner, 'summon', st.cx + Math.cos(ang) * off, st.cz + Math.sin(ang) * off);
+          z.fx = q.owner === 0 ? 1 : -1; z.stance = 'advance';   // summoned skeletons march on the enemy
+          z.ttl = RULES.summonTtl + 1;                           // this round doesn't count toward its life
+          freeSpot(s, z);
+          ev({ type: 'spawn', id: z.id, bid: q.id, role: 'summon', owner: q.owner, x: r3(z.x), z: r3(z.z), fx: z.fx, summon: true, mid: true, faction: z.faction, paint: z.paint, models: z.models, hp: z.hp });
+          rec(z, T);
+        }
       } else if (a.kind === 'thunder') thunder(r, st.cx, st.cz, sk);
       else if (a.kind === 'explode') explode(r, st.cx, st.cz, sk);
       else if (a.kind === 'volley') volley(r, st.ox, st.oz, st.dx, st.dz);
@@ -762,6 +773,15 @@ export function resolveRound(state0, ordersIn) {
 
   // ---- end of round ----------------------------------------------------------------
   seg = { kind: 'end', len: 0, tracks: {}, events: [] };
+  // a fallen hero leaves a revive zone where it fell
+  s.revive = s.revive || [null, null];
+  for (const q of s.squads) if (q.hp <= 0 && q.role === 'hero') {
+    s.revive[q.owner] = { x: r3(q.x), z: r3(q.z), progress: 0, round };
+    ev({ type: 'reviveZone', owner: q.owner, x: r3(q.x), z: r3(q.z) });
+  }
+  // a destroyed undead building leaves its graveyard behind
+  s.graves = s.graves || [[], []];
+  for (const b of s.buildings) if (b.hp <= 0 && b.grave > 0) s.graves[b.owner].push({ x: b.x, z: b.z, r: r3(b.grave), cap: r3(Math.max(b.grave, RULES.gravePatchCap)) });
   s.squads = s.squads.filter(q => q.hp > 0);
   s.buildings = s.buildings.filter(b => b.hp > 0);
   for (const b of s.buildings) b.hp = Math.max(1, Math.round(b.hp));
@@ -772,21 +792,16 @@ export function resolveRound(state0, ordersIn) {
     const def = FACTIONS[s.players[b.owner].faction].units[role];
     const spot = spawnSpot(s, b, 0.5 + 0.42 * Math.sqrt(def.models) + (def.look === 'rider' || def.look === 'wraith' ? 0.12 : 0));
     if (!spot) { ev({ type: 'spawnFail', id: b.id, role }); continue; }
-    const q = addSquad(s, b.owner, role, spot.x, spot.z);
-    ev({ type: 'spawn', id: q.id, bid: b.id, role, owner: b.owner, x: r3(q.x), z: r3(q.z) });
-  }
-  // summoned squads: older ones crumble after their last round, then this round's summons rise
-  for (const q of s.squads) if (q.ttl && --q.ttl <= 0) { q.hp = 0; ev({ type: 'crumble', id: q.id }); }
-  s.squads = s.squads.filter(q => q.hp > 0);
-  for (const c of summons) {
-    for (let i = 0; i < c.count; i++) {
-      const a = (i / c.count) * Math.PI * 2 + 0.6;
-      const q = addSquad(s, c.owner, 'summon', c.x + Math.cos(a) * 0.9 * (c.count > 1 ? 1 : 0), c.z + Math.sin(a) * 0.9 * (c.count > 1 ? 1 : 0));
-      q.fx = c.owner === 0 ? 1 : -1; q.stance = 'advance';   // summoned skeletons march on the enemy
-      freeSpot(s, q);
-      ev({ type: 'spawn', id: q.id, bid: c.src, role: 'summon', owner: c.owner, x: r3(q.x), z: r3(q.z), summon: true });
+    // the undead swarm comes in pairs: the second squad stands next to the first
+    for (let i = 0; i < (def.pair || 1); i++) {
+      const q = addSquad(s, b.owner, role, spot.x, spot.z);
+      if (i) freeSpot(s, q);
+      ev({ type: 'spawn', id: q.id, bid: b.id, role, owner: b.owner, x: r3(q.x), z: r3(q.z) });
     }
   }
+  // summoned squads crumble after their last round
+  for (const q of s.squads) if (q.ttl && --q.ttl <= 0) { q.hp = 0; ev({ type: 'crumble', id: q.id }); }
+  s.squads = s.squads.filter(q => q.hp > 0);
   // undead buildings rise out of the ground on their own, and finished ones mend
   for (const b of s.buildings) {
     if (!FACTIONS[s.players[b.owner].faction].rises) continue;
@@ -812,16 +827,40 @@ export function resolveRound(state0, ordersIn) {
     const owner = b ? b.owner : -1;
     if (owner !== sh.owner) { sh.owner = owner; ev({ type: 'shrine', x: sh.x, z: sh.z, owner }); }
   }
-  // souls: models that fell near an undead squad or collector (either side's dead)
+  // souls: models (either side's, not summoned) that fell on the undead side's grave ground pay, and the
+  // graveyard they fell on widens a little; then every undead building's graveyard grows toward its max
   for (const p of [0, 1]) {
-    if (FACTIONS[s.players[p].faction].eco.res !== 'souls') continue;
-    // collectors: finished own Soul Wells only
-    const col = s.buildings.filter(b => b.owner === p && bdef(b).souls && !b.build).map(b => ({ x: b.x, z: b.z }));
+    if (!FACTIONS[s.players[p].faction].graves) continue;
     for (const d of deaths) {
-      if (!col.some(c => dist(c.x, c.z, d.x, d.z) <= RULES.soulRange)) continue;
+      const c = graveAt(s, p, d.x, d.z);
+      if (!c) continue;
       const amount = d.hero ? RULES.soulPerHero : d.n * RULES.soulPerModel;
       s.supply[p] += amount;
       ev({ type: 'souls', owner: p, x: r3(d.x), z: r3(d.z), amount });
+      const grow = RULES.graveDeathGrow * d.n;
+      if (c.b) { const base = bdef(c.b).grave; c.b.graveCap = r3(Math.min(base * RULES.graveCapMult, (c.b.graveCap || base) + grow)); c.b.grave = r3(Math.min(c.b.graveCap, c.b.grave + grow)); }
+      else c.patch.r = r3(Math.min(c.patch.cap || RULES.gravePatchCap, c.patch.r + grow));
+    }
+    for (const b of s.buildings) {
+      if (b.owner !== p || b.build || !bdef(b).grave) continue;
+      const cap = b.graveCap || bdef(b).grave;
+      if ((b.grave || 0) < cap) { b.grave = r3(Math.min(cap, (b.grave || 0) + RULES.graveGrow)); ev({ type: 'graves', id: b.id, r: b.grave }); }
+    }
+  }
+  // revive: any of its squads standing in the zone at the end of a round adds progress; enemies inside don't stop it
+  for (const p of [0, 1]) {
+    const z = s.revive[p];
+    if (!z || z.round === round) continue;
+    if (s.squads.some(o => o.owner === p && o.hp > 0 && o.role !== 'builder' && !o.ttl && dist(o.x, o.z, z.x, z.z) - radiusOf(o) <= RULES.reviveRadius)) {
+      z.progress++;
+      ev({ type: 'reviveTick', owner: p, progress: z.progress, need: RULES.reviveRounds });
+    }
+    if (z.progress >= RULES.reviveRounds) {
+      const h = addSquad(s, p, 'hero', z.x, z.z), hd = defOf(h);
+      h.hp = Math.max(1, Math.round(hd.hpPer * RULES.reviveHp));
+      freeSpot(s, h);
+      s.revive[p] = null;
+      ev({ type: 'revive', id: h.id, owner: p, x: r3(h.x), z: r3(h.z), hp: h.hp });
     }
   }
   for (const p of [0, 1]) {

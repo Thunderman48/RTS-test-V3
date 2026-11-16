@@ -13,6 +13,7 @@ import { SquadView, LEAD } from './render/squads.js';
 import { makeMini, poseMini, attackPose, POSES, setMiniMode, MINI_MODE } from './render/minis.js';
 import { Timeline, SEC_PER_AP } from './render/timeline.js';
 import { ribbon, chevrons, ring, disc, arcShape, lineShape, Telegraphs, FloatTexts, Projectiles, COL } from './render/fx.js';
+import { GraveLayer } from './render/graves.js';
 import { Input } from './ui/input.js';
 import { Planner } from './ui/planner.js';
 import { icon } from './ui/iconset.js';
@@ -153,7 +154,7 @@ class Game {
   // battle sounds for events that just played (only ones my side can see)
   playSounds(events) {
     const vis = id => { const d = this.sampleCache?.find(x => x.id === id); return !d || d.visible !== false; };
-    const mine = id => this.tl.pre.squads.find(q => q.id === id)?.owner === this.me || (this.blist || []).find(b => b.id === id)?.owner === this.me;
+    const mine = id => this.tl.squads.find(q => q.id === id)?.owner === this.me || (this.blist || []).find(b => b.id === id)?.owner === this.me;
     for (const e of events) {
       if (e.type === 'release' && vis(e.id)) {
         const k = { swing: 'swing', sweep: 'swing', volley: 'volley', pierce: 'volley', lob: 'storm', storm: 'storm', blast: 'blast', charge: 'charge' }[e.kind];
@@ -445,6 +446,15 @@ class Game {
         const end = ring(radiusOf(q), 0.08, 0xffffff, sel ? 0.9 : 0.5, 0.06);
         end.position.x = pr.x; end.position.z = pr.z; L.add(end);
       }
+    }
+    // fallen heroes' revive zones (mine; the enemy's if it's in sight)
+    for (const p of [0, 1]) {
+      const z = this.state.revive?.[p]; if (!z) continue;
+      if (p !== this.me && this.fogMap && !this.fogMap.isVisible(z.x, z.z)) continue;
+      const col = p === this.me ? 0xffd23f : 0xff3b30;
+      const r = ring(RULES.reviveRadius, 0.12, col, 0.85, 0.12, 64); r.position.x = z.x; r.position.z = z.z; L.add(r);
+      const d = disc(RULES.reviveRadius, col, 0.12); d.position.x = z.x; d.position.z = z.z; L.add(d);
+      for (let i = 0; i < RULES.reviveRounds; i++) { const a = -Math.PI / 2 + (i - (RULES.reviveRounds - 1) / 2) * 0.35, pip = disc(0.22, i < z.progress ? col : 0x333333, 0.9); pip.position.x = z.x + Math.cos(a) * (RULES.reviveRadius + 0.6); pip.position.z = z.z + Math.sin(a) * (RULES.reviveRadius + 0.6); L.add(pip); }
     }
     // advance target points: a green flag line from each of my advancing squads
     for (const q of this.state.squads) {
@@ -840,7 +850,13 @@ class Game {
         <span class="m"><span class="pips">${pips}</span><span>${q.hp} HP${def.mana ? ` · <i class="mn">${this.planner.manaLeft(q)} mana</i>` : ''}${q.ttl ? ` · ☠${q.ttl}` : ''}</span></span>
         <span class="ap">${apBlocks(q, plan, true)}</span>
         <span class="st${plan ? ' ord' : ''}">${esc(st)}${plan ? ` · ${apFor(q) - used} AP left` : ''}</span></button>`;
-    }).join('');
+    }).join('') + (() => {
+      // a fallen hero: hold its revive zone to bring it back
+      const z = this.state.revive?.[this.me]; if (!z) return '';
+      const hd = FACTIONS[this.faction(this.me)].units.hero;
+      return `<button class="sq fallen" data-revive="1"><span class="n"><span class="tr">✝</span>${esc(hd.name)}${icon('hero', 14, 'role')}</span><span class="m"><span>Fallen</span><span>${z.progress}/${RULES.reviveRounds}</span></span><span class="st">Hold the ring ${RULES.reviveRounds - z.progress} more round${RULES.reviveRounds - z.progress === 1 ? '' : 's'}</span></button>`;
+    })();
+    bar.querySelector('[data-revive]')?.addEventListener('click', () => { const z = this.state.revive[this.me]; this.focusOn(z); this.toast(`Keep one of your squads inside the ring at the end of a round: ${RULES.reviveRounds} rounds bring your hero back.`); });
     bar.querySelectorAll('.sq').forEach(b => b.onclick = () => this.select(b.dataset.id, true));
   }
 
@@ -900,6 +916,7 @@ class Game {
         ${b('clear', 'release', 'Clear', 'back to stance', false, !plan, 'none')}
       </div>
       <div class="dk-stance">Stance (free): ${['advance', 'guard', 'hold', 'retreat'].map(s => `<button class="chip${st === s ? ' on' : ''}" data-act="stance:${s}" title="${STANCE_TIP[s]}">${s[0].toUpperCase() + s.slice(1)}</button>`).join('')}${st === 'advance' ? `<button class="chip${this.mode === 'goal' ? ' on' : ''}" data-act="mode:goal" title="Tap the table to set where it advances to">⚑ ${this.planner.goalOf(q) ? 'Move target' : 'Set target'}</button>${this.planner.goalOf(q) ? '<button class="chip" data-act="nogoal" title="Advance on the enemy HQ again">✕ Target</button>' : ''}` : ''}</div>
+      ${sks.length ? `<div class="dk-stance">Auto skills: <button class="chip${this.planner.autoOf(q) ? ' on' : ''}" data-act="auto" title="Without orders, this squad uses its skills on its own (not on Hold)">${this.planner.autoOf(q) ? 'On' : 'Off'}</button></div>` : ''}
       <div class="hint">${hints[this.mode] || hints.move}</div>`;
     dock.querySelectorAll('[data-act]').forEach(el => el.onclick = () => this.dockAction(el.dataset.act, q));
   }
@@ -920,6 +937,7 @@ class Game {
     else if (k === 'clear') this.planner.clear(q.id);
     else if (k === 'stance') this.planner.setStance(q.id, arg);
     else if (k === 'nogoal') this.planner.clearGoal(q.id);
+    else if (k === 'auto') this.planner.toggleAuto(q.id);
     this.changed();
   }
 
@@ -973,7 +991,8 @@ class Game {
       const bt = planning && d.role === 'builder' ? this.btasks?.get(d.id) : null;
       const mage = !!def.mana, mana = mage ? (planning && d.owner === this.me ? this.planner.manaLeft(d) : d.mana ?? 0) : 0;
       const stun = d.stun || 0, ttl = d.ttl || 0;
-      const key = `${mana}|${stun}|${ttl}|${bt ? bt.mode + bt.name : ''}|${tier}|${d.models}|${d.hp}|${sel}|${!!plan}|${d.dying !== undefined}|${defs}|${ups}|${stance}|${zoomedOut}|${parry}|${watch}|${engaged}|${cd}|${d.lastSeen}`;
+      const autoOff = planning && d.owner === this.me && skillsOf(def).length > 0 && !this.planner.autoOf(d);
+      const key = `${mana}|${stun}|${ttl}|${autoOff}|${bt ? bt.mode + bt.name : ''}|${tier}|${d.models}|${d.hp}|${sel}|${!!plan}|${d.dying !== undefined}|${defs}|${ups}|${stance}|${zoomedOut}|${parry}|${watch}|${engaged}|${cd}|${d.lastSeen}`;
       if (el.dataset.key !== key && d.lastSeen !== undefined) {
         el.dataset.key = key;
         el.style.setProperty('--team', TEAM[d.owner]);
@@ -993,6 +1012,7 @@ class Game {
         if (engaged) st.push(`<span class="st" title="Engaged in melee">${icon('engaged', 12)}</span>`);
         if (stun) st.push(`<span class="st stun" title="Stunned: its actions wait ${stun} AP">✶${stun}</span>`);
         if (ttl) st.push(`<span class="st sum" title="Summoned: crumbles after ${ttl} more round${ttl > 1 ? 's' : ''}">☠${ttl}</span>`);
+        if (autoOff) st.push(`<span class="st" title="Auto skills off">⦸</span>`);
         for (const [k, n] of cds) st.push(`<span class="st cdc" style="--c:${CAT_HEX[k.cat]}" title="${esc(k.name)} recharging">${icon(SKILL_IC[k.kind], 11)}${n}</span>`);
         if (bt && bt.mode && bt.mode !== 'hold') st.push(`<span class="st bt ${bt.mode}">${icon(bt.mode === 'gather' ? this.eco().icon : 'build', 12)}${esc(bt.name || '')}</span>`);
         if (plan) st.push(`<span class="st">${icon('control', 12)}</span>`);
@@ -1037,7 +1057,7 @@ class Game {
     let n = 0;
     $('scrub-blocks').innerHTML = tl.blocks.filter(b => b.kind !== 'wait' && tl.everSeen(b.id)).map(b => {
       if (!rows.has(b.id)) rows.set(b.id, n++);
-      const q = tl.pre.squads.find(x => x.id === b.id);
+      const q = tl.squads.find(x => x.id === b.id);
       const col = b.kind === 'move' ? (q.owner === this.me ? '#e8e4da' : '#7c766c') : ACT_COL[b.kind] || 'var(--volley)';
       return `<i style="left:${pct(b.T0)};width:${pct(b.T1 - b.T0)};top:${18 + (rows.get(b.id) % 6) * 6}px;background:${col}"></i>`;
     }).join('');
@@ -1046,7 +1066,7 @@ class Game {
   buildLog() {
     const tl = this.tl;
     const bld = id => tl.blds.find(b => b.id === id);
-    const name = id => { const q = tl.pre.squads.find(x => x.id === id); if (!q) { const b = bld(id); return b ? `<b class="t${b.owner}">${b.owner === this.me ? 'Your' : 'Enemy'} ${esc(this.bname(b))}</b>` : '?'; } if (q.owner !== this.me && !tl.everSeen(id)) return `<b class="t${q.owner}">An unseen enemy</b>`; return `<b class="t${q.owner}">${q.owner === this.me ? 'Your' : 'Enemy'} ${esc(defOf(q).name)}</b>`; };
+    const name = id => { const q = tl.squads.find(x => x.id === id); if (!q) { const b = bld(id); return b ? `<b class="t${b.owner}">${b.owner === this.me ? 'Your' : 'Enemy'} ${esc(this.bname(b))}</b>` : '?'; } if (q.owner !== this.me && !tl.everSeen(id)) return `<b class="t${q.owner}">An unseen enemy</b>`; return `<b class="t${q.owner}">${q.owner === this.me ? 'Your' : 'Enemy'} ${esc(defOf(q).name)}</b>`; };
     const lines = [];
     for (const e of tl.events) {
       const verb = { mighty: 'smashes', thunder: 'strikes with Dark Thunder', explode: 'blows up summoned bones on', leap: 'lands on', swing: 'cuts into', volley: 'shoots', lob: 'rains arrows on', storm: 'brings an Arrow Storm down on', sweep: 'sweeps through', pierce: 'drives a piercing bolt through', charge: 'charges into', blast: 'blasts', parting: 'lands a parting blow on', riposte: 'ripostes' };
@@ -1060,8 +1080,8 @@ class Game {
       else if (e.type === 'shrine') lines.push({ T: e.T, html: e.owner === this.me ? 'You claim a resource site' : e.owner < 0 ? 'A resource site is freed' : 'The enemy claims a resource site' });
       else if (e.type === 'income' && e.owner === this.me) lines.push({ T: e.T, html: `Income <span class="gain">+${e.amount}</span> ${this.ecoName()} (now ${e.supply})` });
       else if (e.type === 'souls' && e.owner === this.me) lines.push({ T: e.T, html: `The fallen give <span class="gain">+${e.amount}</span> souls` });
-      else if (e.type === 'work' && (tl.pre.squads.find(q => q.id === e.id)?.owner === this.me)) lines.push({ T: e.T, html: `${name(e.id)} ${e.repair ? 'start repairing' : 'get to work on'} ${name(e.bid)}` });
-      else if (e.type === 'workFail' && (tl.pre.squads.find(q => q.id === e.id)?.owner === this.me)) lines.push({ T: e.T, html: `${name(e.id)} can't reach the site` });
+      else if (e.type === 'work' && (tl.squads.find(q => q.id === e.id)?.owner === this.me)) lines.push({ T: e.T, html: `${name(e.id)} ${e.repair ? 'start repairing' : 'get to work on'} ${name(e.bid)}` });
+      else if (e.type === 'workFail' && (tl.squads.find(q => q.id === e.id)?.owner === this.me)) lines.push({ T: e.T, html: `${name(e.id)} can't reach the site` });
       else if (e.type === 'repaired' && (bld(e.id)?.owner === this.me)) lines.push({ T: e.T, html: `${name(e.id)} is fully repaired` });
       else if (e.type === 'hit') lines.push({ T: e.T, html: `${name(e.src)} ${verb[e.kind] || 'hits'} ${name(e.dst)} <span class="dmg">−${e.dmg}</span>${e.walled ? ' (shield wall)' : ''}${e.cover ? ' (cover)' : ''}${e.defended ? ' (defended)' : ''}${e.lost ? ` · ${e.lost} model${e.lost > 1 ? 's' : ''} fall` : ''}` });
       else if (e.type === 'down') lines.push({ T: e.T, html: `${name(e.id)} is destroyed` });
@@ -1071,6 +1091,8 @@ class Game {
       else if (e.type === 'buff') lines.push({ T: e.T, html: `${name(e.id)} rallies ${e.ids.length} squad${e.ids.length > 1 ? 's' : ''}` });
       else if (e.type === 'raise') lines.push({ T: e.T, html: `${name(e.id)} raises the dead${e.ids.length ? `: ${e.ids.map(name).join(', ')}` : ' (nobody to raise)'}` });
       else if (e.type === 'land') lines.push({ T: e.T, html: `${name(e.id)} ${e.kind === 'leap' ? 'leaps' : 'steps through the shadows'}${e.pushed.length ? `, shoving ${e.pushed.map(name).join(', ')}` : ''}` });
+      else if (e.type === 'revive') lines.push({ T: e.T, html: `${e.owner === this.me ? 'Your' : 'The enemy'} hero returns to the battle` });
+      else if (e.type === 'reviveZone') lines.push({ T: e.T, html: `${e.owner === this.me ? 'Your' : 'The enemy'} hero has fallen${e.owner === this.me ? `: hold the spot for ${RULES.reviveRounds} rounds to revive it` : ''}` });
       else if (e.type === 'stun') lines.push({ T: e.T, html: `${name(e.id)} is stunned` });
       else if (e.type === 'crumble') lines.push({ T: e.T, html: `${name(e.id)} crumble to dust` });
       else if (e.type === 'fizzle') lines.push({ T: e.T, html: `${name(e.id)}: the spell fizzles${e.kind === 'explode' ? ' (no summoned skeletons there)' : ' (out of mana)'}` });
@@ -1123,13 +1145,17 @@ class Game {
         else if (e.type === 'disengage') { const q = at(e.id); if (q) this.texts.add(q.x, q.z, 'Disengage', 'def', 2.4); }
         else if (e.type === 'watchEnd') { const q = at(e.id); if (q) this.texts.add(q.x, q.z, 'Overwatch!', 'tag', 2.6); }
         else if (e.type === 'buff') { for (const id of e.ids) { const q = at(id); if (q) { this.texts.add(q.x, q.z, e.armor ? `Rallied +${e.armor} armour` : 'Rallied', 'ok', 2.4); this.pulse(q.x, q.z, radiusOf(q) + 0.4, COL.rally); } } }
-        else if (e.type === 'release' && (e.kind === 'blast' || e.kind === 'storm')) this.pulse(e.ex, e.ez, skillOf(defOf(this.tl.pre.squads.find(x => x.id === e.id)), e.kind).radius, COL[e.kind], true);
+        else if (e.type === 'release' && (e.kind === 'blast' || e.kind === 'storm')) this.pulse(e.ex, e.ez, skillOf(defOf(this.tl.squads.find(x => x.id === e.id)), e.kind).radius, COL[e.kind], true);
         else if (e.type === 'release' && e.kind === 'thunder') this.lightning(e.chain);
         else if (e.type === 'release' && e.kind === 'explode') { this.pulse(e.ex, e.ez, 2.5, COL.explode, true); this.pulse(e.ex, e.ez, 2.8, COL.explode); this.texts.add(e.ex, e.ez, 'Corpse Explosion!', 'tag', 2.9); }
         else if (e.type === 'release' && e.kind === 'summon') { this.pulse(e.ex, e.ez, 1.6, COL.summon, true); this.texts.add(e.ex, e.ez, 'The dead rise…', 'ok', 2.6); }
         else if (e.type === 'release' && e.kind === 'mighty') { const q = at(e.id); if (q) this.pulse(q.x, q.z, radiusOf(q) + 2.6, COL.mighty); }
         else if (e.type === 'stun') { const q = at(e.id); if (q) { this.texts.add(q.x, q.z, 'Stunned!', 'tag', 2.4, 1.6); this.pulse(q.x, q.z, radiusOf(q) + 0.3, COL.stun); } }
         else if (e.type === 'fizzle') { const q = at(e.id); if (q) this.texts.add(q.x, q.z, e.kind === 'explode' ? 'No skeletons there' : 'Out of mana', 'def', 2.2); }
+        else if (e.type === 'revive') { this.pulse(e.x, e.z, 2.2, 0xffd23f, true); this.texts.add(e.x, e.z, 'The hero returns!', 'tag', 3, 2); }
+        else if (e.type === 'reviveZone') { this.texts.add(e.x, e.z, e.owner === this.me ? 'Fallen: hold this spot to revive' : 'Enemy hero fallen', 'def', 3, 2); }
+        else if (e.type === 'reviveTick' && e.owner === this.me) { const z = this.tl.pre.revive?.[this.me]; if (z) this.texts.add(z.x, z.z, `Revive ${e.progress}/${e.need}`, 'ok', 2.6); }
+        else if (e.type === 'rise' || (e.type === 'built' && e.by === null)) { const b = atB(e.id); if (b && (b.owner === this.me || this.knownB.has(e.id))) { this.pulse(b.x, b.z, (b.r || Math.max(b.w || 1, b.d || 1) / 2) + 0.8, 0x6a5a48, true); if (e.type === 'built') this.texts.add(b.x, b.z, 'Risen', 'ok', 3); } }
         else if (e.type === 'crumble') { const q = at(e.id); if (q) this.texts.add(q.x, q.z, 'Crumbles to dust', 'def', 2, 1.4); }
         else if (e.type === 'release' && e.kind === 'sweep') { const q = at(e.id); if (q) this.pulse(q.x, q.z, radiusOf(q) + 1.6, COL.sweep); }
         else if (e.type === 'land') { const q = at(e.id); if (q) { this.pulse(e.ex, e.ez, radiusOf(q) + 0.6, COL[e.kind]); this.texts.add(e.ex, e.ez, e.kind === 'leap' ? (e.dmg ? 'Leap Strike!' : 'Heroic Leap!') : 'Shadow Step', 'tag', 2.6); } for (const id of e.pushed) { const o = at(id); if (o) this.texts.add(o.x, o.z, 'Shoved', 'def', 2.2); } }
@@ -1157,8 +1183,8 @@ class Game {
     let cap;
     if (!sec) cap = T >= tl.total ? (this.rehearsal ? 'Rehearsal over. Drag the timeline to watch again, or go <b>back to planning</b>.' : 'Round over. Drag the timeline to watch again, or press <b>Next round</b>.') : 'Starting…';
     else {
-      const names = sec.squads.map(id => { const q = tl.pre.squads.find(x => x.id === id); return q && (q.owner === this.me || tl.everSeen(id)) ? `${q.owner === this.me ? '' : 'enemy '}${defOf(q).name}` : ''; }).filter(Boolean);
-      if (sec.squads.some(id => { const q = tl.pre.squads.find(x => x.id === id); return q && q.owner !== this.me && !tl.everSeen(id); })) names.push('unseen enemies');
+      const names = sec.squads.map(id => { const q = tl.squads.find(x => x.id === id); return q && (q.owner === this.me || tl.everSeen(id)) ? `${q.owner === this.me ? '' : 'enemy '}${defOf(q).name}` : ''; }).filter(Boolean);
+      if (sec.squads.some(id => { const q = tl.squads.find(x => x.id === id); return q && q.owner !== this.me && !tl.everSeen(id); })) names.push('unseen enemies');
       if (sec.tier === 0) cap = '<b>Buildings</b>: towers and keeps fire at the nearest enemy they can see.';
       else cap = `<b>Tier ${sec.tier}</b>${sec.tier >= 6 ? ' · fast' : sec.tier <= 4 ? ' · slow' : ''}: ${esc(names.join(', '))} act at the same time.`;
     }
@@ -1186,6 +1212,19 @@ class Game {
     }
   }
   clearWatches() { if (!this.watchMeshes) return; for (const m of this.watchMeshes.values()) { this.view.layers.fx.remove(m); m.geometry.dispose(); m.material.dispose(); } this.watchMeshes.clear(); }
+  // forest canopies turn see-through while any squad stands under them
+  fadeCanopies() {
+    const fs = this.view.forests; if (!fs || !fs.length) return;
+    const list = this.sampleCache && this.phase === 'playback' ? this.sampleCache : (this.state?.squads || []);
+    for (const f of fs) {
+      const under = list.some(q => q.hp > 0 && q.visible !== false && Math.hypot(q.x - f.t.x, q.z - f.t.z) < f.t.r + 0.3);
+      const want = under ? 0.35 : 1;
+      f.op += (want - f.op) * 0.15;
+      const m = f.mesh.material, tr = f.op < 0.99;
+      if (m.transparent !== tr) { m.transparent = tr; m.depthWrite = !tr; m.needsUpdate = true; }
+      m.opacity = f.op;
+    }
+  }
   // Dark Thunder: a jagged bolt from the caster through every target it jumped to
   lightning(chain) {
     if (!chain || chain.length < 2) return;
@@ -1231,6 +1270,9 @@ class Game {
       }
     }
     if (this.phase === 'menu') this.view.cam.yaw += dt * 0.04;
+    // undead graveyards (planning: now; replay: as the round started) and see-through canopies
+    if (this.state && this.phase !== 'menu') { (this.graveLayer ||= new GraveLayer(this.view.layers.units)).update(this.phase === 'playback' && this.tl ? this.tl.pre : this.state); }
+    this.fadeCanopies();
     if (this.phase === 'playback') this.tickPlayback(dt);
     else {
       const list = this.planningDisplay();
@@ -1303,7 +1345,7 @@ const G = c => `<b style="color:${c[0]}">${c[1]}</b>`;
 const GREEN = ['#34c759', 'green'], RED = ['#ff3b30', 'red'], BLUE = ['#3fa9ff', 'blue'];
 const LEGEND = [
   ['Resources', [['gold', 'Gold (Kingdom)'], ['souls', 'Souls (Undead)'], ['cp', 'Command points'], ['army', 'Army size / cap'], ['ap', 'Action points'], ['goal', 'HQ: Keep / Crypt']]],
-  ['Squads', [['hero', 'Hero'], ['tank', 'Tank'], ['fighter', 'Fighter'], ['ranged', 'Ranged'], ['fast', 'Fast'], ['builder', 'Builder']]],
+  ['Squads', [['hero', 'Hero'], ['tank', 'Tank'], ['fighter', 'Fighter'], ['swarm', 'Swarm (comes in pairs)'], ['ranged', 'Ranged'], ['fast', 'Fast'], ['builder', 'Builder']]],
   ['Orders', [['move', 'Move'], ['attack', 'Swing'], ['shoot', 'Volley'], ['defend', 'Defend'], ['parry', 'Parry'], ['overwatch', 'Overwatch'], ['tierup', 'Act earlier'], ['undo', 'Undo'], ['release', 'Clear'], ['control', 'Your orders']]],
   ['Skills', [['dash', 'Charge'], ['shove', 'Leap Strike'], ['attack', 'Mighty Swing'], ['spawn', 'Summon Warband'], ['zone', 'Dark Thunder'], ['frag', 'Corpse Explosion'], ['shoot', 'Arrow Storm'], ['range', 'Piercing Bolt'], ['rally', 'Rally'], ['fortify', 'Lock Shields / Grave Wall']]],
   ['Stances', [['guard', 'Guard'], ['hold', 'Hold'], ['advance', 'Advance']]],
@@ -1342,8 +1384,10 @@ const HELP = {
 <li><b>Kingdom: the all-rounder.</b> Sturdy, plain squads that are easy to learn. Its hero, <b>The Chosen</b>, leaps into fights (<b>Leap Strike</b> hits and shoves at the landing), <b>Rallies</b> nearby allies (+${FACTIONS.kingdom.units.hero.skills.find(k => k.kind === 'rally').armor} armour and a defend) and lands a <b>Mighty Swing</b>: big damage, long reach, and it <b>stuns</b> (the target's actions pause).</li>
 <li><b>Kingdom economy: gold and farms.</b> The Keep earns ${FACTIONS.kingdom.eco.hq} a round, every <b>Mine</b> (on a resource site) ${BUILDINGS.mine.income}. <b>Farms</b> are big (they take up land) and up to ${BUILDINGS.farm.slots} <b>peasants</b> work each one (1 gold per ${FACTIONS.kingdom.eco.gather.farm} AP each): the more peasants and farms, the stronger your late game. Peasants (up to ${FACTIONS.kingdom.maxBuilders}) don't count toward the army cap.</li>
 <li><b>Builders</b> (peasants) put up every Kingdom building. Pick a building, move the see-through ghost (green = it fits, red = it doesn't, and why) and press <b>✓ Confirm</b>: it joins your <b>build queue</b> (numbered ghosts). A free builder takes the next one and spends its AP as <b>work</b>; with no orders it keeps at its job, then farms or mines. Drag the <b>hammer</b> knob onto a site or damaged building, or the <b>gather</b> knob onto a farm or mine.</li>
-<li><b>Undead: cheap and many.</b> Every squad is weaker but costs about half as much. The <b>Necromancer</b> is a slow <b>mage</b>: it shoots magic bolts and casts with <b>mana</b> (${FACTIONS.undead.units.hero.mana.max} max, +${FACTIONS.undead.units.hero.mana.regen} a round) instead of cooldowns, so it can cast the same spell several times in a round while it has AP and mana: <b>Summon Warband</b> (two skeleton squads rise, march on the enemy and crumble after ${RULES.summonTtl} rounds), <b>Dark Thunder</b> (chain lightning that jumps to nearby enemies) and <b>Corpse Explosion</b> (blow up one of your summoned squads).</li>
-<li><b>Undead economy: souls.</b> The Crypt earns ${FACTIONS.undead.eco.hq} a round and each <b>Soul Well</b> (on a resource site) ${BUILDINGS.well.income}; every model that dies (either side) within ${RULES.soulRange}″ of your Soul Wells gives <b>${RULES.soulPerModel} souls</b> (a hero ${RULES.soulPerHero}). Fight near your wells. The Undead have <b>no builders</b>: buildings <b>rise out of the ground</b> on their own (${RULES.maxRising} at a time, over a few rounds) and slowly mend. The Crypt raises Skeleton Warbands.</li>
+<li><b>Undead: a never-ending horde.</b> Every squad is weaker but costs about half as much, and the <b>Skeleton Warband</b> swarm (fragile, fast, cheap, 1 round) comes <b>two squads at a time</b>; the <b>Skeleton Warriors</b> are the sturdier fighters. The <b>Necromancer</b> is a slow <b>mage</b>: it shoots magic bolts and casts with <b>mana</b> (${FACTIONS.undead.units.hero.mana.max} max, +${FACTIONS.undead.units.hero.mana.regen} a round) instead of cooldowns, so it can cast the same spell several times in a round while it has AP and mana: <b>Summon Warband</b> (two skeleton squads rise, march on the enemy and crumble after ${RULES.summonTtl} rounds), <b>Dark Thunder</b> (chain lightning that jumps to nearby enemies) and <b>Corpse Explosion</b> (blow up one of your summoned squads).</li>
+<li><b>Undead economy: graveyards.</b> Your buildings spread <b>graveyards</b> around them over the rounds (Soul Wells ${BUILDINGS.well.grave}″, the Crypt ${BUILDINGS.hq.grave}″, others ${BUILDINGS.tower.grave}″). Every model that dies on your graves (either side) gives <b>${RULES.soulPerModel} souls</b> (a hero ${RULES.soulPerHero}) and widens that graveyard a little. Soul Wells (on resource sites) also give ${BUILDINGS.well.income} a round: your only income without deaths. Fight on your graves. The Undead have <b>no builders</b>: buildings <b>rise out of the ground</b> on their own (${RULES.maxRising} at a time) and slowly mend. The Crypt raises the swarm.</li>
+<li><b>Hero revive.</b> A fallen hero leaves a gold ring where it fell. Keep one of your squads inside it at the end of ${RULES.reviveRounds} rounds (enemies inside don't stop it) and the hero returns with half its HP.</li>
+<li><b>Build anywhere</b> on the table (not right next to a resource site).</li>
 <li><b>Production queues.</b> One build queue for your base (up to ${RULES.queueMaxBuild}) and a training queue at every HQ / Barracks (up to ${RULES.queueMax}). Each item is <b>paid when it starts</b>; if you can't afford it, no builder is free or the army is at its cap, the queue <b>waits</b> (amber dot). The <b>Production</b> bar above your squad cards shows every queue: tap an icon to remove it (tap the squad in training twice to stop it for a refund), drag one sideways to reorder.</li>
 <li><b>Barracks / Ossuaries</b> train fighters, shooters and fast squads in 2 rounds, tanks in 3. <b>Towers</b> see far and shoot. <b>Banners / Obelisks</b>: +1 command point. <b>Walls</b> block paths and volleys. Army cap: ${RULES.armyCap} squads (more on the big maps).</li>
 </ul>`,
