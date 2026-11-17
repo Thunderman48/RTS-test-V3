@@ -80,7 +80,7 @@ export class Planner {
         const d = norm(a.x - x, a.z - z);
         if (d.l > 0.01) { fx = d.x; fz = d.z; }
         legs.push({ kind: a.kind, ox: x, oz: z, dx: fx, dz: fz, t0: t, t1: t + c, R: radiusOf(q) + (def.attack.reach || 0), ch: def.attack.cosHalf, len: def.attack.range, w: def.attack.width });
-      } else if (a.kind === 'lob' || a.kind === 'blast' || a.kind === 'storm' || a.kind === 'summon' || a.kind === 'thunder' || a.kind === 'explode') {
+      } else if (a.kind === 'lob' || a.kind === 'blast' || a.kind === 'storm' || a.kind === 'summon' || a.kind === 'thunder' || a.kind === 'explode' || a.kind === 'monolith') {
         const sk = skillOf(def, a.kind);
         const range = a.kind === 'lob' ? def.attack.range : sk.range;
         const c2 = clampAim(x, z, a.x, a.z, range);

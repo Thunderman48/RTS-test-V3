@@ -7,11 +7,11 @@ It is a static site with no build step and no server, so it runs on GitHub Pages
 * **Two very different armies.** The **Kingdom** is a sturdy all-rounder for beginners: peasants
   build everything and farm big fields for a strong late economy, and its hero, The Chosen, leaps,
   rallies and stuns with a Mighty Swing. The **Undead Legion** is a cheap, never-ending horde: a
-  skeleton swarm trained two squads at a time, no builders (its buildings rise out of the ground and
+  slow skeleton swarm trained two squads at a time, no builders (its buildings rise out of the ground and
   spread graveyards that turn the ground into dark blight), a death economy (souls from everything
   that dies on its graves; cheap skeletons pay back more than they cost), and a slow Lich mage who
   spends mana on summoned skeletons, chain lightning and corpse explosions, backed by Necromancer
-  caster squads and Monoliths that push graves forward and heal.
+  caster squads; both raise Monoliths with a spell to push graves forward and heal.
 * Small starting armies (a hero and a squad or two); the rest comes from your base.
 * A fallen hero lies where it fell; hold that spot to revive it. Squads use their skills on their
   own (switchable per squad). Build anywhere you have seen; the Undead only on their graves, which
@@ -26,7 +26,7 @@ It is a static site with no build step and no server, so it runs on GitHub Pages
   to 5 squads at each HQ / Barracks. Everything is paid when it starts, and the **Production** bar above
   your squad cards shows every queue: tap to cancel, drag to reorder.
 * **Fog of war.** Low-poly mist covers what you have never seen and a haze covers what you can't
-  see right now. The enemy HQ starts at one of three spots, so you have to scout. Destroy it to win.
+  see right now. The enemy HQ starts at one of three spots, so you have to scout. Destroying the enemy HQ is the only way to win.
 * **Four battlefields:** Crossing (48″×32″, small and quick), Twin Rivers (64×40), Highland Ruins
   (64×44, a ruin maze around a lake) and Great Field (80×52, for big armies). Pick one on the
   **Battle setup** screen, along with your army and the AI's strength (Easy / Normal / Hard). Online,

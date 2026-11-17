@@ -69,15 +69,15 @@ export const canBuild = (s, p, type) => FACTIONS[s.players[p].faction].buildings
 
 // can side p place `type` at (x,z,rot)? `extra` = buildings already queued. `squads` = false ignores
 // squads standing there (they move; used for the build queue). Returns '' or a reason.
-export function placeError(s, p, type, x, z, rot = 0, extra = [], squads = true, caster = true) {
+// skill: placed by a skill (the Monolith, raised by the Lich / Necromancers), not from the build list
+export function placeError(s, p, type, x, z, rot = 0, extra = [], squads = true, skill = false) {
   const W = s.board.w, H = s.board.h, d = BUILDINGS[type];
-  if (!d || !canBuild(s, p, type)) return 'Your side can\'t build that';
+  if (!d || (skill ? !d.skill : !canBuild(s, p, type))) return 'Your side can\'t build that';
   const f = footprint(type, x, z, rot), half = f.r !== undefined ? f.r : Math.max(f.w, f.d) / 2;
   if (x - half < 0.3 || z - half < 0.3 || x + half > W - 0.3 || z + half > H - 0.3) return 'Off the board';
   // only on ground the side has seen; undead buildings only on their own graves (like blight / creep)
   if (type !== 'hq' && !seenBy(s, p, x, z)) return 'You haven\'t seen that spot yet';
   if (type !== 'hq' && FACTIONS[s.players[p].faction].graves && !d.offGraves && !graveAt(s, p, x, z)) return 'Undead buildings must stand on your graves';
-  if (d.caster && caster && !casterNear(s, p, x, z, d.caster)) return 'Place it near your Lich or Necromancers';
   const live = (s.buildings || []).filter(b => b.hp > 0).concat(extra);
   if (d.site) {
     const sh = siteAt(s, x, z);
@@ -219,7 +219,8 @@ export function startQueues(s, p, opts = {}) {
   const out = { builds: [], trains: {} };
   // sites that can be under way at once: one per builder (undead: RULES.maxRising, they rise on their own)
   const crews = rises(s, p) ? RULES.maxRising : s.squads.filter(q => q.owner === p && q.hp > 0 && isBuilder(q)).length;
-  let sites = s.buildings.filter(b => b.owner === p && b.hp > 0 && b.build > 0).length;
+  // (Monoliths raised by a skill don't take a rising slot)
+  let sites = s.buildings.filter(b => b.owner === p && b.hp > 0 && b.build > 0 && !BUILDINGS[b.type].skill).length;
   const extra = [], keep = [];
   let line = false;
   for (const it of opts.bq || buildQueue(s, p)) {
@@ -234,7 +235,6 @@ export function startQueues(s, p, opts = {}) {
     if (line) wait = 'line';
     else if (sites >= crews) wait = rises(s, p) ? 'rising' : 'builders';
     else if (supply < d.cost) { wait = res; need = d.cost - supply; }
-    else if (d.caster && !casterNear(s, p, it.x, it.z, d.caster)) wait = 'caster';
     else if (placeError(s, p, it.type, it.x, it.z, it.rot, extra, true)) wait = 'blocked';
     if (wait) { out.builds.push({ qid: it.qid, wait, need }); keep.push(it); line = true; continue; }
     supply -= d.cost; sites++;

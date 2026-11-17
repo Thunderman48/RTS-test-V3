@@ -24,7 +24,7 @@ import { SettingsUI } from './ui/settings.js';
 import { sfx, unlockAudio, soundOn, setSound, setVolume } from './audio/sfx.js';
 import { TEAM, TEAM_HEX, setTeams } from './ui/teams.js';
 import { BUILDINGS } from './data/units.js';
-import { hitRadius, gatherRate } from './sim/base.js';
+import { hitRadius, gatherRate, placeError } from './sim/base.js';
 import { BuildingView } from './render/buildings.js';
 import { FogLayer } from './render/fog.js';
 import { FogMap } from './ui/fogmap.js';
@@ -361,12 +361,9 @@ class Game {
     if (this.state.winner !== null) {
       const w = this.state.winner;
       $('over-title').textContent = w === this.me ? 'Victory' : w === -1 ? 'Draw' : 'Defeat';
-      const hqGone = p => !this.state.buildings.some(b => b.owner === p && b.type === 'hq');
-      const loser = w === -1 ? -1 : 1 - w;
       const enemyHq = BUILDINGS.hq.name[this.faction(this.ai)], myHq = BUILDINGS.hq.name[this.faction(this.me)];
       $('over-msg').textContent = w === -1 ? 'Both sides are spent: the battle ends in a draw.'
-        : loser >= 0 && hqGone(loser) ? (w === this.me ? `The enemy ${enemyHq} has fallen.` : `Your ${myHq} has fallen.`)
-        : w === this.me ? 'The enemy army and its barracks are gone.' : 'Your army and your barracks are gone.';
+        : w === this.me ? `The enemy ${enemyHq} has fallen.` : `Your ${myHq} has fallen.`;
       $('over').classList.remove('hidden');
       sfx(w === this.me ? 'victory' : 'defeat');
     }
@@ -414,7 +411,7 @@ class Game {
     else if (leg.kind === 'leap' || leg.kind === 'step') {
       L.add(ribbon([{ x: leg.ox, z: leg.oz }, { x: leg.cx, z: leg.cz }], sel ? 0.12 : 0.08, COL[leg.kind], sel ? 0.8 : 0.5, 0.35));
       const r = ring(radiusOf(q) + 0.3, 0.1, COL[leg.kind], sel ? 0.9 : 0.5); r.position.x = leg.cx; r.position.z = leg.cz; L.add(r);
-    } else if (leg.kind === 'lob' || leg.kind === 'blast' || leg.kind === 'storm' || leg.kind === 'rally' || leg.kind === 'raise' || leg.kind === 'summon' || leg.kind === 'thunder' || leg.kind === 'explode') {
+    } else if (leg.kind === 'lob' || leg.kind === 'blast' || leg.kind === 'storm' || leg.kind === 'rally' || leg.kind === 'raise' || leg.kind === 'summon' || leg.kind === 'thunder' || leg.kind === 'explode' || leg.kind === 'monolith') {
       const col = COL[leg.kind];
       const d = disc(leg.R, col, a * 0.8); d.position.x = leg.cx; d.position.z = leg.cz; L.add(d);
       const r = ring(leg.R, 0.08, col, sel ? 0.9 : 0.5); r.position.x = leg.cx; r.position.z = leg.cz; L.add(r);
@@ -700,6 +697,17 @@ class Game {
         L.add(arcShape(pr.x, pr.z, ux, uz, R, sk.cosHalf, COL.mighty, 0.55));
         for (const e of enemies) if (arcHits(pr.x, pr.z, ux, uz, R, sk.cosHalf, e.x, e.z, radiusOf(e))) { n++; mark(e); }
         return { html: `Mighty Swing ${sk.dmg * q.models}<small>${n ? `hits and stuns ${n} if they stay` : 'nobody there now'} · stun ${sk.stun} AP</small>` };
+      }
+      if (sk.kind === 'monolith') {
+        const c = clampAim(pr.x, pr.z, p.x, p.z, sk.range), md = BUILDINGS.monolith, col = COL.summon;
+        const rr = ring(sk.range, 0.05, col, 0.4, 0.05, 72); rr.position.x = pr.x; rr.position.z = pr.z; L.add(rr);
+        const souls = this.planner.supplyLeft ? this.planner.supplyLeft() : this.state.supply[this.me];
+        const err = souls < md.cost ? `Not enough souls (${md.cost} needed)` : placeError(this.state, this.me, 'monolith', c.x, c.z, 0, this.planner.queued(), true, true);
+        const bad = err ? 0xff3b30 : col;
+        const d = disc(md.r, bad, 0.6); d.position.x = c.x; d.position.z = c.z; L.add(d);
+        const g = ring(md.grave, 0.06, bad, 0.45, 0.05, 72); g.position.x = c.x; g.position.z = c.z; L.add(g);
+        const h = ring(md.heal.radius, 0.05, 0x7dffb0, 0.35, 0.05, 60); h.position.x = c.x; h.position.z = c.z; L.add(h);
+        return { html: `Raise Monolith<small>${err ? esc(err) : `rises here over ${Math.ceil(md.work / RULES.riseWork)} rounds · ${md.grave}″ graves, heals within ${md.heal.radius}″`} · ${md.cost} souls + ${sk.mana} mana (${this.planner.manaLeft(q)} left)</small>`, bad: !!err };
       }
       if (sk.kind === 'summon' || sk.kind === 'thunder' || sk.kind === 'explode') {
         const c = clampAim(pr.x, pr.z, p.x, p.z, sk.range), col = COL[sk.kind];
@@ -1096,7 +1104,8 @@ class Game {
       else if (e.type === 'heal' && tl.squads.find(x => x.id === e.id)?.owner === this.me) lines.push({ T: e.T, html: `${name(e.bid)} heals ${name(e.id)} <span class="healamt">+${e.amount}</span>` });
       else if (e.type === 'stun') lines.push({ T: e.T, html: `${name(e.id)} is stunned` });
       else if (e.type === 'crumble') lines.push({ T: e.T, html: `${name(e.id)} crumble to dust` });
-      else if (e.type === 'fizzle') lines.push({ T: e.T, html: `${name(e.id)}: the spell fizzles${e.kind === 'explode' ? ' (no summoned skeletons there)' : ' (out of mana)'}` });
+      else if (e.type === 'fizzle') lines.push({ T: e.T, html: `${name(e.id)}: the spell fizzles${e.kind === 'explode' ? ' (no summoned skeletons there)' : e.why === 'souls' ? ' (not enough souls for a Monolith)' : e.why === 'blocked' ? ` (the ground rejects the Monolith: ${esc(e.reason || 'blocked')})` : ' (out of mana)'}` });
+      else if (e.type === 'release' && e.kind === 'monolith') lines.push({ T: e.T, html: `${name(e.id)} raises a Monolith from the ground` });
       else if (e.type === 'release' && e.kind === 'summon') lines.push({ T: e.T, html: `${name(e.id)} calls ${e.count > 1 ? e.count + ' squads' : 'a squad'} of skeletons from the ground` });
       else if (e.type === 'wallOn') lines.push({ T: e.T, html: `${name(e.id)} braces a shield wall` });
       else if (e.type === 'release' && !e.hit.length && e.kind !== 'summon') lines.push({ T: e.T, html: `${name(e.id)}: ${e.kind} ${e.blocked ? 'blocked' : 'misses (nobody in the area)'}` });
@@ -1153,7 +1162,8 @@ class Game {
         else if (e.type === 'release' && e.kind === 'mighty') { const q = at(e.id); if (q) this.pulse(q.x, q.z, radiusOf(q) + 2.6, COL.mighty); }
         else if (e.type === 'heal') { const q = at(e.id); if (q) { this.texts.add(q.x, q.z, `+${e.amount} HP`, 'ok', 2.4); this.pulse(q.x, q.z, radiusOf(q) + 0.3, 0x7dffb0); } }
         else if (e.type === 'stun') { const q = at(e.id); if (q) { this.texts.add(q.x, q.z, 'Stunned!', 'tag', 2.4, 1.6); this.pulse(q.x, q.z, radiusOf(q) + 0.3, COL.stun); } }
-        else if (e.type === 'fizzle') { const q = at(e.id); if (q) this.texts.add(q.x, q.z, e.kind === 'explode' ? 'No skeletons there' : 'Out of mana', 'def', 2.2); }
+        else if (e.type === 'fizzle') { const q = at(e.id); if (q) this.texts.add(q.x, q.z, e.kind === 'explode' ? 'No skeletons there' : e.why === 'souls' ? 'Not enough souls' : e.why === 'blocked' ? 'The ground rejects the Monolith' : 'Out of mana', 'def', 2.2); }
+        else if (e.type === 'release' && e.kind === 'monolith') { this.pulse(e.ex, e.ez, BUILDINGS.monolith.grave * 0.5, COL.summon, true); this.texts.add(e.ex, e.ez, 'A Monolith rises…', 'ok', 2.6); }
         else if (e.type === 'revive') { this.pulse(e.x, e.z, 2.2, 0xffd23f, true); this.texts.add(e.x, e.z, 'The hero returns!', 'tag', 3, 2); }
         else if (e.type === 'reviveZone') { this.texts.add(e.x, e.z, e.owner === this.me ? 'Fallen: hold this spot to revive' : 'Enemy hero fallen', 'def', 3, 2); }
         else if (e.type === 'reviveTick' && e.owner === this.me) { const z = this.tl.pre.revive?.[this.me]; if (z) this.texts.add(z.x, z.z, `Revive ${e.progress}/${e.need}`, 'ok', 2.6); }
@@ -1307,7 +1317,7 @@ const STANCE_TIP = {
   retreat: 'Falls back to your nearest Mine / Soul Well (else the HQ) and guards there',
 };
 const ACT_COL = { work: '#ffb020', swing: 'var(--swing)', volley: 'var(--volley)', lob: 'var(--volley)', charge: CAT_HEX.move, leap: CAT_HEX.move, step: CAT_HEX.move, blast: CAT_HEX.attack, storm: CAT_HEX.attack, sweep: CAT_HEX.attack, pierce: CAT_HEX.attack, mighty: CAT_HEX.attack, thunder: CAT_HEX.attack, explode: CAT_HEX.attack, rally: CAT_HEX.defense, raise: CAT_HEX.defense, wall: CAT_HEX.defense, summon: CAT_HEX.defense, wait: '#8a857c' };
-const SKILL_IC = { charge: 'dash', leap: 'shove', step: 'disrupt', blast: 'frag', storm: 'shoot', sweep: 'sweep', pierce: 'range', rally: 'rally', raise: 'heal', wall: 'fortify', mighty: 'attack', summon: 'spawn', thunder: 'zone', explode: 'frag' };
+const SKILL_IC = { monolith: 'heal', charge: 'dash', leap: 'shove', step: 'disrupt', blast: 'frag', storm: 'shoot', sweep: 'sweep', pierce: 'range', rally: 'rally', raise: 'heal', wall: 'fortify', mighty: 'attack', summon: 'spawn', thunder: 'zone', explode: 'frag' };
 const SKILL_HELP = {
   charge: 'drag its knob to aim the lane: the squad rushes down it and slams into the first enemy squad.',
   leap: 'drag its knob to a spot up to 7″ away: the hero jumps over walls and squads; the landing hits and shoves enemies around it.',
@@ -1357,7 +1367,7 @@ const LEGEND = [
 const HELP = {
   basics: () => `
 <p>Press <b>Play vs AI</b> to pick your army, one of four battlefields (from the small Crossing to the huge Great Field) and the AI's strength. <b>⚙ Settings</b> on the start screen (or in the ≡ menu during a battle) has graphics, sound, gameplay and camera options.</p>
-<p><b>Two armies of miniatures on a tabletop.</b> <b>Destroy the enemy HQ</b> (the Keep or the Crypt) to win, or wipe out its whole army and its barracks. There is no round limit.</p>
+<p><b>Two armies of miniatures on a tabletop.</b> <b>Destroy the enemy HQ</b> (the Keep or the Crypt) to win: that is the only way to win or lose. There is no round limit.</p>
 <h3>A round</h3>
 <p>Both sides give orders at the same time, then press <b>Ready</b>. Squads act in <b>speed tiers</b>: fast squads (tier 6) first, then normal (5), then slow (4); squads in the same tier act <b>at the same time</b>. Every squad has <b>100 AP</b> a round and an action's AP cost is also how long it takes. Buildings fire last. <b>Rehearse</b> plays your plan with the enemy standing still, so you can check it.</p>
 <h3>Giving orders</h3>
@@ -1386,10 +1396,10 @@ const HELP = {
 <li><b>Kingdom: the all-rounder.</b> Sturdy, plain squads that are easy to learn. Its hero, <b>The Chosen</b>, leaps into fights (<b>Leap Strike</b> hits and shoves at the landing), <b>Rallies</b> nearby allies (+${FACTIONS.kingdom.units.hero.skills.find(k => k.kind === 'rally').armor} armour and a defend) and lands a <b>Mighty Swing</b>: big damage, long reach, and it <b>stuns</b> (the target's actions pause).</li>
 <li><b>Kingdom economy: gold and farms.</b> The Keep earns ${FACTIONS.kingdom.eco.hq} a round, every <b>Mine</b> (on a resource site) ${BUILDINGS.mine.income}. <b>Farms</b> are big (they take up land) and up to ${BUILDINGS.farm.slots} <b>peasants</b> work each one (1 gold per ${FACTIONS.kingdom.eco.gather.farm} AP each): the more peasants and farms, the stronger your late game. Peasants (up to ${FACTIONS.kingdom.maxBuilders}) don't count toward the army cap.</li>
 <li><b>Builders</b> (peasants) put up every Kingdom building. Pick a building, move the see-through ghost (green = it fits, red = it doesn't, and why) and press <b>✓ Confirm</b>: it joins your <b>build queue</b> (numbered ghosts). A free builder takes the next one and spends its AP as <b>work</b>; with no orders it keeps at its job, then farms or mines. Drag the <b>hammer</b> knob onto a site or damaged building, or the <b>gather</b> knob onto a farm or mine.</li>
-<li><b>Undead: a never-ending horde.</b> Every squad is weaker but costs about half as much, and the <b>Skeleton Warband</b> swarm (fragile, fast, cheap, 1 round) comes <b>two squads at a time</b>; the <b>Skeleton Warriors</b> are the sturdier fighters. The hero, the <b>Lich</b>, is a slow <b>mage</b>: it shoots magic bolts and casts with <b>mana</b> (${FACTIONS.undead.units.hero.mana.max} max, +${FACTIONS.undead.units.hero.mana.regen} a round) instead of cooldowns, so it can cast the same spell several times in a round while it has AP and mana: <b>Summon Warband</b> (two skeleton squads rise, march on the enemy and crumble after ${RULES.summonTtl} rounds), <b>Dark Thunder</b> (chain lightning that jumps to nearby enemies) and <b>Corpse Explosion</b> (blow up one of your summoned squads). <b>Necromancers</b> (trained at the Ossuary) are a weaker caster troop with their own mana: bolts, a weaker Dark Thunder and a one-squad summon.</li>
+<li><b>Undead: a never-ending horde.</b> Every squad is weaker but costs about half as much, and the <b>Skeleton Warband</b> swarm (fragile, slow, cheap, 1 round) comes <b>two squads at a time</b>; the <b>Skeleton Warriors</b> are the sturdier fighters. The hero, the <b>Lich</b>, is a slow <b>mage</b>: it shoots magic bolts and casts with <b>mana</b> (${FACTIONS.undead.units.hero.mana.max} max, +${FACTIONS.undead.units.hero.mana.regen} a round) instead of cooldowns, so it can cast the same spell several times in a round while it has AP and mana: <b>Summon Warband</b> (two skeleton squads rise, march on the enemy and crumble after ${RULES.summonTtl} rounds), <b>Dark Thunder</b> (chain lightning that jumps to nearby enemies) <b>Corpse Explosion</b> (blow up one of your summoned squads) and <b>Raise Monolith</b> (a grave-spreading, healing Monolith rises where you aim). <b>Necromancers</b> (trained at the Ossuary) are a weaker caster troop with their own mana: bolts, a weaker Dark Thunder, a one-squad summon and Raise Monolith.</li>
 <li><b>Undead economy: death.</b> Your buildings spread <b>graveyards</b> around them almost at once (half when placed, the rest by the end of the round) (Soul Wells ${BUILDINGS.well.grave}″, the Crypt ${BUILDINGS.hq.grave}″, others ${BUILDINGS.tower.grave}″); the ground turns to dark blight. <b>Every model that dies on your graves</b> (either side) gives <b>${RULES.soulPerModel} souls</b> (a hero ${RULES.soulPerHero}) and widens that graveyard a little: that is your main income. Cheap many-model squads give back more than they cost when they fall there; elite squads less. The Crypt (${FACTIONS.undead.eco.hq}) and Soul Wells (${BUILDINGS.well.income} each) only trickle, just enough to never stop. Spread your graves toward the enemy and spend cheap skeletons on them. The Undead have <b>no builders</b>: buildings <b>rise out of the ground</b> on their own (${RULES.maxRising} at a time) and slowly mend. The Crypt raises the swarm.</li>
 <li><b>Hero revive.</b> A fallen hero leaves a gold ring where it fell. Keep one of your squads inside it at the end of ${RULES.reviveRounds} rounds (enemies inside don't stop it) and the hero returns with half its HP.</li>
-<li><b>Where to build:</b> anywhere you have <b>seen</b> at least once (not right next to a resource site). <b>Undead</b> buildings must stand on your <b>graves</b>, like blight or creep, except the <b>Monolith</b>: it can be raised anywhere you have seen within ${BUILDINGS.monolith.caster}″ of your Lich or Necromancers, spreads its own graves (${BUILDINGS.monolith.grave}″) and heals your squads near it (+${BUILDINGS.monolith.heal.hp} HP per model a round within ${BUILDINGS.monolith.heal.radius}″). Push graves forward with Monoliths (or a cheap Bone Fence on the edge), then raise Soul Wells and Ossuaries there.</li>
+<li><b>Where to build:</b> anywhere you have <b>seen</b> at least once (not right next to a resource site). <b>Undead</b> buildings must stand on your <b>graves</b>, like blight or creep, except the <b>Monolith</b>: your Lich and Necromancers raise it with the <b>Raise Monolith</b> skill (${BUILDINGS.monolith.cost} souls + mana, anywhere you have seen within ${skillOf(FACTIONS.undead.units.hero, 'monolith').range}″ of the caster); it rises in ${Math.ceil(BUILDINGS.monolith.work / RULES.riseWork)} rounds, spreads its own graves (${BUILDINGS.monolith.grave}″) and heals your squads near it (+${BUILDINGS.monolith.heal.hp} HP per model a round within ${BUILDINGS.monolith.heal.radius}″). Push graves forward with Monoliths (or a cheap Bone Fence on the edge), then raise Soul Wells and Ossuaries there.</li>
 <li><b>Small starts:</b> the Kingdom begins with its hero, Men-at-arms and one peasant squad; the Undead with the Lich and a Skeleton Warband pair. Everything else comes from your base.</li>
 <li><b>Production queues.</b> One build queue for your base (up to ${RULES.queueMaxBuild}) and a training queue at every HQ / Barracks (up to ${RULES.queueMax}). Each item is <b>paid when it starts</b>; if you can't afford it, no builder is free or the army is at its cap, the queue <b>waits</b> (amber dot). The <b>Production</b> bar above your squad cards shows every queue: tap an icon to remove it (tap the squad in training twice to stop it for a refund), drag one sideways to reorder.</li>
 <li><b>Barracks / Ossuaries</b> train fighters, shooters and fast squads in 2 rounds, tanks in 3. <b>Towers</b> see far and shoot. <b>Banners</b> (Kingdom): +1 command point. <b>Monoliths</b> (Undead): graves and a small heal. <b>Walls</b> block paths and volleys. Army cap: ${RULES.armyCap} squads (more on the big maps).</li>

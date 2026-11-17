@@ -52,8 +52,7 @@ for (const map of maps) {
       for (const p of [0, 1]) if (!found[p] && knownEnemyHq(s, p)) { found[p] = s.round - 1; R.fac[order[p]].hqFound.push(found[p]); }
     }
     R.games++;
-    const hqs = [0, 1].map(p => s.buildings.some(b => b.owner === p && b.type === 'hq'));
-    const why = s.winner === null ? 'unfinished' : !hqs[0] || !hqs[1] ? 'hq destroyed' : 'army and barracks gone';
+    const why = s.winner === null ? 'unfinished' : 'hq destroyed';   // the only way to win
     R.ends[why] = (R.ends[why] || 0) + 1;
     if (s.winner === null) R.unfinished++;
     else if (s.winner === -1) R.draws++;

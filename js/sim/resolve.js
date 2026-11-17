@@ -16,7 +16,7 @@ import { validateOrders, actionCost } from './orders.js';
 import { buildStancePlan } from './stances.js';
 import { terrainFactor, pointBlocked, blocks, blocksMove, boardOf } from './nav.js';
 import { visibleTo, canSee, updateIntel } from './vision.js';
-import { obstacles, navKey, hitRadius, bdef, applyQueue, startQueues, graveAt, spawnSpot, armyValue, incomeOf, edgeDist, gatherRate } from './base.js';
+import { obstacles, navKey, hitRadius, bdef, applyQueue, startQueues, graveAt, placeError, addBuilding, spawnSpot, armyValue, incomeOf, edgeDist, gatherRate } from './base.js';
 import { approachSpot } from './builders.js';
 import { Nav } from './nav.js';
 import { BUILDINGS, FACTIONS, trainCost } from '../data/units.js';
@@ -328,6 +328,8 @@ export function resolveRound(state0, ordersIn) {
       if (sk && isMage(def)) {
         // mages pay mana when the cast starts (no cooldown); not enough mana: the spell fizzles
         if ((q.mana || 0) < sk.mana) { ev({ type: 'fizzle', id: q.id, kind: a.kind }); r.idx++; r.el = 0; r.st = null; return; }
+        // Raise Monolith also needs the building's souls (paid when the site appears)
+        if (a.kind === 'monolith' && s.supply[q.owner] < BUILDINGS.monolith.cost) { ev({ type: 'fizzle', id: q.id, kind: a.kind, why: 'souls' }); r.idx++; r.el = 0; r.st = null; return; }
         q.mana -= sk.mana;
         ev({ type: 'mana', id: q.id, mana: q.mana, spent: sk.mana });
       } else if (sk) q.cd = { ...(q.cd || {}), [a.kind]: sk.cd + 1 };
@@ -348,7 +350,7 @@ export function resolveRound(state0, ordersIn) {
           tele('charge', { t1: r3(T + sk.wind), shape: 'line', len: sk.len, w: r3(radiusOf(q) * 2) });
         }
       }
-      if (a.kind === 'lob' || a.kind === 'blast' || a.kind === 'storm' || a.kind === 'leap' || a.kind === 'step' || a.kind === 'summon' || a.kind === 'thunder' || a.kind === 'explode') {
+      if (a.kind === 'lob' || a.kind === 'blast' || a.kind === 'storm' || a.kind === 'leap' || a.kind === 'step' || a.kind === 'summon' || a.kind === 'thunder' || a.kind === 'explode' || a.kind === 'monolith') {
         const range = a.kind === 'lob' ? def.attack.range : sk.range;
         const R = a.kind === 'lob' ? def.attack.radius : sk.radius || radiusOf(q) + 0.4;
         const c = clampAim(q.x, q.z, a.x, a.z, range);
@@ -546,6 +548,18 @@ export function resolveRound(state0, ordersIn) {
           freeSpot(s, z);
           ev({ type: 'spawn', id: z.id, bid: q.id, role: 'summon', owner: q.owner, x: r3(z.x), z: r3(z.z), fx: z.fx, summon: true, mid: true, faction: z.faction, paint: z.paint, models: z.models, hp: z.hp });
           rec(z, T);
+        }
+      } else if (a.kind === 'monolith') {
+        // Raise Monolith: a rising site at the aim point, if the ground takes it and the souls are there
+        const md = BUILDINGS.monolith;
+        const why = s.supply[q.owner] < md.cost ? 'souls' : placeError(s, q.owner, 'monolith', st.cx, st.cz, 0, [], true, true);
+        if (why) ev({ type: 'fizzle', id: q.id, kind: 'monolith', why: why === 'souls' ? 'souls' : 'blocked', reason: why, ex: r3(st.cx), ez: r3(st.cz) });
+        else {
+          s.supply[q.owner] -= md.cost;
+          const b = addBuilding(s, q.owner, 'monolith', st.cx, st.cz, 0, false);
+          if (FACTIONS[s.players[q.owner].faction].graves && md.grave) b.grave = Math.round(md.grave * RULES.graveStart * 1000) / 1000;
+          ev({ type: 'release', id: q.id, kind: 'monolith', hit: [], ex: r3(b.x), ez: r3(b.z), bid: b.id });
+          ev({ type: 'construct', id: b.id, btype: b.type, owner: q.owner, x: b.x, z: b.z, rot: 0, hp: b.hp, build: b.build, done: false, by: q.id });
         }
       } else if (a.kind === 'thunder') thunder(r, st.cx, st.cz, sk);
       else if (a.kind === 'explode') explode(r, st.cx, st.cz, sk);
@@ -889,15 +903,13 @@ export function resolveRound(state0, ordersIn) {
     for (const [k, v] of Object.entries(q.cd || {})) if (v > 1) cd[k] = v - 1;
     q.cd = cd;
   }
-  // win: destroy the enemy HQ, or leave it with no squads and no barracks
+  // win: only by destroying the enemy HQ (test arenas without HQs: no squads left)
   const hasBase = s.buildings.some(b => b.type === 'hq');
-  const lost = [0, 1].map(p => hasBase
-    ? !s.buildings.some(b => b.owner === p && b.type === 'hq') || (!s.squads.some(q => q.owner === p) && !s.buildings.some(b => b.owner === p && b.type === 'barracks' && !b.build))
-    : !s.squads.some(q => q.owner === p));
+  const lost = [0, 1].map(p => hasBase ? !s.buildings.some(b => b.owner === p && b.type === 'hq') : !s.squads.some(q => q.owner === p));
   if (lost[0] && lost[1]) s.winner = -1;
   else if (lost[0]) s.winner = 1;
   else if (lost[1]) s.winner = 0;
-  // no round limit: the battle goes on until an HQ falls (or a side has no army and no barracks)
+  // no round limit: the battle goes on until an HQ falls
   log.segments.push(seg);
   s.round++;
   return { state: s, log };

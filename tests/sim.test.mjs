@@ -1,5 +1,5 @@
 // Headless tests for the simulation. Run: node tests/sim.test.mjs
-import { RULES, FACTIONS, BUILDINGS, trainCost } from '../js/data/units.js';
+import { RULES, FACTIONS, BUILDINGS, trainCost, skillOf } from '../js/data/units.js';
 import { createGame, addSquad, defOf, radiusOf, emptyOrders, emptyPlan } from '../js/sim/state.js';
 import { resolveRound, damageAfter, engagedWith, losCut } from '../js/sim/resolve.js';
 import { cpUsage, validateOrders } from '../js/sim/orders.js';
@@ -338,11 +338,11 @@ test('balance report: AI vs AI with both factions on both sides', () => {
 
 console.log('M3 skills');
 
-test('heroes have three skills, one of each colour, usable in the same round', () => {
+test('heroes have a skill of each colour, usable in the same round (the Lich also raises Monoliths)', () => {
   for (const f of ['kingdom', 'undead']) {
     const def = createGame(1, [f, f]).squads.find(q => q.role === 'hero');
     const cats = defOf(def).skills.map(k => k.cat).sort().join();
-    eq(cats, f === 'kingdom' ? 'attack,defense,move' : 'attack,attack,defense', f);
+    eq(cats, f === 'kingdom' ? 'attack,defense,move' : 'attack,attack,defense,defense', f);
   }
   const s = arena([[0, 'hero', 10, 16], [1, 'fighter', 16, 16], [0, 'fighter', 9, 18]]);
   const o = holdAll(s);
@@ -533,9 +533,9 @@ test('stance squads use their skills on their own unless auto skills is switched
   eq(r.state.squads[0].auto, false, 'switched off by order');
 });
 
-test('the Skeleton Warband swarm trains in pairs (one round), fragile and fast; Skeleton Warriors are the old warband', () => {
+test('the Skeleton Warband swarm trains in pairs (one round), fragile and slow (no rushes); Skeleton Warriors are the old warband', () => {
   const U = FACTIONS.undead.units;
-  eq(U.swarm.pair, 2); ok(U.swarm.hpPer < U.fighter.hpPer && U.swarm.tier > U.fighter.tier); eq(U.fighter.name, 'Skeleton Warriors');
+  eq(U.swarm.pair, 2); ok(U.swarm.hpPer < U.fighter.hpPer); eq(U.swarm.tier, 4, 'tier 4: 4.8" a round'); eq(U.swarm.attack.dmg, 2.1); eq(U.fighter.name, 'Skeleton Warriors');
   eq(RULES.trainRounds.swarm, 1);
   const s = arena([[1, 'fighter', 40, 4]]); s.supply[1] = 100;
   const crypt = s.buildings.find(b => b.owner === 1 && b.type === 'hq');
@@ -951,22 +951,56 @@ test('graveyards spread almost at once to their building\'s reach; a destroyed b
   ok(placeError(r.state, 1, 'barracks', 24, 16) === '' || placeError(r.state, 1, 'barracks', 24, 16) !== 'Only in your third of the table', 'and you can build anywhere');
 });
 
-test('the Monolith: the only undead building off graves, raised near the Lich or Necromancers; it heals and spreads graves', () => {
+test('Raise Monolith: a Lich / Necromancers skill (souls + mana) that raises a rising Monolith off graves; it heals', () => {
+  ok(!FACTIONS.undead.buildings.includes('monolith'), 'not in the build menu');
+  for (const r of ['hero', 'mage']) ok(skillOf(FACTIONS.undead.units[r], 'monolith'), r + ' has the skill');
   const u = arena([[1, 'hero', 30, 9], [1, 'fighter', 40, 4]]);
-  eq(placeError(u, 1, 'monolith', 28, 11), '', 'off graves, near the Lich');
-  eq(placeError(u, 1, 'monolith', 20, 9), 'Place it near your Lich or Necromancers', 'too far from a caster');
+  eq(placeError(u, 1, 'monolith', 28, 11), "Your side can't build that", 'it cannot be queued');
+  eq(placeError(u, 1, 'monolith', 28, 11, 0, [], true, true), '', 'the skill may place it off graves');
   eq(BUILDINGS.monolith.cp, undefined, 'no command point');
   ok(!FACTIONS.undead.buildings.includes('banner') && FACTIONS.kingdom.buildings.includes('banner'), 'the Kingdom keeps its Banner');
-  // it waits (not dropped) if the caster has walked away before it starts
-  u.squads[0].x = 12; u.supply[1] = 99;
-  const fc = startQueues(u, 1, { bq: [{ qid: 'm', type: 'monolith', x: 28, z: 11, rot: 0 }] });
-  eq(fc.builds[0].wait, 'caster');
+  const sk = skillOf(FACTIONS.undead.units.hero, 'monolith');
+  // a cast: pays mana at the start and 20 souls when the site appears; aim beyond 6" is clamped
+  u.supply[1] = 50; const mana0 = u.squads[0].mana;
+  const o = holdAll(u); o[1].squads.q1 = plan([{ kind: 'monolith', x: 30, z: 20 }]);
+  const r = resolveRound(u, o), ev = events(r.log);
+  const m = r.state.buildings.find(b => b.type === 'monolith');
+  ok(m && m.owner === 1 && m.build > 0, 'a rising Monolith');
+  ok(Math.hypot(m.x - 30, m.z - 9) <= sk.range + 0.01, 'clamped to the skill range');
+  ok(ev.some(e => e.type === 'mana' && e.spent === sk.mana));
+  const inc = ev.find(e => e.type === 'income' && e.owner === 1).amount;
+  eq(r.state.supply[1], 50 - BUILDINGS.monolith.cost + inc + (ev.filter(e => e.type === 'souls' && e.owner === 1).reduce((n, e) => n + e.amount, 0)));
+  eq(m.grave, BUILDINGS.monolith.grave, 'full graves by the end of the round');
+  let t = r.state; for (let i = 0; i < 2; i++) t = resolveRound(t, holdAll(t)).state;
+  eq(t.buildings.find(b => b.type === 'monolith').build, 0, 'risen after 2 more rounds');
+  // not enough souls: fizzles, nothing paid
+  const poor = arena([[1, 'hero', 30, 9]]); poor.supply[1] = 5;
+  const po = holdAll(poor); po[1].squads.q1 = plan([{ kind: 'monolith', x: 28, z: 11 }]);
+  const pr = resolveRound(poor, po), pev = events(pr.log);
+  ok(pev.some(e => e.type === 'fizzle' && e.kind === 'monolith' && e.why === 'souls') && !pev.some(e => e.type === 'mana' && e.spent));
+  ok(!pr.state.buildings.some(b => b.type === 'monolith'));
+  // a blocked spot (a squad stands there): fizzles, no souls paid
+  const bl = arena([[1, 'hero', 30, 9], [1, 'fighter', 28, 11]]); bl.supply[1] = 50;
+  const bo = holdAll(bl); bo[1].squads.q1 = plan([{ kind: 'monolith', x: 28, z: 11 }]);
+  const br = resolveRound(bl, bo), bev = events(br.log);
+  ok(bev.some(e => e.type === 'fizzle' && e.kind === 'monolith' && e.why === 'blocked'));
+  ok(!br.state.buildings.some(b => b.type === 'monolith'));
+  // Monolith sites don't take the 2 rising slots
+  const rs = arena([[1, 'fighter', 40, 4]]); rs.supply[1] = 99;
+  addBuilding(rs, 1, 'monolith', 30, 9, 0, false); addBuilding(rs, 1, 'monolith', 30, 22, 0, false);
+  const fc = startQueues(rs, 1, { bq: [{ qid: 'w', type: 'wall', x: 38, z: 13, rot: 1 }] });
+  ok(fc.builds[0].starts, 'a fence still starts: ' + JSON.stringify(fc.builds[0]));
   // healing: a hurt squad next to a finished Monolith regains HP at the end of the round
   const h = arena([[1, 'fighter', 30, 12, { hp: 20, models: 3 }]]);
   addBuilding(h, 1, 'monolith', 30, 9.5, 0, true);
-  const r = resolveRound(h, holdAll(h));
-  const q = r.state.squads[0];
-  eq(q.hp, 20 + BUILDINGS.monolith.heal.hp * 3); ok(events(r.log).some(e => e.type === 'heal'));
+  const hr = resolveRound(h, holdAll(h));
+  eq(hr.state.squads[0].hp, 20 + BUILDINGS.monolith.heal.hp * 3); ok(events(hr.log).some(e => e.type === 'heal'));
+});
+
+test('a side loses only when its HQ falls (no squads and no barracks is not a loss)', () => {
+  const s = arena([[0, 'fighter', 10, 16]]);
+  const r = resolveRound(s, holdAll(s));
+  eq(r.state.winner, null, 'the Undead have no squads and no barracks but still have the Crypt');
 });
 
 test('Necromancers: a weaker caster troop with mana; its summon raises one squad', () => {
