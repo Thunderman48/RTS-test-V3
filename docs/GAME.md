@@ -548,7 +548,8 @@ Flat income: Crypt 1 a round, Soul Well 2 a round each. Kingdom deaths on undead
 - **The tier rule for balancing the Undead** (owner's rule): **low-tier** units (Skeleton Warband,
   Skeleton Warriors, Bone Archers; `FACTIONS.undead.lowTier`) keep their **costs**; only their stats
   change. **High-tier** units (Grave Guard, Wraiths, Necromancers, the Lich's spells) may have their
-  costs (souls, mana) changed.
+  costs (souls, mana) changed, up or down, but **only after asking the owner** (never proposed on
+  our own); elite squads are meant to lose value when they die.
 
 ### 10.4 Graveyards (`graveCircles` / `graveAt` in `js/sim/base.js`, end of round in `resolve.js`)
 - **Graves spread almost at once** (blight / creep / a Necron power matrix): an undead site gets
@@ -1047,8 +1048,8 @@ Normal, a game still going after 100 rounds counts as unfinished)._
   41 / Undead 20 (8 seeds); souls per model 3 → 4 → no change on the big maps, Crossing worse (reverted);
   Warband HP 4 → 5 (a stat: allowed for low tier) → Crossing 6 / 6 Undead (reverted); **Undead start 70
   → 90 souls** → this run, Kingdom 34 / Undead 23.
-- **Next tuning ideas (keeping the tier rule):** cheaper high-tier units for the long big-map games
-  (Grave Guard / Wraiths 16 → 13, they are rarely trained); a cheaper or faster Monolith (cost 20 → 15,
+- **Next tuning ideas (keeping the tier rule; no Undead unit cost changes without asking the owner):**
+  a cheaper or faster Monolith (cost 20 → 15,
   or work 120 → 80) so the Undead reach far sites sooner; on Crossing, slow the swarm rush by stats
   (Warband damage 2.4 → 2.1) rather than cost; slow Kingdom late gold on big maps (farm 8 → 10 AP per gold).
 
@@ -1129,7 +1130,7 @@ Balance report 2026-11-17 · 8 seeds x 2 orders per map · AI normal · stop at 
 | Mage / mana | `units.<role>.mana` (`max`, `start`, `regen`), each skill's `mana`; `isMage` in `js/data/units.js` | how often the Lich and Necromancers cast |
 | Necromancers (troop) | `FACTIONS.undead.units.mage` (2 × 10 HP, bolt `VOLLEY(25, 4, 9)`, mana 60 / 40 / +15, `THUNDER(15, 20, 6, 10, 2, 3, 0.7)`, `SUMMON(20, 35, 4, 1)`), `train.mage` (22), `RULES.trainRounds.mage` (2) | high tier: cost may change |
 | Monolith | `BUILDINGS.monolith` (`cost` 20, `work` 120, `grave` 6, `caster` 6 = max distance to a Lich / Necromancers, `offGraves`, `heal: { radius 4, hp 4 }` per model per round) | how fast the Undead push graves forward and recover between fights |
-| Undead tier rule | `FACTIONS.undead.lowTier` (`swarm`, `fighter`, `ranged`) | low tier: only stats change, never `train` costs; everything else may change cost |
+| Undead tier rule | `FACTIONS.undead.lowTier` (`swarm`, `fighter`, `ranged`) | low tier: only stats change, never `train` costs; high tier: costs may change either way, but only after asking the owner |
 | Lich spells | `SUMMON(ap, mana, range, count)`, `THUNDER(ap, mana, dmg, range, jumps, jump, decay)`, `EXPLODE(ap, mana, range, radius, base, perModel)`; summoned squad def `FACTIONS.undead.units.summon`; `RULES.summonTtl` | |
 | The Chosen | `LEAP(ap, range, cd, dmg, radius, name)`, `RALLY(ap, radius, cd, armor, dmgMult)`, `MIGHTY(ap, dmg, reach, cosHalf, stun, cd)` | stun length = `stun` AP |
 | Army cap | `RULES.armyCap` (30), map `capBonus` (`js/data/maps.js`) | big battles cost frame time and AI time |
