@@ -795,7 +795,7 @@ export function resolveRound(state0, ordersIn) {
   }
   // a destroyed undead building leaves its graveyard behind
   s.graves = s.graves || [[], []];
-  for (const b of s.buildings) if (b.hp <= 0 && b.grave > 0) s.graves[b.owner].push({ x: b.x, z: b.z, r: r3(b.grave), cap: r3(Math.max(b.grave, RULES.gravePatchCap)) });
+  for (const b of s.buildings) if (b.hp <= 0 && b.grave > 0) s.graves[b.owner].push({ x: b.x, z: b.z, r: r3(b.grave) });
   s.squads = s.squads.filter(q => q.hp > 0);
   s.buildings = s.buildings.filter(b => b.hp > 0);
   for (const b of s.buildings) b.hp = Math.max(1, Math.round(b.hp));
@@ -865,8 +865,9 @@ export function resolveRound(state0, ordersIn) {
       s.supply[p] += amount;
       ev({ type: 'souls', owner: p, x: r3(d.x), z: r3(d.z), amount });
       const grow = RULES.graveDeathGrow * d.n;
-      if (c.b) { const base = bdef(c.b).grave; c.b.graveCap = r3(Math.min(base * RULES.graveCapMult, (c.b.graveCap || base) + grow)); c.b.grave = r3(Math.min(c.b.graveCap, c.b.grave + grow)); }
-      else c.patch.r = r3(Math.min(c.patch.cap || RULES.gravePatchCap, c.patch.r + grow));
+      // no maximum: every death on a graveyard widens it for good
+      if (c.b) { c.b.graveCap = r3((c.b.graveCap || bdef(c.b).grave) + grow); c.b.grave = r3(Math.min(c.b.graveCap, c.b.grave + grow)); }
+      else c.patch.r = r3(c.patch.r + grow);
     }
     // graves spread almost at once: every undead building (rising or finished) reaches its full graveyard
     for (const b of s.buildings) {

@@ -931,6 +931,21 @@ test('souls: only models dying on undead grave ground pay (either side); the gra
   ok(w2.graveCap > BUILDINGS.well.grave && w2.grave === w2.graveCap, 'it widened beyond its reach (death) and filled it: ' + w2.grave);
 });
 
+test('graves grow from deaths with no maximum (buildings and leftover patches)', () => {
+  const s = arena([[0, 'fighter', 20, 19.5, { hp: 3, models: 1 }], [0, 'fighter', 31.6, 29, { hp: 3, models: 1 }], [1, 'tank', 21.5, 19.5], [1, 'tank', 33, 29]]);
+  const w = addBuilding(s, 1, 'well', 16.5, 19.5, 0, true); w.grave = w.graveCap = 16;   // past 1.5 x its reach (the old limit was 15")
+  s.graves[1].push({ x: 31.6, z: 29, r: 6 });                                           // a patch far past the old 3" limit
+  const o = holdAll(s);
+  o[1].squads.q3 = plan([{ kind: 'swing', x: 20, z: 19.5 }]);
+  o[1].squads.q4 = plan([{ kind: 'swing', x: 31.6, z: 29 }]);
+  const r = resolveRound(s, o);
+  ok(events(r.log).filter(e => e.type === 'hit' && e.lost).length === 2, 'two models fell');
+  const w2 = r.state.buildings.find(b => b.id === w.id);
+  eq(w2.grave, 16 + RULES.graveDeathGrow, 'the well widened past the old cap');
+  eq(r.state.graves[1][0].r, 6 + RULES.graveDeathGrow, 'the patch widened past the old cap');
+  eq(RULES.graveCapMult, undefined); eq(RULES.gravePatchCap, undefined);
+});
+
 test('graveyards spread almost at once to their building\'s reach; a destroyed building leaves its graves', () => {
   const s = arena([[1, 'fighter', 40, 4]]);
   const crypt = s.buildings.find(b => b.owner === 1 && b.type === 'hq');

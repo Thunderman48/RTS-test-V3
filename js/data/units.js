@@ -54,9 +54,7 @@ export const RULES = {
   soulPerHero: 15,
   graveStart: 0.5,              // a new undead site spreads this share of its graveyard at once; the rest by the end of the round
   graveHqStart: 10,             // the Crypt's graveyard at the start of the game (its full reach)
-  graveDeathGrow: 0.15,         // inches a graveyard widens per model that dies on it
-  graveCapMult: 1.5,            // deaths can widen a building's graveyard up to this x its max
-  gravePatchCap: 3,             // a leftover patch (from a destroyed building) can be widened up to max(its size, this)
+  graveDeathGrow: 0.15,         // inches a graveyard widens per model that dies on it (no maximum)
   // a fallen hero leaves a revive zone: hold it with any squad for reviveRounds rounds to bring it back
   reviveRadius: 3,
   reviveRounds: 3,

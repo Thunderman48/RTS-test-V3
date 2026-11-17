@@ -585,11 +585,12 @@ Flat income: Crypt 1 a round, Soul Well 2 a round each. Kingdom deaths on undead
   headstones, crosses, bone piles and dead stumps scattered on it, thick in the middle and thinning
   toward the rim (`js/render/graves.js`). Visual only.
 - **Deaths widen graves:** each model (either side, not summoned) that dies on a graveyard pays souls
-  and widens **that** graveyard by **`graveDeathGrow` = 0.15″** per model. A building's graveyard can
-  be widened up to **1.5 ×** its type's max (`graveCapMult`; the raised cap is kept on the building).
+  and widens **that** graveyard by **`graveDeathGrow` = 0.15″** per model, with **no maximum**
+  (since 2026-11-17; before, a building's graveyard stopped at 1.5 × its reach and a patch at 3″). The
+  grown size is kept on the building (`graveCap`) and refilled at the end of every round.
 - A destroyed undead building **leaves its graveyard behind** as a patch (`s.graves[p]`, its radius
-  at that moment); deaths on a patch pay and widen it up to max(its size, 3″) (`gravePatchCap`). Patches
-  never disappear.
+  at that moment); deaths on a patch pay and widen it the same way, with no maximum. Patches never
+  disappear.
 - If several graveyards overlap, a death counts once (on the first graveyard found: buildings first,
   then patches).
 - Grave ground is drawn as dark soil with tombstones, crosses and bones (`js/render/graves.js`); the
@@ -1150,7 +1151,7 @@ Balance report 2026-11-17 · 8 seeds x 2 orders per map · AI normal · stop at 
 | Lich spells | `SUMMON(ap, mana, range, count)`, `THUNDER(ap, mana, dmg, range, jumps, jump, decay)`, `EXPLODE(ap, mana, range, radius, base, perModel)`; summoned squad def `FACTIONS.undead.units.summon`; `RULES.summonTtl` | |
 | The Chosen | `LEAP(ap, range, cd, dmg, radius, name)`, `RALLY(ap, radius, cd, armor, dmgMult)`, `MIGHTY(ap, dmg, reach, cosHalf, stun, cd)` | stun length = `stun` AP |
 | Army cap | `RULES.armyCap` (30), map `capBonus` (`js/data/maps.js`) | big battles cost frame time and AI time |
-| Graveyards and souls | `BUILDINGS.<type>.grave` (reach: well 10, hq 10, others 6, Monolith 6), `RULES.graveStart` (0.5 at placement; full by the end of the round), `graveHqStart` (10), `graveDeathGrow` (0.15″ per model), `graveCapMult` (1.5), `gravePatchCap` (3), `soulPerModel`, `soulPerHero`; `FACTIONS.undead.eco.hq` (1), `BUILDINGS.well.income` (2) | the whole Undead economy: how fast it snowballs |
+| Graveyards and souls | `BUILDINGS.<type>.grave` (reach: well 10, hq 10, others 6, Monolith 6), `RULES.graveStart` (0.5 at placement; full by the end of the round), `graveHqStart` (10), `graveDeathGrow` (0.15″ per model, no maximum), `soulPerModel`, `soulPerHero`; `FACTIONS.undead.eco.hq` (1), `BUILDINGS.well.income` (2) | the whole Undead economy: how fast it snowballs |
 | Hero revive | `RULES.reviveRadius` (3″), `reviveRounds` (3), `reviveHp` (0.5) | how costly losing the hero is |
 | The swarm | `FACTIONS.undead.units.swarm` (`pair`, stats), `train.swarm`, `RULES.trainRounds.swarm` | the Undead horde's size; `tier` (4 since 2026-11-17: 4.8″ a round, so the swarm can't rush) and `attack.dmg` (2.1) set how fast and hard it hits early |
 | Forests | `RULES.forestSlow` (0.75); sight rules `FOREST_DEPTH` / `FOREST_CLOSE` in `js/sim/vision.js`; `coverMult` | |
@@ -1210,9 +1211,7 @@ Balance report 2026-11-17 · 8 seeds x 2 orders per map · AI normal · stop at 
 | `soulPerHero` | `15` | souls when a hero dies |
 | `graveStart` | `0.5` | share of its graveyard a new undead site spreads at once (the rest by the round's end) |
 | `graveHqStart` | `10` | the Crypt's graveyard at the start |
-| `graveDeathGrow` | `0.15` | inches a graveyard widens per model dying on it |
-| `graveCapMult` | `1.5` | deaths can widen a building's graveyard to this x its max |
-| `gravePatchCap` | `3` | leftover patches widen up to max(size, this) |
+| `graveDeathGrow` | `0.15` | inches a graveyard widens per model dying on it (no maximum) |
 | `reviveRadius` | `3` | revive zone radius |
 | `reviveRounds` | `3` | rounds a side must hold the zone |
 | `reviveHp` | `0.5` | revived hero's HP share |
