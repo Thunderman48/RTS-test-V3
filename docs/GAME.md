@@ -46,7 +46,7 @@ and Men-at-arms; the Crypt trains the swarm.
 - **Undead Legion (a never-ending horde, snowbally and slow to expand):** every squad is weaker but
   about half the price, and the **Skeleton Warband** swarm comes two squads at a time; **no builders**:
   buildings **rise out of the ground** on their own and spread **graveyards** around them; souls come
-  from **deaths on grave ground** (which widens it; cheap squads pay back more than they cost), plus a
+  from **deaths on grave ground** (which spreads it where they died; cheap squads pay back more than they cost), plus a
   tiny trickle from the Crypt (1) and Soul Wells (2). Hero **the Lich**, a slow **mage** with **mana**:
   Summon Warband (temporary skeletons), Dark Thunder (chain lightning), Corpse Explosion; its weaker
   caster troop, **Necromancers**, comes from the Ossuary. Both cast **Raise Monolith**: a Monolith
@@ -89,8 +89,8 @@ A round, in order:
    finished undead buildings mend 5 % → **finished Monoliths heal** nearby own squads (§11.3c) →
    **mages regain mana**; carried-over stun still left is dropped →
    **resource sites** change owner (whoever has a *finished* Mine / Soul Well on it) → **souls** are paid
-   for this round's deaths **on grave ground** (and those graveyards widen) → every undead graveyard
-   grows 1″ toward its max → **revive zones** gain progress (and heroes return) → **income** is paid →
+   for this round's deaths **on grave ground** (and new grave areas spread at the nearest edge where they
+   died) → every undead building's graveyard fills to its reach → **revive zones** gain progress (and heroes return) → **income** is paid →
    intel update → **skill cooldowns tick** → win check → round number + 1.
 
 **AP is time:** an action costing 25 AP takes 25 AP of the tier's timeline. A squad has exactly
@@ -402,7 +402,7 @@ such enemy (a normal volley toward it, needing a clear line; a lobbing unit lobs
 | hero | Lich | 1 | 90 | 90 | 5 | 3 | 3.6 | 12 | 1 | 0.65 | volley | 25 | 10 | 10 | range 10", width 0.6" | 4 | mage: mana 60/100, +25/rnd | - | - |
 | tank | Grave Guard | 3 | 21 | 63 | 9 | 4 | 4.8 | 9 | 2 | 1.227 | swing | 30 | 3.2 | 9.600000000000001 | reach 1.3" (arc +-60 deg) | 3 | - | 16 | 3 |
 | fighter | Skeleton Warriors | 5 | 9 | 45 | 3 | 5 | 6 | 9 | 1 | 1.439 | swing | 25 | 2.4 | 12 | reach 1.5" (arc +-60 deg) | 4 | parry | 9 | 2 |
-| swarm | Skeleton Warband | 6 | 4 | 24 | 0 | 4 | 4.8 | 9 | 0 | 1.5290000000000001 | swing | 25 | 2.1 | 12.600000000000001 | reach 1.4" (arc +-60 deg) | 4 | - | 14 | 1 |
+| swarm | Skeleton Warband | 6 | 4 | 24 | 0 | 3 | 3.6 | 9 | 0 | 1.5290000000000001 | swing | 25 | 2.1 | 12.600000000000001 | reach 1.4" (arc +-60 deg) | 4 | - | 14 | 1 |
 | ranged | Bone Archers | 4 | 10 | 40 | 1 | 5 | 6 | 11 | 1 | 1.34 | volley | 30 | 2.4 | 9.6 | range 14", width 0.9" | 3 | - | 13 | 2 |
 | fast | Wraiths | 3 | 14 | 42 | 3 | 6 | 7.2 | 11 | 1 | 1.347 | swing | 45 | 9 | 27 | reach 1.7" (arc +-60 deg) | 2 | ghost | 16 | 2 |
 | mage | Necromancers | 2 | 10 | 20 | 1 | 4 | 4.8 | 10 | 1 | 1.094 | volley | 25 | 4 | 8 | range 9", width 0.5" | 4 | mage: mana 40/60, +15/rnd | 22 | 2 |
@@ -584,13 +584,25 @@ Flat income: Crypt 1 a round, Soul Well 2 a round each. Kingdom deaths on undead
   with faint violet veins, edges fading over about 1.6″ with noise; `js/render/ground.js`), with
   headstones, crosses, bone piles and dead stumps scattered on it, thick in the middle and thinning
   toward the rim (`js/render/graves.js`). Visual only.
-- **Deaths widen graves:** each model (either side, not summoned) that dies on a graveyard pays souls
-  and widens **that** graveyard by **`graveDeathGrow` = 0.15″** per model, with **no maximum**
-  (since 2026-11-17; before, a building's graveyard stopped at 1.5 × its reach and a patch at 3″). The
-  grown size is kept on the building (`graveCap`) and refilled at the end of every round.
+- **Deaths spread graves where they happen** (`spreadGraves` in `js/sim/base.js`, since 2026-11-17;
+  before, every death widened the whole graveyard circle). For each group of `n` models (either side,
+  not summoned) that dies at one spot on a graveyard (credited at the end of the round, after the
+  souls):
+  1. **Direction:** from that graveyard's centre toward where they died (died at the very centre:
+     toward the enemy's side, +x for player 0, −x for player 1).
+  2. **Spot:** the graveyard's **rim** in that direction, pushed on in 0.25″ steps while the spot is
+     still more than half an area-radius inside any of the side's grave ground (so it lands at the real,
+     nearest edge of the grave ground that way), clamped to the board.
+  3. **Area:** a new small grave area (a patch with `blob: true` in `s.graves[p]`) of radius
+     **`RULES.graveBlob` × √n = 0.8″ × √n** (one model 0.8″, a 6-model squad ~2″) centred there.
+  4. **Merging:** if an earlier death area's centre is closer than 0.6 × (its radius + the new radius),
+     the two merge instead: areas add up (r = √(r₁² + r₂²)) and the centre moves toward the new spot,
+     weighted by area. Big areas therefore keep creeping toward where the fighting is.
+  - The graveyard the models died on **doesn't change size**; there is **no maximum** on how far
+    death areas spread. Building graveyards stay at their reach.
 - A destroyed undead building **leaves its graveyard behind** as a patch (`s.graves[p]`, its radius
-  at that moment); deaths on a patch pay and widen it the same way, with no maximum. Patches never
-  disappear.
+  at that moment). Patches and death areas never disappear; deaths on them pay souls and spread new
+  areas from their edges in the same way.
 - If several graveyards overlap, a death counts once (on the first graveyard found: buildings first,
   then patches).
 - Grave ground is drawn as dark soil with tombstones, crosses and bones (`js/render/graves.js`); the
@@ -1148,9 +1160,9 @@ Balance report 2026-11-17 · 8 seeds x 2 orders per map · AI normal · stop at 
 | Lich spells | `SUMMON(ap, mana, range, count)`, `THUNDER(ap, mana, dmg, range, jumps, jump, decay)`, `EXPLODE(ap, mana, range, radius, base, perModel)`; summoned squad def `FACTIONS.undead.units.summon`; `RULES.summonTtl` | |
 | The Chosen | `LEAP(ap, range, cd, dmg, radius, name)`, `RALLY(ap, radius, cd, armor, dmgMult)`, `MIGHTY(ap, dmg, reach, cosHalf, stun, cd)` | stun length = `stun` AP |
 | Army cap | `RULES.armyCap` (30), map `capBonus` (`js/data/maps.js`) | big battles cost frame time and AI time |
-| Graveyards and souls | `BUILDINGS.<type>.grave` (reach: well 10, hq 10, others 6, Monolith 6), `RULES.graveStart` (0.5 at placement; full by the end of the round), `graveHqStart` (10), `graveDeathGrow` (0.15″ per model, no maximum), `soulPerModel`, `soulPerHero`; `FACTIONS.undead.eco.hq` (1), `BUILDINGS.well.income` (2) | the whole Undead economy: how fast it snowballs |
+| Graveyards and souls | `BUILDINGS.<type>.grave` (reach: well 10, hq 10, others 6, Monolith 6), `RULES.graveStart` (0.5 at placement; full by the end of the round), `graveHqStart` (10), `graveBlob` (0.8″: radius of the grave area a death adds at the nearest edge, × √models, merging, no maximum; `spreadGraves` in `js/sim/base.js`), `soulPerModel`, `soulPerHero`; `FACTIONS.undead.eco.hq` (1), `BUILDINGS.well.income` (2) | the whole Undead economy: how fast it snowballs |
 | Hero revive | `RULES.reviveRadius` (3″), `reviveRounds` (3), `reviveHp` (0.5) | how costly losing the hero is |
-| The swarm | `FACTIONS.undead.units.swarm` (`pair`, stats), `train.swarm`, `RULES.trainRounds.swarm` | the Undead horde's size; `tier` (4 since 2026-11-17: 4.8″ a round, so the swarm can't rush) and `attack.dmg` (2.1) set how fast and hard it hits early |
+| The swarm | `FACTIONS.undead.units.swarm` (`pair`, stats), `train.swarm`, `RULES.trainRounds.swarm` | the Undead horde's size; `tier` (3 since 2026-11-17, was 6 then 4: 3.6″ a round, so the swarm can't rush) and `attack.dmg` (2.1) set how fast and hard it hits early |
 | Forests | `RULES.forestSlow` (0.75); sight rules `FOREST_DEPTH` / `FOREST_CLOSE` in `js/sim/vision.js`; `coverMult` | |
 | Stances | `RULES.advanceEngage` (10″: Advance fights the nearest squad / building within this), `RULES.goalReach` (1.5″), `RULES.retreatReach` (3″); `GUARD_RANGE` 8″ in `js/sim/stances.js` | how eager stance squads are |
 | Production queues | `RULES.queueMax` (squads waiting per training building, 5), `RULES.queueMaxBuild` (base build queue, 5); start order and wait rules in `startQueues` (`js/sim/base.js`) | longer queues = fewer decisions per round; the "one unfinished site per builder" rule limits how fast a base grows |
@@ -1208,7 +1220,7 @@ Balance report 2026-11-17 · 8 seeds x 2 orders per map · AI normal · stop at 
 | `soulPerHero` | `15` | souls when a hero dies |
 | `graveStart` | `0.5` | share of its graveyard a new undead site spreads at once (the rest by the round's end) |
 | `graveHqStart` | `10` | the Crypt's graveyard at the start |
-| `graveDeathGrow` | `0.15` | inches a graveyard widens per model dying on it (no maximum) |
+| `graveBlob` | `0.8` | deaths on graves add a grave area of radius this x sqrt(models) at the graveyard's nearest edge (merging, no maximum) |
 | `reviveRadius` | `3` | revive zone radius |
 | `reviveRounds` | `3` | rounds a side must hold the zone |
 | `reviveHp` | `0.5` | revived hero's HP share |
@@ -1290,10 +1302,10 @@ Whenever rules, numbers, the AI or maps change:
 | Stances (Advance / Guard / Hold / Retreat) | Age of Empires II unit stances (aggressive, defensive, stand ground, no attack) | standing orders for squads you don't micro | Retreat falls back to a resource site; stances run inside the round's tiers |
 | Advance to a target point, fighting on the way | attack-move (StarCraft and most RTS games) | move somewhere but stop to fight what you meet | the point persists over rounds; buildings and squads are equal targets |
 | Repeat production (lock a building onto a squad) | Supreme Commander (repeat build on factories), Rise of Nations (continuous production) | a building keeps producing without new orders | the lock only fills an empty queue; each squad is still paid when it starts |
-| Graveyards spreading around undead buildings; souls from deaths on them; undead build only on graves | Warcraft III Undead blight, StarCraft Zerg creep, and the Necron power-matrix idea from Dawn of War IV the owner named | ground that spreads almost at once from the faction's buildings; the faction can only build on it | graves pay souls when things die on them and widen with each death |
+| Graveyards spreading around undead buildings; souls from deaths on them; undead build only on graves | Warcraft III Undead blight, StarCraft Zerg creep, and the Necron power-matrix idea from Dawn of War IV the owner named | ground that spreads almost at once from the faction's buildings; the faction can only build on it | graves pay souls when things die on them and creep outward at the nearest edge where each death happened |
 | Build only on ground you have seen | fog-of-war placement rules of most RTS games | no building blind in unexplored ground | seen once is enough (it doesn't have to be in sight now) |
 | Small starting armies | most RTS games (a few workers and a hero, the rest from the base) | the base matters from the first round | the Keep and the Crypt train soldiers from round 1 |
-| A swarm unit trained in pairs | StarCraft zerglings (two per egg) | cheap, fragile bodies in numbers | slow (tier 4) so it can't rush; an upgrade to threes is planned |
+| A swarm unit trained in pairs | StarCraft zerglings (two per egg) | cheap, fragile bodies in numbers | slow (tier 3) so it can't rush; an upgrade to threes is planned |
 | Auto skills toggle | Warcraft III autocast | units use abilities by themselves when switched on | applies to every skill of a squad without orders |
 | Hero revive by holding the spot | the owner's original design (compare Warcraft III's altar revive) | a fallen hero can come back | you revive it on the battlefield by holding the ground where it fell |
 | Win only by destroying the HQ | base-kill victory in many RTS games (e.g. StarCraft's destroy-all-buildings, simplified to the HQ) | the game is decided at the enemy base | a side with no army still plays on while its HQ stands |

@@ -16,7 +16,7 @@ import { validateOrders, actionCost } from './orders.js';
 import { buildStancePlan } from './stances.js';
 import { terrainFactor, pointBlocked, blocks, blocksMove, boardOf } from './nav.js';
 import { visibleTo, canSee, updateIntel } from './vision.js';
-import { obstacles, navKey, hitRadius, bdef, applyQueue, startQueues, graveAt, placeError, addBuilding, spawnSpot, armyValue, incomeOf, edgeDist, gatherRate } from './base.js';
+import { obstacles, navKey, hitRadius, bdef, applyQueue, startQueues, graveAt, spreadGraves, placeError, addBuilding, spawnSpot, armyValue, incomeOf, edgeDist, gatherRate } from './base.js';
 import { approachSpot } from './builders.js';
 import { Nav } from './nav.js';
 import { BUILDINGS, FACTIONS, trainCost } from '../data/units.js';
@@ -855,7 +855,8 @@ export function resolveRound(state0, ordersIn) {
     if (owner !== sh.owner) { sh.owner = owner; ev({ type: 'shrine', x: sh.x, z: sh.z, owner }); }
   }
   // souls: models (either side's, not summoned) that fell on the undead side's grave ground pay, and the
-  // graveyard they fell on widens a little; then every undead building's graveyard grows toward its max
+  // graves spread a little at that graveyard's nearest edge; then every undead building's graveyard
+  // fills up to its reach
   for (const p of [0, 1]) {
     if (!FACTIONS[s.players[p].faction].graves) continue;
     for (const d of deaths) {
@@ -864,15 +865,14 @@ export function resolveRound(state0, ordersIn) {
       const amount = d.hero ? RULES.soulPerHero : d.n * RULES.soulPerModel;
       s.supply[p] += amount;
       ev({ type: 'souls', owner: p, x: r3(d.x), z: r3(d.z), amount });
-      const grow = RULES.graveDeathGrow * d.n;
-      // no maximum: every death on a graveyard widens it for good
-      if (c.b) { c.b.graveCap = r3((c.b.graveCap || bdef(c.b).grave) + grow); c.b.grave = r3(Math.min(c.b.graveCap, c.b.grave + grow)); }
-      else c.patch.r = r3(c.patch.r + grow);
+      // the graves spread where they died: a small grave area at that graveyard's nearest edge
+      const g = spreadGraves(s, p, c, d.x, d.z, d.n);
+      ev({ type: 'graves', owner: p, x: g.x, z: g.z, r: g.r, blob: true });
     }
     // graves spread almost at once: every undead building (rising or finished) reaches its full graveyard
     for (const b of s.buildings) {
       if (b.owner !== p || !bdef(b).grave) continue;
-      const cap = b.graveCap || bdef(b).grave;
+      const cap = bdef(b).grave;
       if ((b.grave || 0) < cap) { b.grave = r3(cap); ev({ type: 'graves', id: b.id, r: b.grave }); }
     }
   }

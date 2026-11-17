@@ -5,7 +5,7 @@ import { resolveRound, damageAfter, engagedWith, losCut } from '../js/sim/resolv
 import { cpUsage, validateOrders } from '../js/sim/orders.js';
 import { aiOrders, aiMemory } from '../js/ai/ai.js';
 import { canSee, visibleTo } from '../js/sim/vision.js';
-import { placeError, addBuilding, incomeOf, obstacles, startQueues, armySize } from '../js/sim/base.js';
+import { placeError, addBuilding, incomeOf, obstacles, startQueues, armySize, spreadGraves } from '../js/sim/base.js';
 import { builderPlan } from '../js/sim/builders.js';
 import { buildStancePlan } from '../js/sim/stances.js';
 import { knownEnemyHq } from '../js/sim/vision.js';
@@ -535,7 +535,7 @@ test('stance squads use their skills on their own unless auto skills is switched
 
 test('the Skeleton Warband swarm trains in pairs (one round), fragile and slow (no rushes); Skeleton Warriors are the old warband', () => {
   const U = FACTIONS.undead.units;
-  eq(U.swarm.pair, 2); ok(U.swarm.hpPer < U.fighter.hpPer); eq(U.swarm.tier, 4, 'tier 4: 4.8" a round'); eq(U.swarm.attack.dmg, 2.1); eq(U.fighter.name, 'Skeleton Warriors');
+  eq(U.swarm.pair, 2); ok(U.swarm.hpPer < U.fighter.hpPer); eq(U.swarm.tier, 3, 'tier 3: 3.6" a round'); eq(U.swarm.attack.dmg, 2.1); eq(U.fighter.name, 'Skeleton Warriors');
   eq(RULES.trainRounds.swarm, 1);
   const s = arena([[1, 'fighter', 40, 4]]); s.supply[1] = 100;
   const crypt = s.buildings.find(b => b.owner === 1 && b.type === 'hq');
@@ -914,7 +914,7 @@ test('gold: a finished mine owns its site and pays every round', () => {
   ok(placeError(r.state, 1, 'well', 16.5, 19.5), 'the site is taken');
 });
 
-test('souls: only models dying on undead grave ground pay (either side); the graveyard widens; no Crypt income', () => {
+test('souls: only models dying on undead grave ground pay (either side); the graves spread there; no Crypt income', () => {
   // a kingdom model dies inside the soul well's graveyard (souls); another dies next to the warriors far from any graves (none)
   const s = arena([[1, 'fighter', 18.4, 19.5], [0, 'fighter', 20.3, 19.5, { hp: 2, models: 1 }], [1, 'fighter', 30, 29], [0, 'fighter', 31.9, 29, { hp: 2, models: 1 }]]);
   const w = addBuilding(s, 1, 'well', 16.5, 19.5, 0, true); w.grave = 5;
@@ -928,22 +928,37 @@ test('souls: only models dying on undead grave ground pay (either side); the gra
   eq(FACTIONS.undead.eco.hq, 1, 'the Crypt earns only 1 by itself');
   eq(r.state.supply[1], FACTIONS.undead.eco.start + RULES.soulPerModel + BUILDINGS.well.income + FACTIONS.undead.eco.hq);
   const w2 = r.state.buildings.find(b => b.id === w.id);
-  ok(w2.graveCap > BUILDINGS.well.grave && w2.grave === w2.graveCap, 'it widened beyond its reach (death) and filled it: ' + w2.grave);
+  eq(w2.grave, BUILDINGS.well.grave, 'the well keeps its own reach');
+  const blob = r.state.graves[1].find(g => g.blob);
+  ok(blob && Math.abs(blob.x - 21.5) < 0.01 && Math.abs(blob.z - 19.5) < 0.01 && blob.r === RULES.graveBlob, 'a small grave area at the nearest edge: ' + JSON.stringify(blob));
 });
 
-test('graves grow from deaths with no maximum (buildings and leftover patches)', () => {
-  const s = arena([[0, 'fighter', 20, 19.5, { hp: 3, models: 1 }], [0, 'fighter', 31.6, 29, { hp: 3, models: 1 }], [1, 'tank', 21.5, 19.5], [1, 'tank', 33, 29]]);
-  const w = addBuilding(s, 1, 'well', 16.5, 19.5, 0, true); w.grave = w.graveCap = 16;   // past 1.5 x its reach (the old limit was 15")
-  s.graves[1].push({ x: 31.6, z: 29, r: 6 });                                           // a patch far past the old 3" limit
-  const o = holdAll(s);
-  o[1].squads.q3 = plan([{ kind: 'swing', x: 20, z: 19.5 }]);
-  o[1].squads.q4 = plan([{ kind: 'swing', x: 31.6, z: 29 }]);
-  const r = resolveRound(s, o);
-  ok(events(r.log).filter(e => e.type === 'hit' && e.lost).length === 2, 'two models fell');
-  const w2 = r.state.buildings.find(b => b.id === w.id);
-  eq(w2.grave, 16 + RULES.graveDeathGrow, 'the well widened past the old cap');
-  eq(r.state.graves[1][0].r, 6 + RULES.graveDeathGrow, 'the patch widened past the old cap');
-  eq(RULES.graveCapMult, undefined); eq(RULES.gravePatchCap, undefined);
+test('graves spread where things die: a small area at the nearest edge, merging, no maximum', () => {
+  const s = arena([[1, 'fighter', 40, 4]]);
+  s.graves[1] = [{ x: 20, z: 16, r: 4 }];
+  const c = () => ({ x: 20, z: 16, r: 4, patch: s.graves[1][0] });
+  // one model dies 1" east of the centre: a 0.8" area on the east edge
+  const g1 = spreadGraves(s, 1, c(), 21, 16, 1);
+  eq(g1.x, 24); eq(g1.z, 16); eq(g1.r, RULES.graveBlob);
+  eq(s.graves[1][0].r, 4, 'the graveyard itself does not widen');
+  // four more die on the same side: they merge (areas add up), creeping that way
+  const g2 = spreadGraves(s, 1, c(), 22, 16, 4);
+  ok(g2 === g1 && Math.abs(g2.r - RULES.graveBlob * Math.sqrt(5)) < 0.01, 'merged: ' + JSON.stringify(g2));
+  // a death on the north side spreads north instead
+  const g3 = spreadGraves(s, 1, c(), 20, 14, 1);
+  ok(g3 !== g1 && g3.z < 13 && Math.abs(g3.x - 20) < 0.01, 'north edge: ' + JSON.stringify(g3));
+  // it keeps going past other grave ground it would sit inside (the nearest real edge)
+  s.graves[1].push({ x: 20, z: 22.5, r: 3 });
+  const g4 = spreadGraves(s, 1, c(), 20, 18, 1);
+  ok(g4.z > 24.5, 'past the overlapping graves: ' + JSON.stringify(g4));
+  // no maximum: many deaths keep growing the area
+  const east = () => Math.max(...s.graves[1].filter(g => g.blob).map(g => g.x + g.r));
+  const before = east();
+  for (let i = 0; i < 20; i++) spreadGraves(s, 1, c(), 21, 16, 6);
+  ok(east() > before + 4, 'no maximum: the graves keep creeping east: ' + before + ' -> ' + east());
+  const area = s.graves[1].filter(g => g.blob && g.x > 22).reduce((n, g) => n + g.r * g.r, 0);
+  ok(Math.abs(area - RULES.graveBlob ** 2 * 125) < 0.5, 'the area adds up: ' + area);
+  eq(RULES.graveDeathGrow, undefined);
 });
 
 test('graveyards spread almost at once to their building\'s reach; a destroyed building leaves its graves', () => {

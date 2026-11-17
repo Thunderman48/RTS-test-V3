@@ -54,7 +54,8 @@ export const RULES = {
   soulPerHero: 15,
   graveStart: 0.5,              // a new undead site spreads this share of its graveyard at once; the rest by the end of the round
   graveHqStart: 10,             // the Crypt's graveyard at the start of the game (its full reach)
-  graveDeathGrow: 0.15,         // inches a graveyard widens per model that dies on it (no maximum)
+  graveBlob: 0.8,               // deaths on graves spread a small new grave area at the graveyard's nearest edge:
+                                //  radius graveBlob x sqrt(models that died there); nearby areas merge (their areas add up); no maximum
   // a fallen hero leaves a revive zone: hold it with any squad for reviveRounds rounds to bring it back
   reviveRadius: 3,
   reviveRounds: 3,
@@ -147,7 +148,7 @@ export const FACTIONS = {
       tank:    { name: 'Grave Guard', role: 'tank', models: 3, hpPer: 21, armor: 9, tier: 4, look: 'graveguard', vision: 9, defends: 2, attack: SWING(30, 3.2, 1.3), skills: [WALL('Grave Wall')] },
       fighter: { name: 'Skeleton Warriors', role: 'fighter', parry: true, models: 5, hpPer: 9, armor: 3, tier: 5, look: 'skeleton', vision: 9, defends: 1, attack: SWING(25, 2.4, 1.5) },
       // the swarm: fragile, quick, cheap, trained two squads at a time (`pair`; a later upgrade: three)
-      swarm:   { name: 'Skeleton Warband', role: 'swarm', pair: 2, models: 6, hpPer: 4, armor: 0, tier: 4, look: 'skeleton', vision: 9, defends: 0, attack: SWING(25, 2.1, 1.4) },
+      swarm:   { name: 'Skeleton Warband', role: 'swarm', pair: 2, models: 6, hpPer: 4, armor: 0, tier: 3, look: 'skeleton', vision: 9, defends: 0, attack: SWING(25, 2.1, 1.4) },
       ranged:  { name: 'Bone Archers', role: 'ranged', models: 4, hpPer: 10, armor: 1, tier: 5, look: 'archer', vision: 11, defends: 1, attack: VOLLEY(30, 2.4, 14, 0.9), skills: [STORM(35, 4, 15, 2.2)] },
       fast:    { name: 'Wraiths', role: 'fast', models: 3, hpPer: 14, armor: 3, tier: 6, look: 'wraith', vision: 11, defends: 1, ghost: true, attack: SWING(45, 9, 1.7), skills: [CHARGE(35, 5.6, 9)] },
       // a weaker caster troop: bolts, a weaker Dark Thunder, a one-squad summon; raises Monoliths near it

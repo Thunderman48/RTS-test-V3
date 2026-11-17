@@ -122,6 +122,29 @@ export function seenBy(s, p, x, z) {
   return s.explored[p][j * s.board.w + i] === '1';
 }
 export function graveAt(s, p, x, z) { return graveCircles(s, p).find(c => dist(c.x, c.z, x, z) <= c.r) || null; }
+// n models died at (x, z) on graveyard c of side p: the graves spread a little where they died, as a
+// small new grave area at the graveyard's nearest edge (pushed on past other grave ground it would sit
+// inside). Areas that land near an earlier one merge with it (their areas add up). Returns the area.
+export function spreadGraves(s, p, c, x, z, n) {
+  let ux = x - c.x, uz = z - c.z;
+  const l = Math.hypot(ux, uz);
+  if (l < 0.05) { ux = p === 0 ? 1 : -1; uz = 0; } else { ux /= l; uz /= l; }   // died at the centre: toward the enemy
+  const r = RULES.graveBlob * Math.sqrt(n), circles = graveCircles(s, p);
+  let t = c.r;
+  for (let i = 0; i < 120 && circles.some(o => dist(o.x, o.z, c.x + ux * t, c.z + uz * t) < o.r - r * 0.5); i++) t += 0.25;
+  const W = s.board ? s.board.w : 48, H = s.board ? s.board.h : 32;
+  const bx = Math.max(0, Math.min(W, c.x + ux * t)), bz = Math.max(0, Math.min(H, c.z + uz * t));
+  const r3 = v => Math.round(v * 1000) / 1000;
+  const near = s.graves[p].find(g => g.blob && dist(g.x, g.z, bx, bz) < (g.r + r) * 0.6);
+  if (near) {
+    const a1 = near.r * near.r, a2 = r * r, A = a1 + a2;
+    near.x = r3((near.x * a1 + bx * a2) / A); near.z = r3((near.z * a1 + bz * a2) / A); near.r = r3(Math.sqrt(A));
+    return near;
+  }
+  const g = { x: r3(bx), z: r3(bz), r: r3(r), blob: true };
+  s.graves[p].push(g);
+  return g;
+}
 // does side p's faction raise buildings out of the ground (no builders)?
 export const rises = (s, p) => !!FACTIONS[s.players[p].faction].rises;
 // income per round for side p (finished buildings only)
