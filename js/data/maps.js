@@ -12,8 +12,8 @@ export const MAPS = {
   crossing: {
     id: 'crossing', name: 'Crossing', w: 48, h: 32, blurb: 'A stream with two fords, woods and ruins. Small and quick.',
     half: [
-      { kind: 'forest', x: 15, z: 7.5, r: 3.2 },
-      { kind: 'forest', x: 20, z: 26, r: 2.6 },
+      { kind: 'forest', x: 15, z: 7.5, r: 3.9 },
+      { kind: 'forest', x: 20, z: 26, r: 3.9 },
       { kind: 'ruin', x: 22, z: 13.4, w: 4.2, d: 0.6 },
       { kind: 'ruin', x: 20.2, z: 15.6, w: 0.6, d: 3.2 },
       { kind: 'rock', x: 13.5, z: 25, r: 1.2 },
@@ -29,9 +29,9 @@ export const MAPS = {
   twinrivers: {
     id: 'twinrivers', name: 'Twin Rivers', w: 64, h: 40, blurb: 'Two streams split the field in three. Hold the middle ground between them.',
     half: [
-      { kind: 'forest', x: 12, z: 8, r: 3.0 },
-      { kind: 'forest', x: 16, z: 32, r: 2.8 },
-      { kind: 'forest', x: 28.5, z: 20, r: 3.0 },
+      { kind: 'forest', x: 12, z: 8, r: 3.7 },
+      { kind: 'forest', x: 16, z: 32, r: 4.2 },
+      { kind: 'forest', x: 28.5, z: 20, r: 4.5 },
       { kind: 'ruin', x: 27, z: 9, w: 4.2, d: 0.6 },
       { kind: 'ruin', x: 25.2, z: 11.2, w: 0.6, d: 3.2 },
       { kind: 'rock', x: 18.5, z: 25.5, r: 1.1 },
@@ -47,9 +47,9 @@ export const MAPS = {
   highland: {
     id: 'highland', name: 'Highland Ruins', w: 64, h: 44, blurb: 'A maze of ruins around a mountain lake. Tight paths, good cover.',
     half: [
-      { kind: 'forest', x: 14, z: 6, r: 3.4 },
-      { kind: 'forest', x: 12, z: 37, r: 3.2 },
-      { kind: 'forest', x: 24, z: 39, r: 2.6 },
+      { kind: 'forest', x: 14, z: 6, r: 5.1 },
+      { kind: 'forest', x: 12, z: 37, r: 4.4 },
+      { kind: 'forest', x: 24, z: 39, r: 3.9 },
       { kind: 'ruin', x: 26, z: 16, w: 0.6, d: 5 },
       { kind: 'ruin', x: 28.5, z: 13.5, w: 5, d: 0.6 },
       { kind: 'ruin', x: 24, z: 27, w: 4, d: 0.6 },
@@ -67,10 +67,10 @@ export const MAPS = {
   greatfield: {
     id: 'greatfield', name: 'Great Field', w: 80, h: 52, blurb: 'A huge open battlefield with ponds, woods and a long stream. For big armies.',
     half: [
-      { kind: 'forest', x: 14, z: 9, r: 3.2 },
-      { kind: 'forest', x: 24, z: 41, r: 3.6 },
-      { kind: 'forest', x: 31, z: 17, r: 2.8 },
-      { kind: 'forest', x: 11, z: 45, r: 2.6 },
+      { kind: 'forest', x: 14, z: 9, r: 4.8 },
+      { kind: 'forest', x: 24, z: 41, r: 5.4 },
+      { kind: 'forest', x: 31, z: 17, r: 4.2 },
+      { kind: 'forest', x: 11, z: 45, r: 3.9 },
       { kind: 'lake', x: 21, z: 27, r: 2.4 },
       { kind: 'ruin', x: 33, z: 32, w: 4, d: 0.6 },
       { kind: 'ruin', x: 30, z: 6, w: 0.6, d: 3.6 },

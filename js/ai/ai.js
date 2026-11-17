@@ -279,11 +279,35 @@ function economy(s, p, known, orders) {
     }
     return false;
   };
-  // undead: place a Bone Fence on the edge of its graves closest to `target`, so the graves reach it
+  // undead: raise a Monolith near the Lich or a Necromancer squad toward `target` (it needs no graves
+  // and spreads its own), else a Bone Fence on the edge of its graves closest to `target`
+  const monolith = target => {
+    const md = BUILDINGS.monolith;
+    if (!md || !FACTIONS[fac].buildings.includes('monolith') || supply < md.cost || mine.some(b => b.type === 'monolith' && b.build > 0) || queued.some(b => b.type === 'monolith')) return false;
+    const casters = s.squads.filter(q => q.owner === p && q.hp > 0 && (q.role === 'hero' || q.role === 'mage') && defOf(q).mana);
+    const cand = [];
+    for (const q of casters) for (const r of [2, 3.5, md.caster - 0.6]) for (let k = 0; k < 12; k++) {
+      const a = k / 12 * Math.PI * 2, x = q.x + Math.cos(a) * r, z = q.z + Math.sin(a) * r;
+      cand.push({ x, z, score: -dist(x, z, target.x, target.z) });
+    }
+    cand.sort((a, b) => b.score - a.score);
+    for (const c of cand.slice(0, 30)) {
+      if (placeError(s, p, 'monolith', c.x, c.z, 0, queued)) continue;
+      // only worth it when it brings the graves closer to the target than they already are
+      const now = Math.min(...graveCircles(s, p).map(g => dist(g.x, g.z, target.x, target.z) - g.r));
+      if (dist(c.x, c.z, target.x, target.z) - md.grave >= now - 1) return false;
+      queued.push({ type: 'monolith', x: c.x, z: c.z, rot: 0, owner: p, ...footprint('monolith', c.x, c.z, 0) });
+      out.builds.push({ type: 'monolith', x: c.x, z: c.z, rot: 0 }); supply -= md.cost;
+      return true;
+    }
+    return false;
+  };
   let expanded = false;
   const expandToward = target => {
     // one step at a time: wait for the last fence's graves before the next
-    if (expanded || supply < BUILDINGS.wall.cost || mine.some(b => b.type === 'wall' && b.build > 0) || mine.filter(b => b.build > 0).length + queued.length >= RULES.maxRising) return false;
+    if (expanded || mine.filter(b => b.build > 0).length + queued.length >= RULES.maxRising) return false;
+    if (monolith(target)) { expanded = true; return true; }
+    if (supply < BUILDINGS.wall.cost || mine.some(b => b.type === 'wall' && b.build > 0)) return false;
     expanded = true;
     const pts = [];
     for (const c of graveCircles(s, p)) for (let k = 0; k < 16; k++) {
@@ -303,6 +327,9 @@ function economy(s, p, known, orders) {
   const side = (x, z) => -Math.abs(fwd * (x - hq.x) - 1) - Math.abs(Math.abs(z - hq.z) - 5) * 0.5;
   const threat = known.filter(e => dist(e.x, e.z, hq.x, hq.z) < 14);
   const site = gold ? 'mine' : 'well';
+  // where the horde is heading: the known enemy HQ, else the middle of the table
+  const ehq = knownEnemyHq(s, p);
+  const rangeTarget = ehq ? { x: ehq.x, z: ehq.z } : { x: s.board.w / 2, z: s.board.h / 2 };
   // a short per-faction build order, one new building per free builder
   for (let i = 0; i < 3; i++) {
     const ok =
@@ -318,7 +345,8 @@ function economy(s, p, known, orders) {
       (gold && count('farm') < Math.min(6, Math.ceil(builderCount(s, p) / 3)) && s.round >= 3 && place('farm', side)) ||
       // rich with a bigger army cap: more barracks so the money turns into squads
       (count('barracks') && count('barracks') < Math.min(4, 1 + Math.floor(supply / 60)) && s.round >= 5 && place('barracks', (x, z) => -Math.abs(z - hq.z) * 0.4 - Math.abs(fwd * (x - hq.x) - 3))) ||
-      (count('banner') < RULES.maxBannerCp && s.round >= 5 && supply >= BUILDINGS.banner.cost + 20 && place('banner', (x, z) => -dist(x, z, hq.x, hq.z))) ||
+      (FACTIONS[fac].buildings.includes('banner') && count('banner') < RULES.maxBannerCp && s.round >= 5 && supply >= BUILDINGS.banner.cost + 20 && place('banner', (x, z) => -dist(x, z, hq.x, hq.z))) ||
+      (rising && s.round >= 5 && count('monolith') < 1 + Math.floor(s.round / 8) && supply >= BUILDINGS.monolith.cost + 25 && rangeTarget && monolith(rangeTarget)) ||
       (count('tower') < 2 && s.round >= 6 && supply >= BUILDINGS.tower.cost + 30 && place('tower', forward));
     if (!ok) break;
   }
@@ -342,7 +370,8 @@ function economy(s, p, known, orders) {
     const n = r => myRoles.filter(x => x === r).length;
     // undead: half the time a cheap swarm pair (the horde), else the usual mix
     const swarm = trainsOf(b.type, fac).includes('swarm') && (b.type === 'hq' || n('swarm') <= n('fighter') + n('ranged'));
-    let role = swarm ? 'swarm' : shooters >= 2 && n('fast') < 2 ? 'fast' : n('tank') < 1 ? 'tank' : n('ranged') < n('fighter') ? 'ranged' : 'fighter';
+    const mage = trainsOf(b.type, fac).includes('mage') && n('mage') < Math.floor(army / 6);
+    let role = mage ? 'mage' : swarm ? 'swarm' : shooters >= 2 && n('fast') < 2 ? 'fast' : n('tank') < 1 ? 'tank' : n('ranged') < n('fighter') ? 'ranged' : 'fighter';
     if (!trainsOf(b.type, fac).includes(role)) role = trainsOf(b.type, fac).find(r => r !== 'builder');
     if (supply < trainCost(fac, role)) continue;
     if (army + pairOf(fac, role) > s.board.cap) continue;

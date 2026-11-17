@@ -19,6 +19,11 @@ economy, maps, fog, stances or the AI:**
   levels). Record new references in `docs/GAME.md` §20.
 - **Art and look:** use only the references the owner gives or names.
 
+## Balancing rule: the Undead tier rule (owner's rule)
+- **Low-tier Undead** (Skeleton Warband, Skeleton Warriors, Bone Archers; `FACTIONS.undead.lowTier`):
+  never change their **costs**, only their stats.
+- **High-tier Undead** (Grave Guard, Wraiths, Necromancers, the Lich's spells): costs may change.
+
 ## Commands
 - `node tests/sim.test.mjs` — simulation tests (must pass).
 - `node tools/balance.mjs --games 8 [--maps a,b] [--level easy|normal|hard] [--rounds 100] [--json]`

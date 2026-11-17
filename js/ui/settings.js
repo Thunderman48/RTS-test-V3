@@ -111,7 +111,7 @@ export const SettingsUI = {
   },
   renderSetup() {
     const S = this.setupSel;
-    $('su-armies').innerHTML = Object.keys(FACTIONS).map(f => `<button class="fac ${f}${S.faction === f ? ' on' : ''}" data-f="${f}"><b>${esc(FACTIONS[f].name)}</b><small>${f === 'kingdom' ? 'Sturdy all-rounders and The Chosen · builders, big farms and gold · good for beginners' : 'Cheap, weaker hordes and a Necromancer mage · buildings rise by themselves · souls from deaths near Soul Wells'}</small></button>`).join('');
+    $('su-armies').innerHTML = Object.keys(FACTIONS).map(f => `<button class="fac ${f}${S.faction === f ? ' on' : ''}" data-f="${f}"><b>${esc(FACTIONS[f].name)}</b><small>${f === 'kingdom' ? 'Sturdy all-rounders and The Chosen · builders, big farms and gold · good for beginners' : 'Cheap, weaker hordes, the Lich and Necromancer casters · buildings rise from blighted graves · souls from deaths on your graves'}</small></button>`).join('');
     $('su-maps').innerHTML = this.mapCards(S.map);
     $('su-level').innerHTML = [['easy', 'Easy', 'The AI earns less and commands fewer squads'], ['normal', 'Normal', 'A fair fight'], ['hard', 'Hard', 'The AI earns more and commands more squads']].map(([k, n, d]) => `<button class="chip${S.level === k ? ' on' : ''}" data-l="${k}" title="${d}">${n}</button>`).join('');
     this.drawMapCards($('su-maps'));

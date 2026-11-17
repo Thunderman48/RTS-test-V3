@@ -881,7 +881,7 @@ test('queued builds: a squad on the spot makes it wait; a building on it drops i
   const w = startQueues(st, 0, { bq: [{ qid: 'x', type: 'wall', x: st.squads[0].x, z: st.squads[0].z, rot: 0 }] });
   eq(w.builds[0].wait === 'blocked' || w.builds[0].wait === 'builders', true, 'a squad on the spot: wait, not drop');
   const t = k(); t.supply[0] = 10;   // too poor: items wait in the queue
-  r = resolveRound(t, [qo({ builds: [{ type: 'farm', x: 6, z: 5 }, { type: 'wall', x: 10, z: 4 }] }), ob()]);
+  r = resolveRound(t, [qo({ builds: [{ type: 'farm', x: 6, z: 5 }, { type: 'wall', x: 9, z: 13 }] }), ob()]);
   const ids = r.state.bq[0].map(i => i.qid);
   eq(ids.length, 2); ok(ids[0] && ids[1] && ids[0] !== ids[1], 'stable ids');
   r = resolveRound(r.state, [qo({ builds: r.state.bq[0].slice().reverse() }), ob()]);
@@ -925,8 +925,8 @@ test('souls: only models dying on undead grave ground pay (either side); the gra
   const souls = events(r.log).filter(e => e.type === 'souls');
   ok(events(r.log).filter(e => e.type === 'hit' && e.lost).length === 2, 'two models fell');
   ok(souls.length === 1 && souls[0].owner === 1 && souls[0].amount === RULES.soulPerModel, 'only the one on the graves: ' + JSON.stringify(souls));
-  eq(FACTIONS.undead.eco.hq, 0, 'the Crypt earns nothing by itself');
-  eq(r.state.supply[1], FACTIONS.undead.eco.start + RULES.soulPerModel + BUILDINGS.well.income);
+  eq(FACTIONS.undead.eco.hq, 1, 'the Crypt earns only 1 by itself');
+  eq(r.state.supply[1], FACTIONS.undead.eco.start + RULES.soulPerModel + BUILDINGS.well.income + FACTIONS.undead.eco.hq);
   const w2 = r.state.buildings.find(b => b.id === w.id);
   ok(w2.graveCap > BUILDINGS.well.grave && w2.grave === w2.graveCap, 'it widened beyond its reach (death) and filled it: ' + w2.grave);
 });
@@ -951,9 +951,45 @@ test('graveyards spread almost at once to their building\'s reach; a destroyed b
   ok(placeError(r.state, 1, 'barracks', 24, 16) === '' || placeError(r.state, 1, 'barracks', 24, 16) !== 'Only in your third of the table', 'and you can build anywhere');
 });
 
+test('the Monolith: the only undead building off graves, raised near the Lich or Necromancers; it heals and spreads graves', () => {
+  const u = arena([[1, 'hero', 30, 9], [1, 'fighter', 40, 4]]);
+  eq(placeError(u, 1, 'monolith', 28, 11), '', 'off graves, near the Lich');
+  eq(placeError(u, 1, 'monolith', 20, 9), 'Place it near your Lich or Necromancers', 'too far from a caster');
+  eq(BUILDINGS.monolith.cp, undefined, 'no command point');
+  ok(!FACTIONS.undead.buildings.includes('banner') && FACTIONS.kingdom.buildings.includes('banner'), 'the Kingdom keeps its Banner');
+  // it waits (not dropped) if the caster has walked away before it starts
+  u.squads[0].x = 12; u.supply[1] = 99;
+  const fc = startQueues(u, 1, { bq: [{ qid: 'm', type: 'monolith', x: 28, z: 11, rot: 0 }] });
+  eq(fc.builds[0].wait, 'caster');
+  // healing: a hurt squad next to a finished Monolith regains HP at the end of the round
+  const h = arena([[1, 'fighter', 30, 12, { hp: 20, models: 3 }]]);
+  addBuilding(h, 1, 'monolith', 30, 9.5, 0, true);
+  const r = resolveRound(h, holdAll(h));
+  const q = r.state.squads[0];
+  eq(q.hp, 20 + BUILDINGS.monolith.heal.hp * 3); ok(events(r.log).some(e => e.type === 'heal'));
+});
+
+test('Necromancers: a weaker caster troop with mana; its summon raises one squad', () => {
+  const N = FACTIONS.undead.units.mage;
+  ok(N && N.mana && N.models === 2); eq(FACTIONS.undead.units.hero.name, 'Lich');
+  const s = arena([[1, 'mage', 30, 16]]);
+  const o = holdAll(s); o[1].squads.q1 = plan([{ kind: 'summon', x: 27, z: 16 }]);
+  const r = resolveRound(s, o);
+  eq(r.state.squads.filter(q => q.role === 'summon').length, 1, 'one squad');
+  eq(r.state.squads[0].mana, N.mana.start - N.skills.find(k => k.kind === 'summon').mana + N.mana.regen);
+});
+
+test('death economy: the Crypt and Soul Wells barely produce; cheap squads dying on graves pay back more than they cost', () => {
+  eq(FACTIONS.undead.eco.hq, 1); eq(BUILDINGS.well.income, 2);
+  const U = FACTIONS.undead.units, back = r => U[r].models * RULES.soulPerModel;
+  const per = r => FACTIONS.undead.train[r] / (U[r].pair || 1);
+  ok(back('swarm') > per('swarm') && back('fighter') > per('fighter'), 'cheap: profit');
+  ok(back('tank') < per('tank') && back('fast') < per('fast'), 'elite: loss');
+});
+
 test('undead buildings rise out of the ground with no builders (two at a time) and mend', () => {
   const s = arena([[1, 'fighter', 40, 4]]); s.supply[1] = 200;
-  let r = resolveRound(s, [ob(), qo({ builds: [{ type: 'tower', x: 40, z: 10 }, { type: 'banner', x: 41.5, z: 21 }, { type: 'wall', x: 40, z: 22.5 }] })]);
+  let r = resolveRound(s, [ob(), qo({ builds: [{ type: 'tower', x: 40, z: 10 }, { type: 'barracks', x: 39, z: 22 }, { type: 'wall', x: 38, z: 13 }] })]);
   eq(r.state.buildings.filter(b => b.owner === 1 && b.build > 0).length, 2, 'two rise at once');
   eq(r.state.bq[1].length, 1, 'the third waits');
   eq(startQueues(r.state, 1).builds[0].wait, 'rising');

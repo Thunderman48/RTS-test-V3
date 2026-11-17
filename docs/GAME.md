@@ -35,7 +35,7 @@ If both sides lose in the same round it is a **draw**. **There is no round limit
 Each side starts with: an HQ (at one of the map's 3 seeded HQ spots on its back edge), its army deployed
 in front of it, and its faction's starting resource. **Small starting armies** (since 2026-11-16; the
 rest comes from the base): **Kingdom:** The Chosen, **Men-at-arms** and **1 peasant (builder) squad**.
-**Undead:** the Necromancer and **a Skeleton Warband pair** (2 swarm squads). The Keep trains peasants
+**Undead:** the Lich and **a Skeleton Warband pair** (2 swarm squads). The Keep trains peasants
 and Men-at-arms; the Crypt trains the swarm.
 
 **The two factions play differently** (since 2026-11-15):
@@ -45,9 +45,11 @@ and Men-at-arms; the Crypt trains the swarm.
 - **Undead Legion (a never-ending horde, snowbally and slow to expand):** every squad is weaker but
   about half the price, and the **Skeleton Warband** swarm comes two squads at a time; **no builders**:
   buildings **rise out of the ground** on their own and spread **graveyards** around them; souls come
-  from **deaths on grave ground** (which widens it), plus a trickle from Soul Wells. Hero **the
-  Necromancer**, a slow **mage** with **mana**: Summon Warband (temporary skeletons), Dark Thunder
-  (chain lightning), Corpse Explosion.
+  from **deaths on grave ground** (which widens it; cheap squads pay back more than they cost), plus a
+  tiny trickle from the Crypt (1) and Soul Wells (2). Hero **the Lich**, a slow **mage** with **mana**:
+  Summon Warband (temporary skeletons), Dark Thunder (chain lightning), Corpse Explosion; its weaker
+  caster troop, **Necromancers**, comes from the Ossuary. The **Monolith** (raised near a caster, off
+  graves) spreads graves and heals instead of giving command points.
 - **Both:** a fallen hero leaves a **revive zone**; hold it for 3 rounds to bring the hero back (§5.7b).
 
 ---
@@ -83,7 +85,8 @@ A round, in order:
    **graveyard** as a patch → destroyed squads and buildings are removed → building HP rounded →
    **training** counters tick and finished squads spawn next to their building (a swarm pair: 2) →
    **summoned squads** lose 1 round of life (crumble at 0) → **undead sites rise** (+80 work) and
-   finished undead buildings mend 5 % → **mages regain mana**; carried-over stun still left is dropped →
+   finished undead buildings mend 5 % → **finished Monoliths heal** nearby own squads (§11.3c) →
+   **mages regain mana**; carried-over stun still left is dropped →
    **resource sites** change owner (whoever has a *finished* Mine / Soul Well on it) → **souls** are paid
    for this round's deaths **on grave ground** (and those graveyards widen) → every undead graveyard
    grows 1″ toward its max → **revive zones** gain progress (and heroes return) → **income** is paid →
@@ -120,7 +123,8 @@ everything after it).
 
 ### 3.2 Command points (CP)
 - Each round a side may give **direct orders to `RULES.cp` = 3 squads**, plus **+1 per finished
-  Banner / Obelisk** (max +2). **Heroes and builders are free** (no CP).
+  Kingdom Banner** (max +2; the Undead have no CP building since 2026-11-17). **Heroes and builders
+  are free** (no CP).
 - Squads without direct orders follow their **stance** (§4). Stance changes are free and unlimited.
 - AI difficulty changes the AI's CP: Easy −1, Hard +1 (§14.8).
 
@@ -257,8 +261,9 @@ The action always costs its full AP.
   wide half-angle (cos ≥ **0.2**, ±78°), **28** damage, and every squad it hits is **stunned for 25 AP**
   (see Stun below; a parried hit doesn't stun).
 
-**The Necromancer (Undead hero; a mage, see Mana below):** tier **3** (slow, 3.6″ per round), 90 HP,
-armour 5, 1 defend. Basic attack: a **magic bolt** (a volley line: 25 AP, 10 damage, range 10″,
+**The Lich (Undead hero; a mage, see Mana below; was called the Necromancer):** tier **3** (slow,
+3.6″ per round), 90 HP, armour 5, 1 defend. A Lich or a Necromancer squad must stand within 6″ of a
+Monolith's spot to raise it (§11.2). Basic attack: a **magic bolt** (a volley line: 25 AP, 10 damage, range 10″,
 width 0.6″; walls block it, forests give cover).
 - **Summon Warband** (`summon`, 20 AP, **40 mana**): aim within 4″. **When the cast releases**, **2
   squads of Summoned Skeletons** rise around the aim point (0.9″ either side, nudged clear with
@@ -279,6 +284,17 @@ width 0.6″; walls block it, forests give cover).
   **8 + 6 × its models left** (× the caster's damage multiplier). No summoned squad there: the spell
   fizzles (`fizzle` event; the mana is spent).
 
+**Necromancers (Undead troop, role `mage`, high tier):** 2 models × 10 HP, armour 1, tier 4, vision
+10, 1 defend, trained at the Ossuary (22 souls, 2 rounds). Same mage rules as the Lich (no cooldowns,
+repeat casts while AP and mana last), with its own mana: **60 max, 40 at the start, +15 a round**.
+- **Bolt** (basic attack): a volley line, 25 AP, 4 per model (8 for the full squad), range 9″.
+- **Dark Thunder (weaker)** (`thunder`, 15 AP, **20 mana**): the same rules as the Lich's, aim within
+  6″, **6 per model** (12 at full strength) on the first strike, up to **2** jumps within **3″**, ×0.7
+  per jump.
+- **Summon Warband** (`summon`, 20 AP, **35 mana**, aim within 4″): **1** squad of Summoned Skeletons
+  (the count comes from the skill's `count`), same rules as the Lich's summon.
+- With auto skills on (stances, and the AI), it uses the same `autoSkills` rules as the Lich.
+
 ### 5.7b Hero revive (`resolve.js`, end of round)
 - The fallen hero's **body lies in the ring** (UI: its mini on its back at the zone's centre) until it
   returns, so the revive point is easy to find.
@@ -290,7 +306,7 @@ width 0.6″; walls block it, forests give cover).
   (`RULES.reviveHp`), its starting mana and no cooldowns; the zone is removed. A hero that dies again
   leaves a new zone. The AI sends its 2 nearest squads not in a fight to hold the zone.
 
-**Mana (mages: any unit with `mana`; today only the Necromancer):** `mana { max 100, start 60, regen
+**Mana (mages: any unit with `mana`: the Lich and Necromancers; numbers per unit in §7):** `mana { max 100, start 60, regen
 25 }`. A mage's skills have **no cooldown** and **may be cast several times in one round** (the
 once-per-round rule doesn't apply); each cast pays its mana **when the cast starts**; a cast without
 enough mana at that moment fizzles. Order validation (`sanitizePlan`) drops casts beyond the mana the
@@ -367,12 +383,13 @@ such enemy (a normal volley toward it, needing a clear line; a lobbing unit lobs
 
 | Role | Name | Models | HP/model | HP | Armour | Tier | Move "/rnd | Vision | Defends | Radius | Attack | AP | Dmg/model | Full squad/hit | Reach / range | Hits per 100 AP | Flags | Train cost | Train rnds |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| hero | Necromancer | 1 | 90 | 90 | 5 | 3 | 3.6 | 12 | 1 | 0.65 | volley | 25 | 10 | 10 | range 10", width 0.6" | 4 | mage: mana 60/100, +25/rnd | - | - |
+| hero | Lich | 1 | 90 | 90 | 5 | 3 | 3.6 | 12 | 1 | 0.65 | volley | 25 | 10 | 10 | range 10", width 0.6" | 4 | mage: mana 60/100, +25/rnd | - | - |
 | tank | Grave Guard | 3 | 21 | 63 | 9 | 4 | 4.8 | 9 | 2 | 1.227 | swing | 30 | 3.2 | 9.600000000000001 | reach 1.3" (arc +-60 deg) | 3 | - | 16 | 3 |
 | fighter | Skeleton Warriors | 5 | 9 | 45 | 3 | 5 | 6 | 9 | 1 | 1.439 | swing | 25 | 2.4 | 12 | reach 1.5" (arc +-60 deg) | 4 | parry | 9 | 2 |
 | swarm | Skeleton Warband | 6 | 4 | 24 | 0 | 6 | 7.2 | 9 | 0 | 1.5290000000000001 | swing | 25 | 2.4 | 14.399999999999999 | reach 1.4" (arc +-60 deg) | 4 | - | 14 | 1 |
 | ranged | Bone Archers | 4 | 10 | 40 | 1 | 5 | 6 | 11 | 1 | 1.34 | volley | 30 | 2.4 | 9.6 | range 14", width 0.9" | 3 | - | 13 | 2 |
 | fast | Wraiths | 3 | 14 | 42 | 3 | 6 | 7.2 | 11 | 1 | 1.347 | swing | 45 | 9 | 27 | reach 1.7" (arc +-60 deg) | 2 | ghost | 16 | 2 |
+| mage | Necromancers | 2 | 10 | 20 | 1 | 4 | 4.8 | 10 | 1 | 1.094 | volley | 25 | 4 | 8 | range 9", width 0.5" | 4 | mage: mana 40/60, +15/rnd | 22 | 2 |
 | summon | Summoned Skeletons | 3 | 11 | 33 | 3 | 5 | 6 | 7 | 0 | 1.227 | swing | 25 | 3 | 9 | reach 1.5" (arc +-60 deg) | 4 | summoned (lasts 3 rnds, not trainable) | - | - |
 
 <!-- /GEN:units -->
@@ -394,12 +411,14 @@ measured from the squad's edge. Heroes cannot be trained.
 | Kingdom | Shieldwall | Lock Shields | `wall` | defense | 15 | 1 | - | - | mult 0.3, cosHalf 0.5 |
 | Kingdom | Crossbows | Piercing Bolt | `pierce` | attack | 35 | 2 | - | 5 x 4 = 20 | dmg 5, range 16, width 0.7 |
 | Kingdom | Outriders | Charge | `charge` | move | 35 | 1 | - | 9 x 3 = 27 | wind 8, dmg 9, len 9 |
-| Undead Legion | Necromancer | Summon Warband | `summon` | defense | 20 | - (mage) | 40 | - | range 4, count 2, radius 1.6 |
-| Undead Legion | Necromancer | Dark Thunder | `thunder` | attack | 15 | - (mage) | 25 | 14 x 1 = 14 | dmg 14, range 11, jumps 3, jump 3.5, decay 0.7, radius 1 |
-| Undead Legion | Necromancer | Corpse Explosion | `explode` | attack | 10 | - (mage) | 20 | - | range 9, radius 2.5, base 8, perModel 6 |
+| Undead Legion | Lich | Summon Warband | `summon` | defense | 20 | - (mage) | 40 | - | range 4, count 2, radius 1.6 |
+| Undead Legion | Lich | Dark Thunder | `thunder` | attack | 15 | - (mage) | 25 | 14 x 1 = 14 | dmg 14, range 11, jumps 3, jump 3.5, decay 0.7, radius 1 |
+| Undead Legion | Lich | Corpse Explosion | `explode` | attack | 10 | - (mage) | 20 | - | range 9, radius 2.5, base 8, perModel 6 |
 | Undead Legion | Grave Guard | Grave Wall | `wall` | defense | 15 | 1 | - | - | mult 0.3, cosHalf 0.5 |
 | Undead Legion | Bone Archers | Arrow Storm | `storm` | attack | 35 | 2 | - | 4 x 4 = 16 | dmg 4, range 15, radius 2.2 |
 | Undead Legion | Wraiths | Charge | `charge` | move | 35 | 1 | - | 5.6 x 3 = 16.799999999999997 | wind 8, dmg 5.6, len 9 |
+| Undead Legion | Necromancers | Dark Thunder | `thunder` | attack | 15 | - (mage) | 20 | 6 x 2 = 12 | dmg 6, range 10, jumps 2, jump 3, decay 0.7, radius 1 |
+| Undead Legion | Necromancers | Summon Warband | `summon` | defense | 20 | - (mage) | 35 | - | range 4, count 1, radius 1.6 |
 <!-- /GEN:skills -->
 
 Lock Shields / Grave Wall: `mult` 0.3 = damage taken from the front arc, `cosHalf` 0.5 = ±60°.
@@ -428,35 +447,37 @@ Damage per round = hits per 100 AP x damageAfter(dmg per model x models, armour)
 
 | Unit | Raw/hit | vs 0 | vs 3 | vs 5 | vs 8 | vs 11 | vs 12 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| Necromancer | 10 | 40 | 36 | 32 | 28 | 24 | 24 |
+| Lich | 10 | 40 | 36 | 32 | 28 | 24 | 24 |
 | Grave Guard | 9.600000000000001 | 30 | 24 | 24 | 21 | 18 | 18 |
 | Skeleton Warriors | 12 | 48 | 40 | 40 | 36 | 32 | 32 |
 | Skeleton Warband | 14.399999999999999 | 56 | 52 | 48 | 40 | 36 | 36 |
 | Bone Archers | 9.6 | 30 | 24 | 24 | 21 | 18 | 18 |
 | Wraiths | 27 | 54 | 46 | 44 | 38 | 34 | 34 |
+| Necromancers | 8 | 32 | 28 | 24 | 24 | 20 | 20 |
 | Summoned Skeletons | 9 | 36 | 32 | 28 | 24 | 24 | 24 |
 
 **Attacks needed: Kingdom (rows, full squad, no losses) vs Undead Legion (columns, full HP, no defends)** (rounds = attacks / hits per 100 AP)
 
-| Attacker \ Target | Necromancer | Grave Guard | Skeleton Warriors | Skeleton Warband | Bone Archers | Wraiths | Summoned Skeletons |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| The Chosen | 7 (1.8 r) | 6 (1.5 r) | 3 (0.8 r) | 2 (0.5 r) | 3 (0.8 r) | 3 (0.8 r) | 3 (0.8 r) |
-| Shieldwall | 9 (3 r) | 8 (2.7 r) | 5 (1.7 r) | 2 (0.7 r) | 4 (1.3 r) | 5 (1.7 r) | 4 (1.3 r) |
-| Men-at-arms | 6 (1.5 r) | 5 (1.3 r) | 3 (0.8 r) | 2 (0.5 r) | 3 (0.8 r) | 3 (0.8 r) | 2 (0.5 r) |
-| Crossbows | 7 (2.3 r) | 6 (2 r) | 4 (1.3 r) | 2 (0.7 r) | 3 (1 r) | 3 (1 r) | 3 (1 r) |
-| Outriders | 3 (1.5 r) | 3 (1.5 r) | 2 (1 r) | 1 (0.5 r) | 2 (1 r) | 2 (1 r) | 1 (0.5 r) |
-| Peasants | 30 (7.5 r) | 21 (5.3 r) | 15 (3.8 r) | 6 (1.5 r) | 10 (2.5 r) | 14 (3.5 r) | 11 (2.8 r) |
+| Attacker \ Target | Lich | Grave Guard | Skeleton Warriors | Skeleton Warband | Bone Archers | Wraiths | Necromancers | Summoned Skeletons |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| The Chosen | 7 (1.8 r) | 6 (1.5 r) | 3 (0.8 r) | 2 (0.5 r) | 3 (0.8 r) | 3 (0.8 r) | 2 (0.5 r) | 3 (0.8 r) |
+| Shieldwall | 9 (3 r) | 8 (2.7 r) | 5 (1.7 r) | 2 (0.7 r) | 4 (1.3 r) | 5 (1.7 r) | 2 (0.7 r) | 4 (1.3 r) |
+| Men-at-arms | 6 (1.5 r) | 5 (1.3 r) | 3 (0.8 r) | 2 (0.5 r) | 3 (0.8 r) | 3 (0.8 r) | 2 (0.5 r) | 2 (0.5 r) |
+| Crossbows | 7 (2.3 r) | 6 (2 r) | 4 (1.3 r) | 2 (0.7 r) | 3 (1 r) | 3 (1 r) | 2 (0.7 r) | 3 (1 r) |
+| Outriders | 3 (1.5 r) | 3 (1.5 r) | 2 (1 r) | 1 (0.5 r) | 2 (1 r) | 2 (1 r) | 1 (0.5 r) | 1 (0.5 r) |
+| Peasants | 30 (7.5 r) | 21 (5.3 r) | 15 (3.8 r) | 6 (1.5 r) | 10 (2.5 r) | 14 (3.5 r) | 5 (1.3 r) | 11 (2.8 r) |
 
 **Attacks needed: Undead Legion (rows, full squad, no losses) vs Kingdom (columns, full HP, no defends)** (rounds = attacks / hits per 100 AP)
 
 | Attacker \ Target | The Chosen | Shieldwall | Men-at-arms | Crossbows | Outriders | Peasants |
 | --- | --- | --- | --- | --- | --- | --- |
-| Necromancer | 19 (4.8 r) | 17 (4.3 r) | 12 (3 r) | 7 (1.8 r) | 9 (2.3 r) | 4 (1 r) |
+| Lich | 19 (4.8 r) | 17 (4.3 r) | 12 (3 r) | 7 (1.8 r) | 9 (2.3 r) | 4 (1 r) |
 | Grave Guard | 19 (6.3 r) | 17 (5.7 r) | 12 (4 r) | 8 (2.7 r) | 9 (3 r) | 4 (1.3 r) |
 | Skeleton Warriors | 17 (4.3 r) | 13 (3.3 r) | 9 (2.3 r) | 6 (1.5 r) | 8 (2 r) | 3 (0.8 r) |
 | Skeleton Warband | 13 (3.3 r) | 12 (3 r) | 8 (2 r) | 5 (1.3 r) | 6 (1.5 r) | 3 (0.8 r) |
 | Bone Archers | 19 (6.3 r) | 17 (5.7 r) | 12 (4 r) | 8 (2.7 r) | 9 (3 r) | 4 (1.3 r) |
 | Wraiths | 7 (3.5 r) | 6 (3 r) | 4 (2 r) | 3 (1.5 r) | 4 (2 r) | 2 (1 r) |
+| Necromancers | 22 (5.5 r) | 21 (5.3 r) | 14 (3.5 r) | 9 (2.3 r) | 12 (3 r) | 4 (1 r) |
 | Summoned Skeletons | 22 (5.5 r) | 17 (4.3 r) | 12 (3 r) | 8 (2 r) | 11 (2.8 r) | 4 (1 r) |
 
 <!-- /GEN:derived -->
@@ -471,7 +492,7 @@ Damage per round = hits per 100 AP x damageAfter(dmg per model x models, armour)
 | Faction | Resource | Start | HQ income/rnd | Gather (AP per 1 resource) | Builder gathering a full round | Buildable |
 | --- | --- | --- | --- | --- | --- | --- |
 | Kingdom | Gold | 60 | 6 | farm 8 (4 gatherers), mine 10 (2 gatherers) | farm ~12, mine ~10 | barracks, tower, farm, mine, banner, wall |
-| Undead Legion | Souls | 70 | 0 | - (no builders) | - | barracks, tower, well, banner, wall |
+| Undead Legion | Souls | 90 | 1 | - (no builders) | - | barracks, tower, well, monolith, wall |
 
 Builders: Kingdom up to 10 peasant squads (not in the army cap); Undead 0 (buildings rise by themselves). HQ trains: Kingdom builder/fighter; Undead Legion swarm.
 
@@ -485,8 +506,22 @@ Builders: Kingdom up to 10 peasant squads (not in the army cap); Undead 0 (build
 | swarm | - | 14 | 1 | Crypt and Ossuary (Undead only; a pair per training) |
 | ranged | 26 | 13 | 2 | Barracks / Ossuary |
 | fast | 30 | 16 | 2 | Barracks / Ossuary |
+| mage | - | 22 | 2 | Ossuary (Undead only) |
 
-Souls: every model that dies (either side, not summoned skeletons) on the undead side's grave ground pays 3 souls (a hero: 15); graveyards: hq 10", barracks 6", tower 6", banner 6", wall 6", well 10" (a new site spreads 50 % at once and the rest by the end of the round; the Crypt starts at 10"). Pairs: Skeleton Warband x2.
+Souls: every model that dies (either side, not summoned skeletons) on the undead side's grave ground pays 3 souls (a hero: 15); graveyards: hq 10", barracks 6", tower 6", monolith 6", wall 6", well 10" (a new site spreads 50 % at once and the rest by the end of the round; the Crypt starts at 10"). Pairs: Skeleton Warband x2.
+
+**Undead death economy: souls back when a whole squad dies on your graves vs its cost** (both sides' deaths pay; the table uses undead squads)
+
+| Role | Name | Tier rule | Models | Cost (per squad) | Souls back (per squad) | Back / cost |
+| --- | --- | --- | --- | --- | --- | --- |
+| tank | Grave Guard | high (cost may change) | 3 | 16 | 9 | 0.6x |
+| fighter | Skeleton Warriors | low (cost fixed) | 5 | 9 | 15 | 1.7x |
+| swarm | Skeleton Warband | low (cost fixed) | 6 | 7 | 18 | 2.6x |
+| ranged | Bone Archers | low (cost fixed) | 4 | 13 | 12 | 0.9x |
+| fast | Wraiths | high (cost may change) | 3 | 16 | 9 | 0.6x |
+| mage | Necromancers | high (cost may change) | 2 | 22 | 6 | 0.3x |
+
+Flat income: Crypt 1 a round, Soul Well 2 a round each. Kingdom deaths on undead graves pay the same per model (Kingdom Shieldwall 9, Men-at-arms 12, Crossbows 12, Outriders 9).
 <!-- /GEN:economy -->
 
 ### 10.2 Rules
@@ -498,22 +533,38 @@ Souls: every model that dies (either side, not summoned skeletons) on the undead
   **4 farmers** each (`BUILDINGS.farm.slots`); a peasant farming a full round makes ~12 gold (1 gold per
   **8 AP**); mines take 2 (1 per 10 AP). Peasants cost 10, up to **10 squads**
   (`FACTIONS.kingdom.maxBuilders`), and **don't count toward the army cap**.
-- **Undead (Souls): fed by death on graveyards** (§10.4). The Crypt earns **nothing** by itself; a
-  **Soul Well** gives **+4** a round (the only soul income without deaths). **Every model that dies on
-  either side** (summoned skeletons excepted) **on the undead side's grave ground** pays
-  **`RULES.soulPerModel`** souls (a hero **`soulPerHero`** = 15), credited at the end of the round from
-  where it fell. Start: 70 souls (the Kingdom: 60 gold). No gathering (no builders). Mirror Undead matches: each side collects
-  from deaths on its own graves.
+- **Undead (Souls): a death economy** (§10.4). The flat income is tiny on purpose, just enough that
+  the Undead never stop completely: the **Crypt +1** a round (`FACTIONS.undead.eco.hq`) and each
+  **Soul Well +2** (`BUILDINGS.well.income`). **The main income is death on graves:** every model that
+  dies on either side (summoned skeletons excepted) **on the undead side's grave ground** pays
+  **`RULES.soulPerModel` = 3** souls (a hero **`soulPerHero`** = 15), credited at the end of the round
+  from where it fell. Because the pay is per **model**, cheap many-model squads give back **more than
+  they cost** when they fall on graves (a Skeleton Warband squad: 6 models → 18 souls for 7 souls of
+  cost, 2.6×; Skeleton Warriors 1.7×) and elite few-model squads give back less (Grave Guard / Wraiths
+  0.6×, Necromancers 0.3×; the generated table above). So the Undead plan is: spread graves toward the
+  enemy (Monoliths, Bone Fences), fight on them, and spend cheap skeletons. Start: 90 souls (the
+  Kingdom: 60 gold). No gathering (no builders). Mirror Undead matches: each side collects from deaths
+  on its own graves.
+- **The tier rule for balancing the Undead** (owner's rule): **low-tier** units (Skeleton Warband,
+  Skeleton Warriors, Bone Archers; `FACTIONS.undead.lowTier`) keep their **costs**; only their stats
+  change. **High-tier** units (Grave Guard, Wraiths, Necromancers, the Lich's spells) may have their
+  costs (souls, mana) changed.
 
 ### 10.4 Graveyards (`graveCircles` / `graveAt` in `js/sim/base.js`, end of round in `resolve.js`)
 - **Graves spread almost at once** (blight / creep / a Necron power matrix): an undead site gets
   **`RULES.graveStart` = 50 %** of its graveyard the moment it is placed, and **every undead building
   (rising or finished) reaches its full graveyard at the end of every round**. Reach (`BUILDINGS.<type>.
   grave`): **Soul Well 10″**, **Crypt 10″** (full from the start, `graveHqStart`), every other undead
-  building **6″**.
-- **Every undead building must stand on its own graves** (its centre inside a graveyard), and so must
-  Soul Wells (which also need a free resource site). The Undead expand by chaining graves outward: a
-  cheap Bone Fence (6 souls, 6″ graves) on the edge of the graves reaches further.
+  building **6″** (the Monolith too).
+- **Every undead building except the Monolith must stand on its own graves** (its centre inside a
+  graveyard), and so must Soul Wells (which also need a free resource site). The Undead expand by
+  chaining graves outward: a **Monolith** raised near the Lich or Necromancers anywhere they have seen
+  (§11.2) starts a new graveyard ahead of the army; a cheap Bone Fence (6 souls, 6″ graves) on the edge
+  of the graves reaches further.
+- **On the table** the grave ground is a change of the ground texture itself (dark purple-black blight
+  with faint violet veins, edges fading over about 1.6″ with noise; `js/render/ground.js`), with
+  headstones, crosses, bone piles and dead stumps scattered on it, thick in the middle and thinning
+  toward the rim (`js/render/graves.js`). Visual only.
 - **Deaths widen graves:** each model (either side, not summoned) that dies on a graveyard pays souls
   and widens **that** graveyard by **`graveDeathGrow` = 0.15″** per model. A building's graveyard can
   be widened up to **1.5 ×** its type's max (`graveCapMult`; the raised cap is kept on the building).
@@ -579,13 +630,14 @@ item waits.
 | Type | Names (Kingdom / Undead) | Cost | Work (builder AP) | Builder-rounds | Undead rise rounds | HP | Site HP | Armour | Footprint | Vision | Fire (after the tiers) | Income/rnd | Special | Built by |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | `hq` | Keep / Crypt | 0 | 0 | 0 | - | 220 | 66 | 8 | 4 x 4 | 10 | 3 x 4 = 12 raw, range 8" | - | trains kingdom: builder/fighter, undead: swarm | kingdom, undead |
-| `barracks` | Barracks / Ossuary | 30 | 240 | 2.4 | 3 | 150 | 45 | 8 | 3.5 x 2.5 | 6 | - | - | trains tank/fighter/swarm/ranged/fast | kingdom, undead |
+| `barracks` | Barracks / Ossuary | 30 | 240 | 2.4 | 3 | 150 | 45 | 8 | 3.5 x 2.5 | 6 | - | - | trains tank/fighter/swarm/ranged/fast/mage | kingdom, undead |
 | `tower` | Watchtower / Bone Spire | 25 | 200 | 2 | 3 | 110 | 33 | 6 | circle r 0.9 | 13 | 4 x 4 = 16 raw, range 11" | - | - | kingdom, undead |
-| `banner` | Banner / Obelisk | 20 | 120 | 1.2 | 2 | 60 | 18 | 4 | circle r 0.55 | 6 | - | - | +1 CP | kingdom, undead |
+| `banner` | Banner / Obelisk | 20 | 120 | 1.2 | - | 60 | 18 | 4 | circle r 0.55 | 6 | - | - | +1 CP | kingdom |
+| `monolith` | Monolith / Monolith | 20 | 120 | 1.2 | 2 | 70 | 21 | 4 | circle r 0.6 | 7 | - | - | - | undead |
 | `wall` | Palisade / Bone Fence | 6 | 60 | 0.6 | 1 | 80 | 24 | 6 | 3 x 0.5 | 0 | - | - | - | kingdom, undead |
 | `farm` | Farm / Farm | 25 | 140 | 1.4 | - | 90 | 27 | 3 | 4.2 x 3.4 | 5 | - | 2 | 4 gatherers | kingdom |
 | `mine` | Mine / Mine | 30 | 160 | 1.6 | - | 100 | 30 | 6 | circle r 1.1 | 7 | - | 6 | resource site only | kingdom |
-| `well` | Soul Well / Soul Well | 20 | 160 | 1.6 | 2 | 90 | 27 | 5 | circle r 1.1 | 7 | - | 4 | resource site only; soul collector (undefined") | undead |
+| `well` | Soul Well / Soul Well | 20 | 160 | 1.6 | 2 | 90 | 27 | 5 | circle r 1.1 | 7 | - | 2 | resource site only; soul collector (undefined") | undead |
 
 Repair (Kingdom builders): builder AP x (max HP / work) HP per AP. Undead buildings rise by 80 work a round (at most 2 at once) and mend 5 % of max HP a round. Siege damage taken: damageAfter(raw x 2.5, armour) (no defends).
 <!-- /GEN:buildings -->
@@ -596,12 +648,16 @@ Repair (Kingdom builders): builder AP x (max HP / work) HP per AP. Undead buildi
   but not within 1.8″ (0.6 × 3) of a resource site.
 - **Seen ground:** every building (both armies, the HQ excepted) needs its centre on a cell the side has
   seen at least once (§12): "You haven't seen that spot yet".
-- **Undead graves:** every undead building needs its centre on the side's grave ground (§10.4):
-  "Undead buildings must stand on your graves".
+- **Undead graves:** every undead building except the Monolith (`offGraves: true`) needs its centre on
+  the side's grave ground (§10.4): "Undead buildings must stand on your graves".
+- **Monolith (`caster: 6`):** its centre must be within **6″** of a living own **Lich or Necromancer
+  squad** (centre to centre; `casterNear`): "Place it near your Lich or Necromancers". This is checked
+  when it is queued; at round start a queued Monolith whose caster has walked away **waits**
+  (`caster`) instead of being dropped.
 - **Mine / Soul Well:** only on a **free resource site** (within 0.6″; the UI snaps to it), anywhere on
   the table.
 - Not overlapping terrain (+0.2″; not in a stream), other buildings (+0.3″) or squads (+0.1″).
-- Max 2 Banners / Obelisks (no farm limit). The building must be in the side's faction list.
+- Max 2 Banners (Kingdom only; no farm limit). The building must be in the side's faction list.
 
 ### 11.3 Construction (builders)
 - A new site appears at round start with **30 %** of max HP (`siteHp`), blocks movement, can be
@@ -620,13 +676,25 @@ Repair (Kingdom builders): builder AP x (max HP / work) HP per AP. Undead buildi
 - The Undead have no builder unit. A started item of their build queue becomes a site (30 % HP, as
   above) and at the **end of every round** gains **`RULES.riseWork` = 80 work** (HP grows the same way
   as builder work: `max HP × 0.7 × work / total work`), so it finishes after `ceil(work / 80)` rounds:
-  wall 1, obelisk 2, soul well 2, bone spire 3, ossuary 3. It counts as finished at the end of that
+  wall 1, monolith 2, soul well 2, bone spire 3, ossuary 3. It counts as finished at the end of that
   round (`built` event, `by: null`).
 - At most **`RULES.maxRising` = 2** undead sites rise at the same time (this replaces "one site per
   builder" in `startQueues`: the front item waits with reason `rising`).
 - Finished undead buildings (not the Crypt) **mend 5 % of max HP** at the end of every round
   (`RULES.undeadMend`), since nobody can repair them.
 - The UI sinks the site's model into the table and raises it with progress (no scaffold).
+
+### 11.3c The Monolith (Undead; replaced the Obelisk on 2026-11-17)
+- `BUILDINGS.monolith`: cost **20**, work 120 (rises in **2 rounds**), HP 70, armour 4, a circle of
+  r 0.6″, vision 7, graveyard **6″** (`grave`), **no command point**.
+- **Placement:** the only Undead building that may stand **off graves** (`offGraves`), but it still
+  needs seen ground, and its centre must be within **6″** (`caster`) of a living own **Lich or
+  Necromancer squad** (§11.2). Like any undead site it spreads half its graves when placed and all of
+  them by the end of the round, so it is how the horde pushes blight into new ground.
+- **Heal** (`heal: { radius 4, hp 4 }`), at the end of every round after the undead mend and before
+  mana regen: every own living, non-summoned squad below full HP whose **edge** is within **4″** of a
+  **finished** Monolith's centre regains **4 HP per model alive** (at least 4; models come back as HP
+  passes each model's threshold, up to full) (`heal` event). Several Monoliths each heal.
 
 ### 11.4 What a builder does with no orders (`builderIdleTarget` in `js/sim/builders.js`)
 Kingdom builders gather at Farms and Mines. A builder with no direct orders (and not on
@@ -690,26 +758,26 @@ apply. One shot per building per round.
 
 A stream with two fords, woods and ruins. Small and quick.
 
-Terrain (full, mirrored): forest (15, 7.5) r3.2; forest (33, 24.5) r3.2; forest (20, 26) r2.6; forest (28, 6) r2.6; ruin (22, 13.4) 4.2x0.6; ruin (26, 18.6) 4.2x0.6; ruin (20.2, 15.6) 0.6x3.2; ruin (27.8, 16.4) 0.6x3.2; rock (13.5, 25) r1.2; rock (34.5, 7) r1.2; rock (27.5, 5.2) r1; rock (20.5, 26.8) r1; river x24 (w 1.6, fords z7/3 z25/3).
+Terrain (full, mirrored): forest (15, 7.5) r3.9; forest (33, 24.5) r3.9; forest (20, 26) r3.9; forest (28, 6) r3.9; ruin (22, 13.4) 4.2x0.6; ruin (26, 18.6) 4.2x0.6; ruin (20.2, 15.6) 0.6x3.2; ruin (27.8, 16.4) 0.6x3.2; rock (13.5, 25) r1.2; rock (34.5, 7) r1.2; rock (27.5, 5.2) r1; rock (20.5, 26.8) r1; river x24 (w 1.6, fords z7/3 z25/3).
 
 Resource sites: (16.5, 19.5), (31.5, 12.5), (20.5, 6.5), (27.5, 25.5). Road control points: [[0,16],[14,12],[34,20],[48,16]].
 
 ```
 ...........~~...........
-...........~~...........
-.......^...==oo.........
-......^^^.$==^^.oo......
-.H....^^^..==.........H.
-...........~~...........
+...........~~^^.........
+......^^^..==oo^........
+......^^^.$==^^^oo......
+.H....^^^..==^^.......H.
+.......^...~~...........
 ..........#~~..$........
 ..........#~~#..........
 .H........#~~#........H.
 ........$..~~#..........
-...........~~...........
-.H.........==..^^^....H.
-......oo.^^==$.^^^......
-.........oo==...^.......
-...........~~...........
+...........~~...^.......
+.H.......^^==..^^^....H.
+......oo^^^==$.^^^......
+........^oo==..^^^......
+.........^^~~...........
 ...........~~...........
 ```
 
@@ -717,29 +785,29 @@ Resource sites: (16.5, 19.5), (31.5, 12.5), (20.5, 6.5), (27.5, 25.5). Road cont
 
 Two streams split the field in three. Hold the middle ground between them.
 
-Terrain (full, mirrored): forest (12, 8) r3; forest (52, 32) r3; forest (16, 32) r2.8; forest (48, 8) r2.8; forest (28.5, 20) r3; forest (35.5, 20) r3; ruin (27, 9) 4.2x0.6; ruin (37, 31) 4.2x0.6; ruin (25.2, 11.2) 0.6x3.2; ruin (38.8, 28.8) 0.6x3.2; rock (18.5, 25.5) r1.1; rock (45.5, 14.5) r1.1; rock (30, 33) r1; rock (34, 7) r1; river x22 (w 1.6, fords z9/3 z29/3); river x42 (w 1.6, fords z31/3 z11/3).
+Terrain (full, mirrored): forest (12, 8) r3.7; forest (52, 32) r3.7; forest (16, 32) r4.2; forest (48, 8) r4.2; forest (28.5, 20) r4.5; forest (35.5, 20) r4.5; ruin (27, 9) 4.2x0.6; ruin (37, 31) 4.2x0.6; ruin (25.2, 11.2) 0.6x3.2; ruin (38.8, 28.8) 0.6x3.2; rock (18.5, 25.5) r1.1; rock (45.5, 14.5) r1.1; rock (30, 33) r1; rock (34, 7) r1; river x22 (w 1.6, fords z9/3 z29/3); river x42 (w 1.6, fords z31/3 z11/3).
 
 Resource sites: (16.5, 16), (47.5, 24), (27, 27.5), (37, 12.5), (31, 4), (33, 36). Road control points: [[0,20],[20,14],[44,26],[64,20]].
 
 ```
 ..........~~........~~..........
 ..........~~........~~..........
-..........~~...$....~~..........
-.....^^...==....oo..~~.^^.......
-.....^^...==###.....==.^^.......
-.H........==#.......==........H.
+.....^^...~~...$....~~.^^.......
+....^^^^..==....oo..~~^^^^......
+....^^^^..==###.....==^^^^......
+.H...^^...==#.......==.^^.....H.
 ..........~~#.....$.==o.........
 ..........~~........~~oo........
-........$.~~........~~..........
+........$.~~.^^^^^^.~~..........
+..........~~^^^^^^^^~~..........
+.H........~~^^^^^^^^~~........H.
 ..........~~.^^^^^^.~~..........
-.H........~~.^^^^^^.~~........H.
-..........~~........~~..........
 ........oo~~........~~.$........
 .........o==.$.....#~~..........
-..........==.......#==..........
-.H.....^^.==.....###==...^^...H.
-.......^^.~~..oo....==...^^.....
-..........~~........~~..........
+.......^^.==.......#==...^^.....
+.H....^^^^==.....###==..^^^^..H.
+......^^^^~~..oo....==..^^^^....
+.......^^.~~........~~...^^.....
 ..........~~....$...~~..........
 ..........~~........~~..........
 ```
@@ -748,17 +816,17 @@ Resource sites: (16.5, 16), (47.5, 24), (27, 27.5), (37, 12.5), (31, 4), (33, 36
 
 A maze of ruins around a mountain lake. Tight paths, good cover.
 
-Terrain (full, mirrored): forest (14, 6) r3.4; forest (50, 38) r3.4; forest (12, 37) r3.2; forest (52, 7) r3.2; forest (24, 39) r2.6; forest (40, 5) r2.6; ruin (26, 16) 0.6x5; ruin (38, 28) 0.6x5; ruin (28.5, 13.5) 5x0.6; ruin (35.5, 30.5) 5x0.6; ruin (24, 27) 4x0.6; ruin (40, 17) 4x0.6; ruin (19, 20.5) 0.6x4; ruin (45, 23.5) 0.6x4; rock (27, 31) r1.3; rock (37, 13) r1.3; rock (22, 11) r1.2; rock (42, 33) r1.2; lake (32, 22) r3.6.
+Terrain (full, mirrored): forest (14, 6) r5.1; forest (50, 38) r5.1; forest (12, 37) r4.4; forest (52, 7) r4.4; forest (24, 39) r3.9; forest (40, 5) r3.9; ruin (26, 16) 0.6x5; ruin (38, 28) 0.6x5; ruin (28.5, 13.5) 5x0.6; ruin (35.5, 30.5) 5x0.6; ruin (24, 27) 4x0.6; ruin (40, 17) 4x0.6; ruin (19, 20.5) 0.6x4; ruin (45, 23.5) 0.6x4; rock (27, 31) r1.3; rock (37, 13) r1.3; rock (22, 11) r1.2; rock (42, 33) r1.2; lake (32, 22) r3.6.
 
 Resource sites: (17, 29.5), (47, 14.5), (25, 6), (39, 38), (30, 37.5), (34, 6.5). Road control points: [[0,22],[18,30],[46,14],[64,22]].
 
 ```
-................................
-......^^...........^^...........
-.....^^^^..........^^....^^.....
-.....^^^^...$....$.^^...^^^^....
-......^^.................^^.....
-.H........oo..................H.
+......^^........................
+.....^^^^.........^^^^...^^.....
+....^^^^^^........^^^^..^^^^....
+....^^^^^^..$....$^^^^..^^^^....
+.....^^^^...............^^^^....
+.H....^^..oo.............^^...H.
 .............###..o.............
 .......................$........
 ...................##...........
@@ -769,47 +837,47 @@ Resource sites: (17, 29.5), (47, 14.5), (25, 6), (39, 38), (30, 37.5), (34, 6.5)
 ...........##...................
 ........$.......................
 .............o..###.............
-.H..................oo........H.
-.....^^.................^^......
-....^^^^...^^..$.......^^^^.....
-.....^^....^^......$...^^^^.....
-...........^^...........^^......
-................................
+.H...^^.............oo..^^....H.
+....^^^^...............^^^^.....
+....^^^^..^^^^.$......^^^^^^....
+....^^^^..^^^^.....$..^^^^^^....
+.....^^...^^^^.........^^^^.....
+........................^^......
 ```
 
 #### Great Field (`greatfield`, 80" x 52")
 
 A huge open battlefield with ponds, woods and a long stream. For big armies.
 
-Terrain (full, mirrored): forest (14, 9) r3.2; forest (66, 43) r3.2; forest (24, 41) r3.6; forest (56, 11) r3.6; forest (31, 17) r2.8; forest (49, 35) r2.8; forest (11, 45) r2.6; forest (69, 7) r2.6; lake (21, 27) r2.4; lake (59, 25) r2.4; ruin (33, 32) 4x0.6; ruin (47, 20) 4x0.6; ruin (30, 6) 0.6x3.6; ruin (50, 46) 0.6x3.6; rock (18, 34) r1.2; rock (62, 18) r1.2; rock (36, 12) r1; rock (44, 40) r1; river x40 (w 1.6, fords z8/3 z26/3.4 z44/3).
+Terrain (full, mirrored): forest (14, 9) r4.8; forest (66, 43) r4.8; forest (24, 41) r5.4; forest (56, 11) r5.4; forest (31, 17) r4.2; forest (49, 35) r4.2; forest (11, 45) r3.9; forest (69, 7) r3.9; lake (21, 27) r2.4; lake (59, 25) r2.4; ruin (33, 32) 4x0.6; ruin (47, 20) 4x0.6; ruin (30, 6) 0.6x3.6; ruin (50, 46) 0.6x3.6; rock (18, 34) r1.2; rock (62, 18) r1.2; rock (36, 12) r1; rock (44, 40) r1; river x40 (w 1.6, fords z8/3 z26/3.4 z44/3).
 
 Resource sites: (20, 17), (60, 35), (30, 45), (50, 7), (34, 24), (46, 28), (26, 4), (54, 48). Road control points: [[0,26],[24,16],[56,36],[80,26]].
 
 ```
 ...................~~...................
 ...................~~...................
-.............$.....~~.............^.....
-......^^...........==....$.......^^^....
-.....^^^^..........==......^^.....^.....
-......^^.........oo~~.....^^^^..........
-.H...............oo~~......^^.........H.
+......^^.....$.....~~............^^^....
+.....^^^^..........==....$^^^^...^^^....
+.....^^^^..........==....^^^^^^..^^^....
+.....^^^^........oo~~....^^^^^^.........
+.H....^^.......^.oo~~....^^^^^^.......H.
+..............^^^..~~.....^^^^..........
+..........$..^^^^^.~~.........oo........
+..............^^^..~~.........oo........
 ...............^...~~...................
-..........$...^^^..~~.........oo........
-...............^...~~.........oo........
-...................~~...................
 ...................~~.......~~~.........
 .........~~~.....$.==.......~~~.........
 .H.......~~~.......==.......~~~.......H.
 .........~~~.......~~..$................
-...................~~...................
-........oo.........~~...^...............
-........oo.........~~..^^^....$.........
 ...................~~...^...............
-...........^^......~~oo.................
-.H........^^^^.....~~oo.........^^....H.
-.....^.....^^......==..........^^^^.....
-....^^^........$...==...........^^......
-.....^.............~~...................
+........oo.........~~..^^^..............
+........oo.........~~.^^^^^...$.........
+..........^^^^.....~~..^^^..............
+.........^^^^^^....~~oo.^.......^^......
+.H.......^^^^^^....~~oo........^^^^...H.
+....^^^..^^^^^^....==..........^^^^.....
+....^^^...^^^^.$...==..........^^^^.....
+....^^^............~~...........^^......
 ...................~~......$............
 ...................~~...................
 ```
@@ -843,7 +911,7 @@ closest to an enemy.
   (0.45 × if blocked), then overwatch if ≥ 40 AP left; else volley until AP runs out.
 - **Skills:** Lock Shields when engaged or facing shooters in range; Rally when ≥ 2 friends are close;
   Leap Strike at a target 1″ to 7″ away; **Mighty Swing** when the target's edge is within reach − 0.2″;
-  **Necromancer** (in this order, while mana and AP last): Corpse Explosion on each own summoned squad
+  **Lich and Necromancers** (in this order, while mana and AP last): Corpse Explosion on each own summoned squad
   within 9″ with ≥ 2 enemies within 2.5″ (or ≥ 1 if it crumbles this round); Summon Warband toward the
   target when it is < 12″ away, fewer than 4 summoned squads are alive and mana ≥ 40 + 25; Dark Thunder
   at the target up to twice when it is in range with a clear line; then bolts; Arrow Storm when ≥ 2 enemies
@@ -882,15 +950,19 @@ regardless: ordered squads go for the HQ unless in a fight.
   Kingdom peasants: at most 2 until a Barracks stands, then up to min(10, 2 + round / 3, 8). The Keep
   also trains Men-at-arms.
 - Only **seen** resource sites are candidates. **Undead expansion:** when the nearest seen free site
-  isn't on graves yet, the AI places one Bone Fence on its grave edge closest to that site (one at a
-  time, waiting for the last fence) until a Soul Well fits; without a Soul Well it keeps 32 souls back
+  isn't on graves yet, the AI first tries a **Monolith** (no other Monolith rising or queued, enough
+  souls): spots 2″, 3.5″ and 5.4″ around the Lich and each Necromancer squad, the 30 nearest the site,
+  taken only if its 6″ graves reach at least 1″ closer to the site than the current graves; otherwise
+  one Bone Fence on its grave edge closest to that site (one at a time, waiting for the last fence),
+  until a Soul Well fits; without a Soul Well it keeps 32 souls back
   from training for that. Building spots are tried from 2.5″ out around its buildings.
 
 ### 14.5b Revive and the swarm
 - A fallen hero's revive zone: the 2 nearest ordered squads that aren't within 6″ of an enemy walk to it
   and hold it (all defends) until the hero returns.
-- Training (Undead): the Crypt always trains the swarm; an Ossuary trains a swarm pair whenever it has
-  no more swarm squads than Warriors + archers, else the usual pick. It only starts a pair with 2 free
+- Training (Undead): the Crypt always trains the swarm; an Ossuary trains **Necromancers** while it has
+  fewer than floor(army / 6) of them, else a swarm pair whenever it has no more swarm squads than
+  Warriors + archers, else the usual pick. It only starts a pair with 2 free
   cap slots.
 
 ### 14.6 Economy (build order, one new building per free builder per round, up to 3)
@@ -908,7 +980,10 @@ Checked in this order each round (first that applies and can be placed):
 7. Kingdom, fewer farms than min(6, ceil(builders / 3)), round ≥ 3 → Farm.
 7b. Has a Barracks and fewer than min(4, 1 + floor(resource / 60)), round ≥ 5 → another Barracks /
    Ossuary (so a big bank turns into squads under the bigger cap).
-8. Fewer than 2 Banners / Obelisks, round ≥ 5, resource ≥ cost + 20 → Banner.
+8. Kingdom: fewer than 2 Banners, round ≥ 5, resource ≥ cost + 20 → Banner.
+8b. Undead: round ≥ 5, fewer than 1 + floor(round / 8) Monoliths, souls ≥ cost + 25 → a forward
+   **Monolith** toward the known enemy HQ (else the table's centre), with the same spot rules as the
+   expansion Monolith (a grave and heal station ahead of the horde).
 9. Fewer than 2 towers, round ≥ 6, resource ≥ cost + 30 → Tower.
 
 Once a Barracks is finished it keeps 24 in reserve for training (except for the Barracks itself).
@@ -1046,13 +1121,17 @@ Balance report 2026-11-16 · 8 seeds x 2 orders per map · AI normal · stop at 
 | Training time, caps, souls, sites, work reach | `RULES.trainRounds`, `armyCap`, `maxBuilders`, `gatherSlots`, `maxBannerCp`, `maxFarms`, `soulRange`, `soulPerModel`, `soulPerHero`, `siteHp`, `workReach` | |
 | Faction identity | `FACTIONS.<f>.hqTrains` (what the HQ trains), `FACTIONS.<f>.maxBuilders` (Kingdom 10, Undead 0), `FACTIONS.undead.rises` (buildings rise, no builders) | |
 | Undead rising buildings | `RULES.riseWork` (work per round, 80), `RULES.maxRising` (2 at once), `RULES.undeadMend` (0.05 of max HP per round) | build speed and resilience of the Undead base |
-| Souls | `RULES.soulRange` (10″ around finished own Soul Wells), `soulPerModel` 3, `soulPerHero` 15; `BUILDINGS.well` (cost, income) | the whole Undead economy beyond the Crypt's 4 |
+| Souls (death economy) | `soulPerModel` 3 (per model dying on graves: cheap many-model squads pay back more than they cost), `soulPerHero` 15; `FACTIONS.undead.eco.hq` (Crypt, 1), `BUILDINGS.well.income` (2) | the whole Undead economy; the flat incomes are only a floor |
+| Ground look (visual only) | `js/render/ground.js` (`TEX` 4 texels per inch, `EDGE` 1.6″ soft edge, shader colours); props in `js/render/graves.js` (`CELL` 0.95″, density cov² × 0.32) and forests in `js/render/table.js` | blight and forest floors as a ground texture |
 | Kingdom farms | `BUILDINGS.farm` (`w`, `d` = land used, `slots` = farmers, `income`), `FACTIONS.kingdom.eco.gather.farm` (AP per gold), `FACTIONS.kingdom.train.builder` | late-game gold; land trade-off |
-| Mage / mana | `units.<role>.mana` (`max`, `start`, `regen`), each skill's `mana`; `isMage` in `js/data/units.js` | how often the Necromancer casts |
-| Necromancer spells | `SUMMON(ap, mana, range, count)`, `THUNDER(ap, mana, dmg, range, jumps, jump, decay)`, `EXPLODE(ap, mana, range, radius, base, perModel)`; summoned squad def `FACTIONS.undead.units.summon`; `RULES.summonTtl` | |
+| Mage / mana | `units.<role>.mana` (`max`, `start`, `regen`), each skill's `mana`; `isMage` in `js/data/units.js` | how often the Lich and Necromancers cast |
+| Necromancers (troop) | `FACTIONS.undead.units.mage` (2 × 10 HP, bolt `VOLLEY(25, 4, 9)`, mana 60 / 40 / +15, `THUNDER(15, 20, 6, 10, 2, 3, 0.7)`, `SUMMON(20, 35, 4, 1)`), `train.mage` (22), `RULES.trainRounds.mage` (2) | high tier: cost may change |
+| Monolith | `BUILDINGS.monolith` (`cost` 20, `work` 120, `grave` 6, `caster` 6 = max distance to a Lich / Necromancers, `offGraves`, `heal: { radius 4, hp 4 }` per model per round) | how fast the Undead push graves forward and recover between fights |
+| Undead tier rule | `FACTIONS.undead.lowTier` (`swarm`, `fighter`, `ranged`) | low tier: only stats change, never `train` costs; everything else may change cost |
+| Lich spells | `SUMMON(ap, mana, range, count)`, `THUNDER(ap, mana, dmg, range, jumps, jump, decay)`, `EXPLODE(ap, mana, range, radius, base, perModel)`; summoned squad def `FACTIONS.undead.units.summon`; `RULES.summonTtl` | |
 | The Chosen | `LEAP(ap, range, cd, dmg, radius, name)`, `RALLY(ap, radius, cd, armor, dmgMult)`, `MIGHTY(ap, dmg, reach, cosHalf, stun, cd)` | stun length = `stun` AP |
 | Army cap | `RULES.armyCap` (30), map `capBonus` (`js/data/maps.js`) | big battles cost frame time and AI time |
-| Graveyards and souls | `BUILDINGS.<type>.grave` (reach: well 10, hq 10, others 6), `RULES.graveStart` (0.5 at placement; full by the end of the round), `graveHqStart` (10), `graveDeathGrow` (0.15″ per model), `graveCapMult` (1.5), `gravePatchCap` (3), `soulPerModel`, `soulPerHero`; `FACTIONS.undead.eco.hq` (0), `BUILDINGS.well.income` (2) | the whole Undead economy: how fast it snowballs |
+| Graveyards and souls | `BUILDINGS.<type>.grave` (reach: well 10, hq 10, others 6, Monolith 6), `RULES.graveStart` (0.5 at placement; full by the end of the round), `graveHqStart` (10), `graveDeathGrow` (0.15″ per model), `graveCapMult` (1.5), `gravePatchCap` (3), `soulPerModel`, `soulPerHero`; `FACTIONS.undead.eco.hq` (1), `BUILDINGS.well.income` (2) | the whole Undead economy: how fast it snowballs |
 | Hero revive | `RULES.reviveRadius` (3″), `reviveRounds` (3), `reviveHp` (0.5) | how costly losing the hero is |
 | The swarm | `FACTIONS.undead.units.swarm` (`pair`, stats), `train.swarm`, `RULES.trainRounds.swarm` | the Undead horde's size |
 | Forests | `RULES.forestSlow` (0.75); sight rules `FOREST_DEPTH` / `FOREST_CLOSE` in `js/sim/vision.js`; `coverMult` | |
@@ -1095,7 +1174,7 @@ Balance report 2026-11-16 · 8 seeds x 2 orders per map · AI normal · stop at 
 | `maxBuilders` | `3` | default builder cap (FACTIONS.<f>.maxBuilders overrides) |
 | `gatherSlots` | `2` | builders that can gather at one building (BUILDINGS.<type>.slots overrides: farm 4) |
 | `buildZone` | `16` | default build zone (each map: round(width / 3)) |
-| `maxBannerCp` | `2` | max banners / obelisks (and max bonus CP) |
+| `maxBannerCp` | `2` | max Kingdom banners (and max bonus CP) |
 | `riseWork` | `80` | undead: work a rising site gains at the end of every round (no builders) |
 | `maxRising` | `2` | undead: sites rising at the same time |
 | `undeadMend` | `0.05` | undead: finished buildings regain this share of max HP every round |
@@ -1103,7 +1182,7 @@ Balance report 2026-11-16 · 8 seeds x 2 orders per map · AI normal · stop at 
 | `advanceEngage` | `10` |  |
 | `goalReach` | `1.5` |  |
 | `retreatReach` | `3` |  |
-| `trainRounds` | `{"builder":1,"swarm":1,"fighter":2,"ranged":2,"fast":2,"tank":3}` | rounds each role takes to train |
+| `trainRounds` | `{"builder":1,"swarm":1,"fighter":2,"ranged":2,"fast":2,"mage":2,"tank":3}` | rounds each role takes to train |
 | `queueMax` | `5` | squads waiting per training building |
 | `queueMaxBuild` | `5` | buildings waiting in the base build queue |
 | `siteHp` | `0.3` | share of max HP a new site starts with |
@@ -1180,13 +1259,13 @@ Whenever rules, numbers, the AI or maps change:
 | Squads of several models; damage removes models; a big squad cap (30) | Dawn of War, Company of Heroes | squad-based armies, losses shown as fewer models, a squad cap | turn-based with simultaneous orders; damage scales with the models left |
 | Speed tiers inside a round, simultaneous orders | tabletop wargames (alternating / initiative activation), WeGo games such as Combat Mission | everyone plans, then the round resolves | faster tiers act first; AP is time inside a tier |
 | Heroes with three skills | Warcraft III | heroes with a small kit that shapes fights | no hero levels or items |
-| Mana mage (Necromancer): spells cost mana, regenerate each round | Warcraft III casters | mana pool and regeneration | no cooldowns for mages; casts repeat while AP and mana last |
+| Mana mages (the Lich, Necromancers): spells cost mana, regenerate each round | Warcraft III casters | mana pool and regeneration | no cooldowns for mages; casts repeat while AP and mana last |
 | Chain lightning (Dark Thunder) | Warcraft III (Far Seer's Chain Lightning) | a bolt that jumps to nearby enemies, weaker each jump | aimed skillshot; first target needs line of sight |
 | Stun (Mighty Swing) | Warcraft III (Storm Bolt, Thunder Clap) | a hit that stops the target acting for a while | stun is measured in AP inside the round |
 | Temporary summons that crumble | Warcraft III summoned units with a timed life | free bodies that expire | they rise at the end of the round; Corpse Explosion can spend them |
 | Undead buildings that build themselves | Warcraft III Undead (summoned buildings), StarCraft Protoss (warped-in buildings) | no worker has to stay to finish a building | a separate limit of 2 rising at once; they mend slowly |
 | Workers on farms; farms use land | Age of Empires | farmers gather at farms; farms take building space | 4 farmers per farm; peasants also build and repair |
-| Resource sites to claim (Mines, Soul Wells) | Dawn of War (strategic points), Company of Heroes (territory) | fixed spots on the map worth fighting over | souls come from deaths near Soul Wells |
+| Resource sites to claim (Mines, Soul Wells) | Dawn of War (strategic points), Company of Heroes (territory) | fixed spots on the map worth fighting over | Soul Wells only trickle souls and spread graves far |
 | Production queues paid when the item starts | the queues of most RTS games (StarCraft II: 5 per building) | queue several items per building | payment at start, the queue waits when you can't pay |
 | Fog of war with explored / visible ground | most RTS games (Warcraft, StarCraft, Age of Empires) | black mist for never-seen ground, a haze for explored ground | line of sight blocked by walls and deep forests |
 | Command points (3 direct orders a round) | tabletop command / order systems | you can't micro everything | squads without orders follow stances |
@@ -1200,5 +1279,10 @@ Whenever rules, numbers, the AI or maps change:
 | Auto skills toggle | Warcraft III autocast | units use abilities by themselves when switched on | applies to every skill of a squad without orders |
 | Hero revive by holding the spot | the owner's original design (compare Warcraft III's altar revive) | a fallen hero can come back | you revive it on the battlefield by holding the ground where it fell |
 | Fast squads: few heavy hits | cavalry in many RTS games (high damage, slower attack) | burst damage instead of many small hits | 2 swings a round, so they strip fewer defends |
+| Blight as a ground texture with soft, noisy edges; big headstones and crosses | Warcraft III Undead blight (named by the owner for the look), StarCraft Zerg creep | the land itself turns dark and dead where the faction spreads, with an organic edge | it is the graveyard (souls); the props thin out toward the edge |
+| Death economy (income from things dying on your ground; cheap units pay back more than they cost) | Warcraft III Undead corpses and graveyards (raising from the dead), Dawn of War Necrons / "blood for the god" style economies, StarCraft Zerg (cheap, expendable units) | losses feed the faction; expendable units are part of the plan | per model, so many-model cheap squads profit and elites lose value; the flat income is a floor only |
+| Monolith: placed by a caster, spreads graves, heals nearby units | Warcraft III Undead Ziggurat-style blight spreaders and healing structures such as fountains of health / moon wells; Dawn of War IV-style Necron power-matrix pylons (the owner's reference for spreading ground) | a structure that extends your ground and supports units around it | must be raised within 6″ of the Lich or Necromancers; no command points |
+| Necromancers as a caster troop under a caster hero | Warcraft III Necromancers / Liches and other caster units with mana | cheap-ish casters with a small spellbook and their own mana | weaker copies of the hero's spells (one-squad summon, short chain) |
+| Forests as large woodland that thins at the edges | the forests of most RTS maps (Age of Empires woods, Company of Heroes hedges and woods) | woodland reads as terrain with cover and slower movement | trees thin out across a soft edge; lone trees outside are only decoration |
 | AI waves (gather at a rally point, attack together) | the attack-wave behaviour of classic RTS AIs | the AI groups up before attacking | thresholds per difficulty (§14.4) |
 

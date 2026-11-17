@@ -7,6 +7,7 @@ import { boardOf } from '../sim/nav.js';
 import { rng } from '../sim/rng.js';
 import { Kit, paintMat } from './kit.js';
 import { buildRoom } from './props.js';
+import { setGround } from './ground.js';
 
 const flat = c => new THREE.MeshStandardMaterial({ color: c, flatShading: true, roughness: 0.9, metalness: 0 });
 
@@ -204,10 +205,11 @@ export function buildTable(view, terrain, mapId = 'crossing') {
   // the games table, props and the room around it
   buildRoom(view, W, H);
   // the board: faceted ground on top, layered sides
+  setGround(W, H, terrain);
   const ground = makeGround(terrain);
   const kg = new Kit(17);
   kg.geo(ground.g, 0x6d9150, { cf: ground.color, sh: 0.06 });
-  const gm = kg.mesh(paintMat('board')); gm.castShadow = false; L.add(gm);
+  const gm = kg.mesh(paintMat('ground')); gm.castShadow = false; L.add(gm);
   const ks = new Kit(19);
   boardSides(ks, rng(23));
   ks.box(W - 0.2, 0.96, H - 0.2, 0x4a3828, { x: W / 2, y: -0.52, z: H / 2, sh: 0 });   // board core
@@ -218,23 +220,32 @@ export function buildTable(view, terrain, mapId = 'crossing') {
   const waters = [], forests = [];
   for (const t of terrain) {
     if (t.kind === 'forest') {
-      // a flat forest floor flush with the ground (squads walk on it, not into a mound): a few
-      // overlapping irregular patches of dark moss and leaf litter
-      k.cyl(t.r, t.r + 0.15, 0.03, 0x3f5a2f, { x: t.x, y: 0.03, z: t.z, j: 0.18, sh: 0.06 }, 12);
-      for (let i = 0; i < 5; i++) {
-        const a = R() * Math.PI * 2, rr = R() * t.r * 0.55, s = t.r * (0.35 + R() * 0.3);
-        k.cyl(s, s + 0.1, 0.03, [0x4a6a35, 0x5a5a32, 0x46622f][i % 3], { x: t.x + Math.cos(a) * rr, y: 0.045, z: t.z + Math.sin(a) * rr, j: 0.08, sh: 0.06 }, 8);
-      }
-      // trunks, roots and edge bushes go in the table mesh; the canopies get their own mesh per forest
-      // so they can turn see-through while squads stand under them
+      // the forest floor is part of the ground texture (ground.js: soft, noisy edges). Trees are scattered
+      // by density: thick in the middle, thinning toward the edge, a few lone trees and bushes outside it,
+      // so a forest reads as woodland terrain rather than an obstacle. Trunks, roots and bushes go in the
+      // table mesh; the canopies get their own mesh per forest (see-through while squads stand under them)
       const kc = new Kit(5 + forests.length);
-      const n = Math.round(t.r * 1.6);
-      for (let i = 0; i < n; i++) {
-        const a = (i / n) * Math.PI * 2 + R() * 0.6, rr = (0.25 + 0.7 * Math.sqrt(R())) * (t.r - 0.5);
-        tallTree(k, kc, R, t.x + Math.cos(a) * rr, t.z + Math.sin(a) * rr, 1 + R() * 0.45);
+      const trunks = [];
+      const tries = Math.round((t.r + 1.5) ** 2 * 3.2);
+      for (let i = 0; i < tries; i++) {
+        const a = R() * Math.PI * 2, rr = Math.sqrt(R()) * (t.r + 1.4), x = t.x + Math.cos(a) * rr, z = t.z + Math.sin(a) * rr;
+        if (x < 0.6 || z < 0.6 || x > W - 0.6 || z > H - 0.6) continue;
+        const e = rr / t.r;                                    // 0 centre, 1 the forest's edge
+        const p = e < 0.55 ? 0.95 : e < 1 ? 0.95 - (e - 0.55) / 0.45 * 0.6 : 0.12 * (1 - (rr - t.r) / 1.4);
+        if (R() > p) continue;
+        const gap = e < 1 ? 1.05 : 1.6;
+        if (trunks.some(o => (o.x - x) ** 2 + (o.z - z) ** 2 < gap * gap)) continue;
+        if (terrain.some(o => o !== t && (o.kind === 'river' ? Math.abs(x - o.x) < o.w / 2 + 0.5 : o.kind !== 'board' && o.kind !== 'forest' && (o.r ? (o.x - x) ** 2 + (o.z - z) ** 2 < (o.r + 0.6) ** 2 : Math.abs(o.x - x) < o.w / 2 + 0.6 && Math.abs(o.z - z) < o.d / 2 + 0.6)))) continue;
+        trunks.push({ x, z });
+        if (e > 1 && R() < 0.55) bush(k, R, x, z, 0.6 + R() * 0.3);
+        else tallTree(k, kc, R, x, z, (e < 1 ? 1 + R() * 0.45 : 0.8 + R() * 0.3) * (1 - Math.max(0, e - 0.7) * 0.25));
       }
-      for (let i = 0; i < 4; i++) { const a = R() * Math.PI * 2; bush(k, R, t.x + Math.cos(a) * (t.r - 0.15), t.z + Math.sin(a) * (t.r - 0.15), 0.8); }
-      for (let i = 0; i < 3; i++) { const a = R() * Math.PI * 2; k.ball(0.16, 0x8a8072, { x: t.x + Math.cos(a) * t.r * 0.9, y: 0.08, z: t.z + Math.sin(a) * t.r * 0.9, sy: 0.6 }); }
+      // undergrowth: bushes, ferns and stones thinning out across the soft edge
+      for (let i = 0; i < Math.round(t.r * 3); i++) {
+        const a = R() * Math.PI * 2, rr = t.r * (0.5 + R() * 0.75), x = t.x + Math.cos(a) * rr, z = t.z + Math.sin(a) * rr;
+        if (trunks.some(o => (o.x - x) ** 2 + (o.z - z) ** 2 < 0.36)) continue;
+        if (R() < 0.6) bush(k, R, x, z, 0.5 + R() * 0.3); else k.ball(0.14, 0x8a8072, { x, y: 0.07, z, sy: 0.6, j: 0.03 });
+      }
       forests.push({ t, kc });
     } else if (t.kind === 'ruin') {
       // broken stone wall: chunky blocks with mossy tops and rubble

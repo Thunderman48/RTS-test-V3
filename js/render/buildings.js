@@ -137,7 +137,7 @@ export function buildingGeo(type, faction, w, d) {
   R = rng(key.length * 7 + type.charCodeAt(0));
   const P = PAINT[faction], und = faction.startsWith('undead');
   const k = new Kit(13, [0, 3, 0.7]);
-  ({ hq: keep, barracks, tower, banner, wall: palisade, farm, mine, well }[type])(k, P, und, w, d);
+  ({ hq: keep, barracks, tower, banner, monolith: (k, P) => banner(k, P, true), wall: palisade, farm, mine, well }[type])(k, P, und, w, d);
   const g = k.build();
   CACHE.set(key, g);
   return g;
@@ -168,7 +168,7 @@ export class BuildingView {
     this.ring.rotation.x = -Math.PI / 2; this.ring.position.y = 0.09;
     this.group.add(this.ring);
     this.group.position.set(b.x, 0, b.z);
-    this.height = { hq: 5, tower: 5, banner: 3.6, wall: 1.6, farm: 1.6, mine: 1.4, well: 1.4 }[b.type] || 2.6;
+    this.height = { hq: 5, tower: 5, banner: 3.6, monolith: 3.6, wall: 1.6, farm: 1.6, mine: 1.4, well: 1.4 }[b.type] || 2.6;
     this.rises = String(faction).startsWith('undead');   // undead sites rise out of the ground (no scaffold)
     if (this.rises && def.work) {
       // heaving earth around a rising site: chunks of dirt and broken stone that bob while it rises

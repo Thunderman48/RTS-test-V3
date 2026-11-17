@@ -8,7 +8,7 @@ import { damageAfter } from '../js/sim/resolve.js';
 
 const DOC = new URL('../docs/GAME.md', import.meta.url);
 const F = ['kingdom', 'undead'];
-const ROLES_ALL = ['hero', 'tank', 'fighter', 'swarm', 'ranged', 'fast', 'summon', 'builder'];
+const ROLES_ALL = ['hero', 'tank', 'fighter', 'swarm', 'ranged', 'fast', 'mage', 'summon', 'builder'];
 const rolesOf = f => ROLES_ALL.filter(r => FACTIONS[f].units[r]);
 const n1 = v => Math.round(v * 10) / 10;
 const row = cells => '| ' + cells.join(' | ') + ' |';
@@ -23,7 +23,7 @@ const RULE_NOTES = {
   partingMult: 'parting blow strength (x the enemy\'s full attack)', parryCost: 'AP for a prepared parry', riposteMult: 'riposte strength (x own attack)', overwatchCost: 'AP for prepared overwatch',
   overwatchCos: 'overwatch cone: cos of the half angle (0.5 = 60 deg each side)', coverMult: 'damage x this through / into a forest (volleys, pierce, tower fire)', siegeMult: 'damage x this against buildings',
   shrineRadius: 'ring drawn around resource sites (visual + placement keep-out x 0.6)', armyCap: 'base squad cap (builders and summoned squads do not count; maps add capBonus)', maxBuilders: 'default builder cap (FACTIONS.<f>.maxBuilders overrides)',
-  gatherSlots: 'builders that can gather at one building (BUILDINGS.<type>.slots overrides: farm 4)', buildZone: 'default build zone (each map: round(width / 3))', maxBannerCp: 'max banners / obelisks (and max bonus CP)', riseWork: 'undead: work a rising site gains at the end of every round (no builders)', maxRising: 'undead: sites rising at the same time', undeadMend: 'undead: finished buildings regain this share of max HP every round', summonTtl: 'rounds a summoned squad lasts', queueMax: 'squads waiting per training building', queueMaxBuild: 'buildings waiting in the base build queue',
+  gatherSlots: 'builders that can gather at one building (BUILDINGS.<type>.slots overrides: farm 4)', buildZone: 'default build zone (each map: round(width / 3))', maxBannerCp: 'max Kingdom banners (and max bonus CP)', riseWork: 'undead: work a rising site gains at the end of every round (no builders)', maxRising: 'undead: sites rising at the same time', undeadMend: 'undead: finished buildings regain this share of max HP every round', summonTtl: 'rounds a summoned squad lasts', queueMax: 'squads waiting per training building', queueMaxBuild: 'buildings waiting in the base build queue',
   trainRounds: 'rounds each role takes to train', siteHp: 'share of max HP a new site starts with', workReach: 'inches between builder edge and footprint to work',
   graveStart: "share of its graveyard a new undead site spreads at once (the rest by the round's end)", graveHqStart: "the Crypt's graveyard at the start", graveDeathGrow: 'inches a graveyard widens per model dying on it', graveCapMult: "deaths can widen a building's graveyard to this x its max", gravePatchCap: 'leftover patches widen up to max(size, this)', reviveRadius: 'revive zone radius', reviveRounds: 'rounds a side must hold the zone', reviveHp: "revived hero's HP share", forestSlow: 'movement x this inside a forest', soulPerModel: 'souls per model that dies', soulPerHero: 'souls when a hero dies', planningTimerSec: '(unused; the online timer is chosen in the lobby)',
 };
@@ -95,8 +95,17 @@ function genEconomy() {
     F.map(f => { const e = FACTIONS[f].eco; return [FACTIONS[f].name, e.name, e.start, e.hq, Object.entries(e.gather).map(([b, v]) => `${b} ${v} (${gatherSlotsOf(b)} gatherers)`).join(', ') || '- (no builders)', Object.entries(e.gather).map(([b, v]) => `${b} ~${Math.floor(RULES.ap / v)}`).join(', ') || '-', FACTIONS[f].buildings.join(', ')]; })));
   out.push(`\nBuilders: Kingdom up to ${maxBuildersOf('kingdom')} peasant squads (not in the army cap); Undead ${maxBuildersOf('undead')} (buildings rise by themselves). HQ trains: ${F.map(f => `${FACTIONS[f].name} ${trainsOf('hq', f).join('/')}`).join('; ')}.`);
   out.push('\n**Training cost (resource) and time (rounds)**\n');
-  out.push(table(['Role', ...F.map(f => FACTIONS[f].name + ' cost'), 'Rounds', 'Trained at'], ['builder', 'tank', 'fighter', 'swarm', 'ranged', 'fast'].map(r => [r, ...F.map(f => FACTIONS[f].train[r] ?? '-'), RULES.trainRounds[r], r === 'builder' ? 'Keep (Kingdom only)' : r === 'swarm' ? 'Crypt and Ossuary (Undead only; a pair per training)' : 'Barracks / Ossuary'])));
+  out.push(table(['Role', ...F.map(f => FACTIONS[f].name + ' cost'), 'Rounds', 'Trained at'], ['builder', 'tank', 'fighter', 'swarm', 'ranged', 'fast', 'mage'].map(r => [r, ...F.map(f => FACTIONS[f].train[r] ?? '-'), RULES.trainRounds[r], r === 'builder' ? 'Keep (Kingdom only)' : r === 'swarm' ? 'Crypt and Ossuary (Undead only; a pair per training)' : r === 'mage' ? 'Ossuary (Undead only)' : 'Barracks / Ossuary'])));
   out.push(`\nSouls: every model that dies (either side, not summoned skeletons) on the undead side's grave ground pays ${RULES.soulPerModel} souls (a hero: ${RULES.soulPerHero}); graveyards: ${Object.entries(BUILDINGS).filter(([, b]) => b.grave).map(([k, b]) => `${k} ${b.grave}"`).join(', ')} (a new site spreads ${RULES.graveStart * 100} % at once and the rest by the end of the round; the Crypt starts at ${RULES.graveHqStart}"). Pairs: ${F.flatMap(f => Object.values(FACTIONS[f].units).filter(u => u.pair).map(u => `${u.name} x${u.pair}`)).join(', ') || '-'}.`);
+  // the undead death economy: what a squad pays back when it is wiped out on its own graves
+  const U = FACTIONS.undead, low = U.lowTier || [];
+  out.push('\n**Undead death economy: souls back when a whole squad dies on your graves vs its cost** (both sides\' deaths pay; the table uses undead squads)\n');
+  out.push(table(['Role', 'Name', 'Tier rule', 'Models', 'Cost (per squad)', 'Souls back (per squad)', 'Back / cost'],
+    Object.entries(U.units).filter(([r]) => U.train[r] !== undefined).map(([r, d]) => {
+      const cost = U.train[r] / (d.pair || 1), back = r === 'hero' ? RULES.soulPerHero : d.models * RULES.soulPerModel;
+      return [r, d.name, low.includes(r) ? 'low (cost fixed)' : 'high (cost may change)', d.models, n1(cost), back, n1(back / cost) + 'x'];
+    })));
+  out.push(`\nFlat income: Crypt ${U.eco.hq} a round, Soul Well ${BUILDINGS.well.income} a round each. Kingdom deaths on undead graves pay the same per model (Kingdom ${['tank', 'fighter', 'ranged', 'fast'].map(r => `${FACTIONS.kingdom.units[r].name} ${FACTIONS.kingdom.units[r].models * RULES.soulPerModel}`).join(', ')}).`);
   return out.join('\n');
 }
 

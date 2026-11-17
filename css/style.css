@@ -175,6 +175,7 @@ button { font-family: inherit; color: inherit; cursor: pointer; touch-action: ma
 .lg.past { opacity: .5; }
 .lg b.t0 { color: color-mix(in srgb, var(--t0, #3a78d8) 55%, #fff); } .lg b.t1 { color: color-mix(in srgb, var(--t1, #9b59d0) 55%, #fff); }
 .lg .dmg { color: var(--swing); font-weight: 800; }
+.lg .healamt { color: #5be07a; font-weight: 800; }
 
 /* ---------- floating text ---------- */
 #fx-layer { position: fixed; inset: 0; pointer-events: none; overflow: hidden; }

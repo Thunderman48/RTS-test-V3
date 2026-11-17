@@ -814,6 +814,19 @@ export function resolveRound(state0, ordersIn) {
       if (b.build <= 0) { b.build = 0; b.vision = d.vision; ev({ type: 'built', id: b.id, btype: b.type, owner: b.owner, by: null }); }
     } else if (b.hp < d.hp && b.type !== 'hq') b.hp = Math.min(d.hp, Math.round(b.hp + d.hp * RULES.undeadMend));
   }
+  // Monoliths heal friendly squads around them a little (HP per model alive; fallen models come back as HP fills)
+  for (const b of s.buildings) {
+    const hd = bdef(b).heal;
+    if (!hd || b.build || b.hp <= 0) continue;
+    for (const q of s.squads) {
+      if (q.owner !== b.owner || q.hp <= 0 || q.ttl) continue;
+      const d = defOf(q), max = d.models * d.hpPer;
+      if (q.hp >= max || dist(q.x, q.z, b.x, b.z) - radiusOf(q) > hd.radius) continue;
+      const add = Math.min(max - q.hp, hd.hp * Math.max(1, q.models));
+      q.hp += add; q.models = modelsFor(q, q.hp);
+      ev({ type: 'heal', id: q.id, bid: b.id, amount: add, hp: q.hp, models: q.models });
+    }
+  }
   // mages regain mana; stun carried over from last round and still left is dropped, new stun carries once
   for (const q of s.squads) {
     const d = defOf(q);

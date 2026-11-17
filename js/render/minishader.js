@@ -5,11 +5,13 @@
 // Programs are shared per preset through customProgramCacheKey.
 import * as THREE from 'three';
 import { fogPatch } from './fog.js';
+import { groundPatch } from './ground.js';
 
 export const PRESETS = {
   mini:    { edge: 0.22, rim: 0.32, wash: 1.0, cool: 0.55, rough: 0.56, metal: 0.06 },
   terrain: { edge: 0.12, rim: 0.10, wash: 0.8, cool: 0.45, rough: 0.9, metal: 0.0 },
   board:   { edge: 0.06, rim: 0.05, wash: 0.6, cool: 0.4, rough: 0.95, metal: 0.0 },
+  ground:  { edge: 0.06, rim: 0.05, wash: 0.6, cool: 0.4, rough: 0.95, metal: 0.0, ground: true },   // the mat itself: blight and forest floors
 };
 const f = v => v.toFixed(3);
 
@@ -34,6 +36,7 @@ export function miniMaterial(preset = 'mini', extra = {}) {
           outgoingLight += diffuseColor.rgb * (upT * ${f(P.edge)} + rimT * ${f(P.rim)}) * vec3(1.0, 0.94, 0.82);
         }
         #include <opaque_fragment>`);
+    if (P.ground) groundPatch(sh);
     fogPatch(sh);
   };
   m.customProgramCacheKey = () => 'mini-' + preset;

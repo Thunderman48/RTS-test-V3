@@ -23,6 +23,7 @@ export const ICONSET = {
   fighter: { c: ORANGE, d: 'M18.5 2H22v3.5L10.5 17 7 13.5ZM4.5 12.5l7 7-1.6 1.6-2.2-2.2L5 21.6 2.4 19l2.7-2.7-2.2-2.2Z' },
   ranged: { c: RED, d: 'M6 2.5c8 2.5 11 10.5 8.5 19M6 2.5l8.5 19M2 12h18M17 8.5 20.5 12 17 15.5', s: true, w: 2.2 },
   fast: { c: CYAN, d: 'M6 21V11a6 6 0 0 1 12 0v10', s: true, w: 3.4 },
+  mage: { c: '#b57bff', d: 'M12 1.5a3.5 3.5 0 1 1-.01 0ZM11 8h2v14h-2ZM7 10l4 2v2l-4-2ZM17 10l-4 2v2l4-2Z' },
   // resources & state
   supply: { c: GOLD, d: HEX, x: 'M12 7 16.5 9.5v5L12 17l-4.5-2.5v-5Z' },
   income: { c: GOLD, d: HEX, x: 'M12 7.5v9M7.5 12h9' },

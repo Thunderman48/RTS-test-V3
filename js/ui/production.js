@@ -21,6 +21,7 @@ export const ProductionUI = {
       gold: `Waits: needs ${f.need} more gold`, souls: `Waits: needs ${f.need} more souls`,
       builders: 'Waits for a free builder', blocked: 'Waits: a squad is standing on the spot',
       cap: `Waits: army cap (${this.state.board.cap} squads)`, line: 'Waits its turn',
+      caster: 'Waits: your Lich or Necromancers must stand within ' + (BUILDINGS.monolith?.caster ?? 6) + '″',
     }[f.wait] || (f.wait === eco.res ? 'Waits for ' + eco.name.toLowerCase() : 'Waits');
   },
   // the icons of one queue. kind 'b' (base build queue) or 't' (training building b)

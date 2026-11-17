@@ -8,17 +8,20 @@ It is a static site with no build step and no server, so it runs on GitHub Pages
   build everything and farm big fields for a strong late economy, and its hero, The Chosen, leaps,
   rallies and stuns with a Mighty Swing. The **Undead Legion** is a cheap, never-ending horde: a
   skeleton swarm trained two squads at a time, no builders (its buildings rise out of the ground and
-  spread graveyards), souls from everything that dies on its graves, and a slow Necromancer mage who
-  spends mana on summoned skeletons, chain lightning and corpse explosions.
+  spread graveyards that turn the ground into dark blight), a death economy (souls from everything
+  that dies on its graves; cheap skeletons pay back more than they cost), and a slow Lich mage who
+  spends mana on summoned skeletons, chain lightning and corpse explosions, backed by Necromancer
+  caster squads and Monoliths that push graves forward and heal.
 * Small starting armies (a hero and a squad or two); the rest comes from your base.
 * A fallen hero lies where it fell; hold that spot to revive it. Squads use their skills on their
   own (switchable per squad). Build anywhere you have seen; the Undead only on their graves, which
-  spread almost at once around their buildings (like blight or creep).
+  spread almost at once around their buildings (like blight or creep), except the Monolith, which a
+  Lich or Necromancers raise anywhere near them. Forests are big woodland with soft edges.
 * Every attack is an aimed skillshot that hits whatever is in its shape when it lands, so faster
   tiers can dodge. Armies grow up to 30 squads (more on big maps).
 * **Two economies.** The Kingdom earns **gold** from its Keep, mines and farms worked by up to 4
-  peasants each. The Undead earn **souls** from every model that dies on their graveyards, plus a
-  trickle from Soul Wells.
+  peasants each. The Undead earn **souls** mainly from every model that dies on their graveyards;
+  the Crypt (1) and Soul Wells (2) only trickle.
 * **Production queues.** Queue up to 5 buildings for your base (free builders take the next one) and up
   to 5 squads at each HQ / Barracks. Everything is paid when it starts, and the **Production** bar above
   your squad cards shows every queue: tap to cancel, drag to reorder.
