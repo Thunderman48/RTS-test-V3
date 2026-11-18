@@ -449,7 +449,15 @@ test('Corpse Explosion bursts a summoned squad and hits the enemies around it (n
   ok(!state.squads.some(q => q.id === z.id), 'the summoned squad is gone');
   const raw = events(log).find(e => e.type === 'hit' && e.kind === 'explode').raw;
   const sk = FACTIONS.undead.units.hero.skills.find(k => k.kind === 'explode');
-  eq(raw, sk.base + sk.perModel * 3);
+  eq(raw, sk.base + sk.perModel * FACTIONS.undead.units.summon.models);
+  eq(raw, 26, 'a full summoned Warband bursts for 26 (8 + 3 per model)');
+});
+
+test('summoned skeletons are Skeleton Warbands with a timed life', () => {
+  const U = FACTIONS.undead.units, { role, summoned, ...rest } = U.summon, { role: r2, pair, ...sw } = U.swarm;
+  eq(JSON.stringify(rest), JSON.stringify(sw), 'same name, models, HP, armour, tier, look, attack');
+  ok(summoned && role === 'summon' && U.summon.pair === undefined, 'a summon, not a pair');
+  eq(U.summon.name, 'Skeleton Warband');
 });
 
 test('Mighty Swing stuns: the target\'s actions wait; leftover stun carries into the next round', () => {

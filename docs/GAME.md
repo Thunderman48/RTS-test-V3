@@ -266,7 +266,9 @@ The action always costs its full AP.
 3.6″ per round), 90 HP, armour 5, 1 defend. Basic attack: a **magic bolt** (a volley line: 25 AP, 10 damage, range 10″,
 width 0.6″; walls block it, forests give cover).
 - **Summon Warband** (`summon`, 20 AP, **40 mana**): aim within 4″. **When the cast releases**, **2
-  squads of Summoned Skeletons** rise around the aim point (0.9″ either side, nudged clear with
+  summoned Skeleton Warband squads** rise around the aim point (exactly the Skeleton Warband: same
+  models, HP, armour, tier 3, attack and look; since 2026-11-18 `FACTIONS.undead.units.summon` is a copy
+  of the swarm with `summoned: true`, no pairs; its only difference is the timed life below) (0.9″ either side, nudged clear with
   `freeSpot`). From that AP on they **block movement and can be hit**, but they are **not in this round's
   action list**, so they don't act until next round (`spawn` event with `mid: true`; the replay shows
   them from that moment). They have stance **Advance**, cost CP if ordered (the AI never orders them),
@@ -281,7 +283,7 @@ width 0.6″; walls block it, forests give cover).
 - **Corpse Explosion** (`explode`, 10 AP, **20 mana**): aim within 9″ at one of the caster side's
   **summoned** squads (the nearest whose edge is within 1.5″ of the aim). At release it bursts: it is
   removed (no souls), and every enemy squad / building within **2.5″** (+ 0.6 × its radius) of it takes
-  **8 + 6 × its models left** (× the caster's damage multiplier). No summoned squad there: the spell
+  **8 + 3 × its models left** (× the caster's damage multiplier; a full 6-model summon: 26; before 2026-11-18 it was 8 + 6 × the old 3-model summon). No summoned squad there: the spell
   fizzles (`fizzle` event; the mana is spent).
 
 **Necromancers (Undead troop, role `mage`, high tier):** 2 models × 10 HP, armour 1, tier 4, vision
@@ -291,7 +293,7 @@ repeat casts while AP and mana last), with its own mana: **60 max, 40 at the sta
 - **Dark Thunder (weaker)** (`thunder`, 15 AP, **20 mana**): the same rules as the Lich's, aim within
   6″, **6 per model** (12 at full strength) on the first strike, up to **2** jumps within **3″**, ×0.7
   per jump.
-- **Summon Warband** (`summon`, 20 AP, **35 mana**, aim within 4″): **1** squad of Summoned Skeletons
+- **Summon Warband** (`summon`, 20 AP, **35 mana**, aim within 4″): **1** summoned Skeleton Warband squad
   (the count comes from the skill's `count`), same rules as the Lich's summon.
 - **Raise Monolith** (as the Lich's, below).
 - With auto skills on (stances, and the AI), it uses the same `autoSkills` rules as the Lich (Raise
@@ -406,7 +408,7 @@ such enemy (a normal volley toward it, needing a clear line; a lobbing unit lobs
 | ranged | Bone Archers | 4 | 10 | 40 | 1 | 5 | 6 | 11 | 1 | 1.34 | volley | 30 | 2.4 | 9.6 | range 14", width 0.9" | 3 | - | 13 | 2 |
 | fast | Wraiths | 3 | 14 | 42 | 3 | 6 | 7.2 | 11 | 1 | 1.347 | swing | 45 | 9 | 27 | reach 1.7" (arc +-60 deg) | 2 | ghost | 16 | 2 |
 | mage | Necromancers | 2 | 10 | 20 | 1 | 4 | 4.8 | 10 | 1 | 1.094 | volley | 25 | 4 | 8 | range 9", width 0.5" | 4 | mage: mana 40/60, +15/rnd | 22 | 2 |
-| summon | Summoned Skeletons | 3 | 11 | 33 | 3 | 5 | 6 | 7 | 0 | 1.227 | swing | 25 | 3 | 9 | reach 1.5" (arc +-60 deg) | 4 | summoned (lasts 3 rnds, not trainable) | - | - |
+| summon | Skeleton Warband | 6 | 4 | 24 | 0 | 3 | 3.6 | 9 | 0 | 1.5290000000000001 | swing | 25 | 2.1 | 12.600000000000001 | reach 1.4" (arc +-60 deg) | 4 | summoned (lasts 3 rnds, not trainable) | - | - |
 
 <!-- /GEN:units -->
 
@@ -429,7 +431,7 @@ measured from the squad's edge. Heroes cannot be trained.
 | Kingdom | Outriders | Charge | `charge` | move | 35 | 1 | - | 9 x 3 = 27 | wind 8, dmg 9, len 9 |
 | Undead Legion | Lich | Summon Warband | `summon` | defense | 20 | - (mage) | 40 | - | range 4, count 2, radius 1.6 |
 | Undead Legion | Lich | Dark Thunder | `thunder` | attack | 15 | - (mage) | 25 | 14 x 1 = 14 | dmg 14, range 11, jumps 3, jump 3.5, decay 0.7, radius 1 |
-| Undead Legion | Lich | Corpse Explosion | `explode` | attack | 10 | - (mage) | 20 | - | range 9, radius 2.5, base 8, perModel 6 |
+| Undead Legion | Lich | Corpse Explosion | `explode` | attack | 10 | - (mage) | 20 | - | range 9, radius 2.5, base 8, perModel 3 |
 | Undead Legion | Lich | Raise Monolith | `monolith` | defense | 20 | - (mage) | 30 | - | range 6, radius 0.6 |
 | Undead Legion | Grave Guard | Grave Wall | `wall` | defense | 15 | 1 | - | - | mult 0.3, cosHalf 0.5 |
 | Undead Legion | Bone Archers | Arrow Storm | `storm` | attack | 35 | 2 | - | 4 x 4 = 16 | dmg 4, range 15, radius 2.2 |
@@ -472,18 +474,18 @@ Damage per round = hits per 100 AP x damageAfter(dmg per model x models, armour)
 | Bone Archers | 9.6 | 30 | 24 | 24 | 21 | 18 | 18 |
 | Wraiths | 27 | 54 | 46 | 44 | 38 | 34 | 34 |
 | Necromancers | 8 | 32 | 28 | 24 | 24 | 20 | 20 |
-| Summoned Skeletons | 9 | 36 | 32 | 28 | 24 | 24 | 24 |
+| Skeleton Warband | 12.600000000000001 | 52 | 44 | 40 | 36 | 32 | 32 |
 
 **Attacks needed: Kingdom (rows, full squad, no losses) vs Undead Legion (columns, full HP, no defends)** (rounds = attacks / hits per 100 AP)
 
-| Attacker \ Target | Lich | Grave Guard | Skeleton Warriors | Skeleton Warband | Bone Archers | Wraiths | Necromancers | Summoned Skeletons |
+| Attacker \ Target | Lich | Grave Guard | Skeleton Warriors | Skeleton Warband | Bone Archers | Wraiths | Necromancers | Skeleton Warband |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| The Chosen | 7 (1.8 r) | 6 (1.5 r) | 3 (0.8 r) | 2 (0.5 r) | 3 (0.8 r) | 3 (0.8 r) | 2 (0.5 r) | 3 (0.8 r) |
-| Shieldwall | 9 (3 r) | 8 (2.7 r) | 5 (1.7 r) | 2 (0.7 r) | 4 (1.3 r) | 5 (1.7 r) | 2 (0.7 r) | 4 (1.3 r) |
+| The Chosen | 7 (1.8 r) | 6 (1.5 r) | 3 (0.8 r) | 2 (0.5 r) | 3 (0.8 r) | 3 (0.8 r) | 2 (0.5 r) | 2 (0.5 r) |
+| Shieldwall | 9 (3 r) | 8 (2.7 r) | 5 (1.7 r) | 2 (0.7 r) | 4 (1.3 r) | 5 (1.7 r) | 2 (0.7 r) | 2 (0.7 r) |
 | Men-at-arms | 6 (1.5 r) | 5 (1.3 r) | 3 (0.8 r) | 2 (0.5 r) | 3 (0.8 r) | 3 (0.8 r) | 2 (0.5 r) | 2 (0.5 r) |
-| Crossbows | 7 (2.3 r) | 6 (2 r) | 4 (1.3 r) | 2 (0.7 r) | 3 (1 r) | 3 (1 r) | 2 (0.7 r) | 3 (1 r) |
+| Crossbows | 7 (2.3 r) | 6 (2 r) | 4 (1.3 r) | 2 (0.7 r) | 3 (1 r) | 3 (1 r) | 2 (0.7 r) | 2 (0.7 r) |
 | Outriders | 3 (1.5 r) | 3 (1.5 r) | 2 (1 r) | 1 (0.5 r) | 2 (1 r) | 2 (1 r) | 1 (0.5 r) | 1 (0.5 r) |
-| Peasants | 30 (7.5 r) | 21 (5.3 r) | 15 (3.8 r) | 6 (1.5 r) | 10 (2.5 r) | 14 (3.5 r) | 5 (1.3 r) | 11 (2.8 r) |
+| Peasants | 30 (7.5 r) | 21 (5.3 r) | 15 (3.8 r) | 6 (1.5 r) | 10 (2.5 r) | 14 (3.5 r) | 5 (1.3 r) | 6 (1.5 r) |
 
 **Attacks needed: Undead Legion (rows, full squad, no losses) vs Kingdom (columns, full HP, no defends)** (rounds = attacks / hits per 100 AP)
 
@@ -496,7 +498,7 @@ Damage per round = hits per 100 AP x damageAfter(dmg per model x models, armour)
 | Bone Archers | 19 (6.3 r) | 17 (5.7 r) | 12 (4 r) | 8 (2.7 r) | 9 (3 r) | 4 (1.3 r) |
 | Wraiths | 7 (3.5 r) | 6 (3 r) | 4 (2 r) | 3 (1.5 r) | 4 (2 r) | 2 (1 r) |
 | Necromancers | 22 (5.5 r) | 21 (5.3 r) | 14 (3.5 r) | 9 (2.3 r) | 12 (3 r) | 4 (1 r) |
-| Summoned Skeletons | 22 (5.5 r) | 17 (4.3 r) | 12 (3 r) | 8 (2 r) | 11 (2.8 r) | 4 (1 r) |
+| Skeleton Warband | 15 (3.8 r) | 13 (3.3 r) | 9 (2.3 r) | 6 (1.5 r) | 8 (2 r) | 3 (0.8 r) |
 
 <!-- /GEN:derived -->
 
@@ -1160,7 +1162,7 @@ Balance report 2026-11-17 · 8 seeds x 2 orders per map · AI normal · stop at 
 | Necromancers (troop) | `FACTIONS.undead.units.mage` (2 × 10 HP, bolt `VOLLEY(25, 4, 9)`, mana 60 / 40 / +15, `THUNDER(15, 20, 6, 10, 2, 3, 0.7)`, `SUMMON(20, 35, 4, 1)`), `train.mage` (22), `RULES.trainRounds.mage` (2) | high tier: cost may change |
 | Monolith (Raise Monolith skill) | `BUILDINGS.monolith` (`cost` 20 souls paid by the skill, `work` 120, `grave` 6, `skill`, `offGraves`, `heal: { radius 4, hp 4 }` per model per round); `MONOLITH(ap 20, mana 30, range 6)` in the Lich's and Necromancers' skills | how fast the Undead push graves forward and recover between fights |
 | Undead tier rule | `FACTIONS.undead.lowTier` (`swarm`, `fighter`, `ranged`) | low tier: only stats change, never `train` costs; high tier: costs may change either way, but only after asking the owner |
-| Lich spells | `SUMMON(ap, mana, range, count)`, `THUNDER(ap, mana, dmg, range, jumps, jump, decay)`, `EXPLODE(ap, mana, range, radius, base, perModel)`; summoned squad def `FACTIONS.undead.units.summon`; `RULES.summonTtl` | |
+| Lich spells | `SUMMON(ap, mana, range, count)`, `THUNDER(ap, mana, dmg, range, jumps, jump, decay)`, `EXPLODE(ap, mana, range, radius, base, perModel)`; summoned squads: `FACTIONS.undead.units.summon` is derived from `units.swarm` right after `FACTIONS` (change the Warband and summons change with it); `RULES.summonTtl` | |
 | The Chosen | `LEAP(ap, range, cd, dmg, radius, name)`, `RALLY(ap, radius, cd, armor, dmgMult)`, `MIGHTY(ap, dmg, reach, cosHalf, stun, cd)` | stun length = `stun` AP |
 | Army cap | `RULES.armyCap` (30), map `capBonus` (`js/data/maps.js`) | big battles cost frame time and AI time |
 | Graveyards and souls | `BUILDINGS.<type>.grave` (reach: well 10, hq 10, others 6, Monolith 6), `RULES.graveStart` (0.5 at placement; full by the end of the round), `graveHqStart` (10), `graveBlob` (0.8″: radius of the grave area a death adds at the nearest edge, × √models, merging, no maximum; `spreadGraves` in `js/sim/base.js`), `soulPerModel`, `soulPerHero`; `FACTIONS.undead.eco.hq` (1), `BUILDINGS.well.income` (2) | the whole Undead economy: how fast it snowballs |

@@ -144,7 +144,7 @@ export const FACTIONS = {
     name: 'Undead Legion', short: 'UND', colorCss: '#9b59d0',
     units: {
       hero:    { name: 'Lich', role: 'hero', models: 1, hpPer: 90, armor: 5, tier: 3, look: 'necro', vision: 12, defends: 1, magic: true, attack: VOLLEY(25, 10, 10, 0.6),
-                 mana: { max: 100, start: 60, regen: 25 }, skills: [SUMMON(20, 40, 4, 2), THUNDER(15, 25, 14, 11, 3, 3.5, 0.7), EXPLODE(10, 20, 9, 2.5, 8, 6), MONOLITH(20, 30, 6)] },
+                 mana: { max: 100, start: 60, regen: 25 }, skills: [SUMMON(20, 40, 4, 2), THUNDER(15, 25, 14, 11, 3, 3.5, 0.7), EXPLODE(10, 20, 9, 2.5, 8, 3), MONOLITH(20, 30, 6)] },
       tank:    { name: 'Grave Guard', role: 'tank', models: 3, hpPer: 21, armor: 9, tier: 4, look: 'graveguard', vision: 9, defends: 2, attack: SWING(30, 3.2, 1.3), skills: [WALL('Grave Wall')] },
       fighter: { name: 'Skeleton Warriors', role: 'fighter', parry: true, models: 5, hpPer: 9, armor: 3, tier: 5, look: 'skeleton', vision: 9, defends: 1, attack: SWING(25, 2.4, 1.5) },
       // the swarm: fragile, quick, cheap, trained two squads at a time (`pair`; a later upgrade: three)
@@ -154,8 +154,6 @@ export const FACTIONS = {
       // a weaker caster troop: bolts, a weaker Dark Thunder, a one-squad summon; raises Monoliths near it
       mage:    { name: 'Necromancers', role: 'mage', models: 2, hpPer: 10, armor: 1, tier: 4, look: 'necro', vision: 10, defends: 1, magic: true, attack: VOLLEY(25, 4, 9, 0.5),
                  mana: { max: 60, start: 40, regen: 15 }, skills: [THUNDER(15, 20, 6, 10, 2, 3, 0.7), SUMMON(20, 35, 4, 1), MONOLITH(20, 30, 6)] },
-      // raised by Summon Warband (the Lich, Necromancers): not trainable, crumbles after RULES.summonTtl rounds
-      summon:  { name: 'Summoned Skeletons', role: 'summon', summoned: true, models: 3, hpPer: 11, armor: 3, tier: 5, look: 'skeleton', vision: 7, defends: 0, attack: SWING(25, 3, 1.5) },
     },
     // Souls: fed by death on graveyards (grave ground spreads around undead buildings); Soul Wells give a
     // trickle and spread graves far. No builders.
@@ -172,6 +170,10 @@ export const FACTIONS = {
     rises: true,              // buildings rise out of the ground by themselves (RULES.riseWork per round)
   },
 };
+// raised by Summon Warband (the Lich, Necromancers): the very same Skeleton Warband, only with a timed
+// life (crumbles after RULES.summonTtl rounds); not trainable, no pairs, not in the army cap, no souls
+FACTIONS.undead.units.summon = { ...FACTIONS.undead.units.swarm, role: 'summon', summoned: true };
+delete FACTIONS.undead.units.summon.pair;
 
 // Buildings. Builders put them up: `work` is the builder AP needed to finish one.
 //  shape: 'rect' (w x d, rotated by rot 0/90) or 'circle' (r). fire: { dmg (x4 shots), range }
